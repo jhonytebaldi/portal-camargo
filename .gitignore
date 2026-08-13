@@ -1,0 +1,13 @@
+# Segredos e dados NUNCA vão para o repositório.
+config/config.php
+credenciais.php
+*.log
+*.tmp
+
+# Dados operacionais (ficam fora da web, mas por garantia):
+painel-dados/
+dados-imoveis/
+
+# Sistema
+.DS_Store
+Thumbs.db

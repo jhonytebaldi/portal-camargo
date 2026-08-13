@@ -1,0 +1,23 @@
+# Portal Camargo — raiz do subdomínio dados.imobcamargo.com.br
+# Desliga regras de reescrita herdadas (defensivo, como na busca).
+RewriteEngine Off
+
+<IfModule mod_mime.c>
+  AddType application/x-httpd-php .php
+</IfModule>
+
+Options -Indexes
+
+# Bloqueia arquivos de projeto/segredo que não devem ser servidos.
+<FilesMatch "\.(sql|md|log|json|bak|tmp|example)$">
+  Require all denied
+</FilesMatch>
+
+# Nunca servir a config (caso alguém a coloque dentro da web por engano).
+<FilesMatch "^config\.php$">
+  Require all denied
+</FilesMatch>
+
+# Bloqueia acesso direto às libs internas (são apenas includes).
+RedirectMatch 403 ^/lib/.*$
+RedirectMatch 403 ^/config/.*$

@@ -1,0 +1,64 @@
+/* Portal Camargo — estilo compartilhado.
+   Paleta alinhada à da Busca (verde-musgo / terracota) para o conjunto
+   parecer um sistema só. */
+:root{
+  --ink:#12211c; --paper:#f2efe6; --card:#fbfaf6; --moss:#2f5d4f; --moss-d:#264c40;
+  --clay:#b4512f; --line:#d8d3c4; --mute:#6b7770;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5}
+
+/* Topbar */
+.topbar{display:flex;align-items:center;justify-content:space-between;
+  background:var(--card);border-bottom:1px solid var(--line);padding:12px 20px}
+.brand{font-weight:700;text-decoration:none;color:var(--ink);letter-spacing:-.01em}
+.brand span{color:var(--moss)}
+.topbar nav{display:flex;align-items:center;gap:16px;font-size:14px}
+.topbar nav a{color:var(--moss);text-decoration:none;font-weight:600}
+.topbar .who{color:var(--mute)}
+.topbar .sair{color:var(--clay)}
+
+.wrap{max-width:1000px;margin:0 auto;padding:28px 20px 60px}
+.rodape{color:var(--mute);font-size:12.5px;text-align:center;padding:24px}
+
+.home-titulo{font-size:22px;margin:6px 0 2px}
+.home-sub{color:var(--mute);margin:0 0 22px}
+.aviso{background:#fff;border:1px solid var(--line);border-left:4px solid var(--clay);
+  padding:14px 16px;border-radius:4px;color:var(--ink)}
+
+/* Grade de ferramentas */
+.grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.card-ferramenta{display:flex;flex-direction:column;gap:6px;text-decoration:none;color:var(--ink);
+  background:var(--card);border:1px solid var(--line);border-top:4px solid var(--moss);
+  border-radius:6px;padding:20px 18px;transition:transform .08s,box-shadow .08s}
+.card-ferramenta:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(18,33,28,.10)}
+.card-ferramenta .ic{font-size:26px}
+.card-ferramenta .nm{font-weight:700;font-size:16px}
+.card-ferramenta .ds{color:var(--mute);font-size:13px}
+
+/* Tela de login */
+.tela-login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.cartao-login{background:var(--card);border:1px solid var(--line);border-top:4px solid var(--moss);
+  padding:34px 32px;max-width:380px;width:100%;border-radius:4px}
+.cartao-login h1{font-size:24px;margin:0 0 4px}
+.cartao-login .sub{color:var(--mute);font-size:14px;margin:0 0 22px}
+.cartao-login label{display:block;font-size:13px;font-weight:600;margin:0 0 14px}
+.cartao-login input{display:block;width:100%;margin-top:6px;padding:12px 14px;font:inherit;font-size:16px;
+  border:2px solid var(--line);border-radius:3px;background:#fff}
+.cartao-login input:focus{outline:none;border-color:var(--moss)}
+.cartao-login button{width:100%;margin-top:8px;padding:13px;background:var(--moss);color:#fff;border:none;
+  border-radius:3px;font:inherit;font-weight:600;font-size:15px;cursor:pointer}
+.cartao-login button:hover{background:var(--moss-d)}
+.cartao-login button:disabled{background:var(--mute);cursor:not-allowed}
+.erro{background:rgba(180,81,47,.1);border-left:3px solid var(--clay);color:var(--clay);
+  padding:10px 12px;font-size:13.5px;margin-bottom:16px;border-radius:3px}
+
+/* Admin (tabelas simples) */
+.admin-tabs{display:flex;gap:8px;margin:18px 0}
+.admin-tabs a{padding:8px 14px;border:1px solid var(--line);border-radius:20px;text-decoration:none;
+  color:var(--ink);font-size:13.5px;background:var(--card)}
+.admin-tabs a.on{background:var(--moss);color:#fff;border-color:var(--moss)}
+table.grid{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+table.grid th,table.grid td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:14px}
+table.grid th{background:#efece2;font-size:12.5px;text-transform:uppercase;color:var(--mute)}
