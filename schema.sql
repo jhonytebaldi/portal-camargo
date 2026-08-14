@@ -16,9 +16,12 @@ CREATE TABLE IF NOT EXISTS users (
   senha_hash  VARCHAR(255) NOT NULL,           -- password_hash()
   papel       ENUM('admin','gestor','viewer') NOT NULL DEFAULT 'viewer',
   ativo       TINYINT(1)   NOT NULL DEFAULT 1,
+  broker_id   VARCHAR(40)  NULL,               -- corretor (GHL) vinculado a este usuário
+  ativacao_token VARCHAR(64) NULL,             -- token para definir senha no 1º acesso
   criado_em   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_users_login (login)
+  UNIQUE KEY uq_users_login (login),
+  KEY ix_users_broker (broker_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --- Ferramentas (registro de módulos do portal) ------------------------
