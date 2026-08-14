@@ -15,8 +15,10 @@ $erro = '';
 /* 1) Aplica o schema (dividido em comandos) */
 $schema = @file_get_contents(__DIR__ . '/schema.sql');
 if ($schema) {
+    // Remove linhas de comentário antes de dividir por ';'
+    $schema = preg_replace('/^\s*--.*$/m', '', $schema);
     foreach (array_filter(array_map('trim', explode(';', $schema))) as $stmt) {
-        if ($stmt === '' || str_starts_with($stmt, '--')) continue;
+        if ($stmt === '') continue;
         try { $pdo->exec($stmt); } catch (Throwable $e) { /* ignora "já existe" */ }
     }
     $log[] = 'Tabelas verificadas/criadas.';
