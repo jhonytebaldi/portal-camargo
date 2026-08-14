@@ -34,7 +34,7 @@ function current_user(): ?array {
     if (empty($_SESSION['uid'])) return null;
     static $cache = null;
     if ($cache !== null) return $cache;
-    $st = db()->prepare('SELECT id, nome, login, papel, ativo FROM users WHERE id = ? AND ativo = 1');
+    $st = db()->prepare('SELECT id, nome, login, papel, ativo, broker_id FROM users WHERE id = ? AND ativo = 1');
     $st->execute([$_SESSION['uid']]);
     $u = $st->fetch();
     return $cache = ($u ?: null);
@@ -113,12 +113,17 @@ function allowed_broker_ids(?array $u = null): array {
     if (is_admin($u)) {
         return db()->query('SELECT id FROM brokers WHERE ativo = 1')->fetchAll(PDO::FETCH_COLUMN);
     }
+    $ids = [];
     $teams = allowed_team_ids($u);
-    if (!$teams) return [];
-    $in = implode(',', array_fill(0, count($teams), '?'));
-    $st = db()->prepare("SELECT DISTINCT broker_id FROM team_brokers WHERE team_id IN ($in)");
-    $st->execute($teams);
-    return $st->fetchAll(PDO::FETCH_COLUMN);
+    if ($teams) {
+        $in = implode(',', array_fill(0, count($teams), '?'));
+        $st = db()->prepare("SELECT DISTINCT broker_id FROM team_brokers WHERE team_id IN ($in)");
+        $st->execute($teams);
+        $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+    }
+    // "Ver os próprios dados": inclui o corretor vinculado ao usuário.
+    if (!empty($u['broker_id'])) $ids[] = $u['broker_id'];
+    return array_values(array_unique($ids));
 }
 
 /** Escapa texto para HTML. */
