@@ -68,7 +68,7 @@ $next = h($_GET['next'] ?? '');
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Entrar — Camargo</title>
-<link rel="stylesheet" href="/assets/portal.css">
+<link rel="stylesheet" href="/assets/portal.css?v=<?= @filemtime(__DIR__.'/assets/portal.css') ?>">
 </head><body class="tela-login">
 <form class="cartao-login" method="post" action="login.php<?= $next ? '?next=' . $next : '' ?>">
   <h1>Portal Camargo</h1>

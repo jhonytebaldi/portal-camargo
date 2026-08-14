@@ -3,6 +3,13 @@
 declare(strict_types=1);
 require_once __DIR__ . '/auth.php';
 
+/** URL do CSS com "cache-busting" pela data de modificação do arquivo. */
+function css_href(): string {
+    $f = dirname(__DIR__) . '/assets/portal.css';
+    $v = @filemtime($f) ?: 1;
+    return '/assets/portal.css?v=' . $v;
+}
+
 function portal_header(string $titulo, ?array $u = null): void {
     $u = $u ?? current_user();
     ?><!DOCTYPE html>
@@ -10,7 +17,7 @@ function portal_header(string $titulo, ?array $u = null): void {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($titulo) ?> — Camargo</title>
-<link rel="stylesheet" href="/assets/portal.css">
+<link rel="stylesheet" href="<?= css_href() ?>">
 </head><body>
 <header class="topbar">
   <a class="brand" href="/">Camargo · <span>dados</span></a>
