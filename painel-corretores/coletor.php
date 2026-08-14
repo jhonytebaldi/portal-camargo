@@ -27,6 +27,7 @@ if (!$CLI) {
     $u = current_user();
     if (!$u || $u['papel'] !== 'admin') { http_response_code(403); exit('Apenas admin.'); }
     @set_time_limit(0);
+    @ignore_user_abort(true);   // continua no servidor mesmo se o navegador desconectar
     header('Content-Type: text/plain; charset=utf-8');
 }
 portal_load_config();
