@@ -53,6 +53,14 @@ try {
                         ->execute([(int)$_POST['user_id'], (int)$_POST['team_id']]);
             jout(['ok'=>true]);
 
+        case 'broker_deactivate':
+            $pdo->prepare('UPDATE brokers SET ativo=0 WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
+            jout(['ok'=>true]);
+
+        case 'broker_activate':
+            $pdo->prepare('UPDATE brokers SET ativo=1 WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
+            jout(['ok'=>true]);
+
         case 'ghl_sync':
             require_once __DIR__ . '/../lib/ghl.php';
             jout(ghl_sync_brokers());
