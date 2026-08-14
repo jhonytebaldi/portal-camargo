@@ -5,6 +5,18 @@
    ===================================================================== */
 declare(strict_types=1);
 
+/* Compatibilidade com PHP < 8.0 (algumas hospedagens ainda usam 7.x). */
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return $needle === '' || strncmp($haystack, $needle, strlen($needle)) === 0;
+    }
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+
 /** Localiza e carrega o config.php (procura em alguns caminhos prováveis). */
 function portal_load_config(): void {
     static $carregado = false;
