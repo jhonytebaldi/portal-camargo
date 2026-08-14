@@ -1,0 +1,14 @@
+# NUNCA versionar: chaves e senha da instalação
+credenciais.php
+
+# Dados da operação, que vivem no servidor
+dados/
+*.json
+!composer.json
+backup-ferramenta/
+
+# Ferramentas de diagnostico: ficam fora do repositorio para nao voltarem
+# ao servidor a cada atualizacao. Estao guardadas em ferramentas/ e sobem
+# na mao quando forem necessarias.
+gerar-hash.php
+testar-api.php

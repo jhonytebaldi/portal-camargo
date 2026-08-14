@@ -1,0 +1,33 @@
+<?php
+/* =====================================================================
+   credenciais.php — SUAS chaves. Este arquivo é seu, não do projeto.
+
+   Ele NUNCA entra no pacote nem no repositório do GitHub. É justamente
+   por isso que existe: atualizar a ferramenta deixa de ter o risco de
+   apagar suas credenciais, como aconteceu quando o config.php foi
+   substituído pelo modelo em branco.
+
+   Preencha as três linhas abaixo e não mexa mais nele.
+   ===================================================================== */
+
+// --- API do Robust ---
+// Painel de Controle > Configurações > Dados Administrativos
+define('ROBUST_NICKNAME', 'imobcamargo');
+define('ROBUST_API_KEY',  'COLE_A_CHAVE_AQUI');
+
+// --- Senha de acesso à ferramenta ---
+// Gere em gerar-hash.php e cole o resultado inteiro (começa com $2y$)
+define('SENHA_HASH', 'COLE_O_HASH_AQUI');
+
+// --- Token do GitHub (só se for usar atualizar.php) ---
+// Fine-grained token com Contents: READ-ONLY, restrito ao repositório.
+// Deixe em branco se o repositório for público ou se não usar atualização
+// automática.
+define('GITHUB_REPO',  '');   // ex.: jhonytebaldi/camargo-busca-imoveis
+define('GITHUB_TOKEN', '');
+define('GITHUB_BRANCH', 'main');
+
+// Segredo do webhook: o mesmo valor tem que estar no GitHub, em
+// Settings > Webhooks. É o que garante que só o GitHub consegue disparar
+// uma atualização. Deixe em branco para desligar o webhook.
+define('WEBHOOK_SEGREDO', '');

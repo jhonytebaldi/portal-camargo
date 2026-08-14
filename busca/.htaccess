@@ -1,0 +1,21 @@
+# --------------------------------------------------------------------
+# IMPORTANTE: desliga as regras de reescrita herdadas do site.
+# Sem isto, o CMS da raiz captura todas as URLs desta pasta e devolve
+# a página "Oops! Esta página não existe".
+# --------------------------------------------------------------------
+RewriteEngine Off
+
+# Garante que o PHP seja executado nesta pasta
+<IfModule mod_mime.c>
+  AddType application/x-httpd-php .php
+</IfModule>
+
+# Protege os dados e a configuração
+<FilesMatch "\.(json|log|bak|tmp|md)$">
+  Require all denied
+</FilesMatch>
+<Files "config.php">
+  Require all denied
+</Files>
+RedirectMatch 403 ^.*/dados/.*$
+Options -Indexes
