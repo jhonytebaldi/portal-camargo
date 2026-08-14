@@ -62,3 +62,26 @@ body{margin:0;background:var(--paper);color:var(--ink);
 table.grid{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:6px;overflow:hidden}
 table.grid th,table.grid td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:14px}
 table.grid th{background:#efece2;font-size:12.5px;text-transform:uppercase;color:var(--mute)}
+
+/* ---- Admin: botões, chips, equipes ---- */
+.btn{background:var(--moss);color:#fff;border:none;border-radius:6px;padding:9px 14px;font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+.btn:hover{background:var(--moss-d)}
+.ok-box{background:rgba(47,93,79,.12);border-left:3px solid var(--moss);color:var(--moss);padding:10px 12px;border-radius:4px;margin:10px 0;font-size:14px}
+.eq-novo{display:flex;gap:8px;align-items:center;margin-top:12px}
+.eq-novo input,.eq-busca,.card input,.card select{padding:9px 11px;border:2px solid var(--line);border-radius:6px;font:inherit;font-size:14px;background:#fff}
+.eq-wrap{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;margin-top:12px}
+.eq-busca{width:100%;margin-bottom:10px}
+.chips{display:flex;flex-wrap:wrap;gap:7px;min-height:20px}
+.chip{background:#eef0e9;border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:13px;cursor:grab;user-select:none;white-space:nowrap}
+.chip:active{cursor:grabbing}
+.mchip{background:#e3ede8;border-color:#bcd3c8}
+.mchip .x{margin-left:6px;color:var(--clay);cursor:pointer;font-style:normal;font-weight:700}
+.eq-pool{position:sticky;top:12px}
+.eq-team{margin-top:12px}
+.eq-team-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.eq-team-acts{font-size:12px}.eq-team-acts a{color:var(--mute);text-decoration:none}.eq-team-acts a:hover{color:var(--clay)}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:10px;min-height:44px;background:#fcfbf7}
+.drop.over{border-color:var(--moss);background:#eef4f0}
+.perm-cols{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px;border-top:1px solid var(--line);padding-top:12px}
+.perm{display:block;font-size:14px;margin:5px 0}
+@media(max-width:760px){.eq-wrap{grid-template-columns:1fr}.perm-cols{grid-template-columns:1fr}}
