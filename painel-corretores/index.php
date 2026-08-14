@@ -34,9 +34,17 @@ if (is_array($agg) && isset($agg['brokers'])) {
     $semDados = true;
 }
 $isAdmin = is_admin($u);
+
+/* Status da última/atual coleta (para banner claro de atualização). */
+$stFile = rtrim($dir, '/') . '/status.json';
+$st = is_readable($stFile) ? json_decode((string)file_get_contents($stFile), true) : null;
+$rodando = is_array($st) && ($st['state'] ?? '') === 'running';
 ?><!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<?php if ($rodando): /* enquanto coleta roda, a página se atualiza sozinha */ ?>
+<meta http-equiv="refresh" content="20">
+<?php endif; ?>
 <title>Presença dos Corretores — Imobiliária Camargo</title>
 <style>
 :root{--bg:#0f1115;--card:#181b22;--card2:#1e222b;--line:#262b36;--tx:#e7eaf0;--mut:#9aa4b2;--acc:#4f8cff;--auto:#5b6472;--warn:#f0a020;--bad:#e06a5b;--good:#2fbf71}
@@ -46,6 +54,9 @@ $isAdmin = is_admin($u);
 .wrap{max-width:1120px;margin:0 auto;padding:24px 18px 70px}
 h1{font-size:21px;margin:0 0 3px}.sub{color:var(--mut);font-size:13.5px}
 .disc{border-left:3px solid var(--acc);background:#141824;padding:10px 14px;border-radius:8px;font-size:12.6px;color:#cbd3df;margin-top:12px}
+.updbar{margin-top:12px;padding:9px 14px;border-radius:8px;font-size:12.8px;color:var(--mut);background:#131820;border:1px solid var(--line)}
+.updbar a{color:var(--acc);text-decoration:none}
+.updbar.run{color:#ffcf8f;background:#211a12;border-color:#6a5320}
 .ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:18px 0 6px}
 select,button{background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:14px;cursor:pointer}
 select:focus,button:focus{outline:1px solid var(--acc)}
@@ -92,10 +103,18 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 <div class="sub" id="periodlbl"></div>
 <div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença aqui = rastro de trabalho no CRM: <b>mensagens manuais</b> (digitadas no GHL + WhatsApp externo), mais <b>notas internas e ligações</b> registradas por ele. Automação (workflow) é excluída. A "janela" vai da 1ª à última ação do dia — subestima o dia real. Escopo: conversas atribuídas a cada corretor (o que ele faz em conversas de outro dono não entra).</div>
 
+<?php if ($rodando): ?>
+  <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> a coleta começou às <?= h($st['started'] ?? '') ?> e leva alguns minutos. Esta página se atualiza sozinha quando terminar.</div>
+<?php elseif (is_array($st) && ($st['state'] ?? '') === 'done'): ?>
+  <div class="updbar"><span>Dados atualizados <?= isset($st['finished']) ? 'às ' . h($st['finished']) : '' ?><?= isset($st['mode']) && $st['mode']==='full' ? ' (varredura completa)' : '' ?>. Atualização automática diária.<?php if($isAdmin): ?> <a href="/painel-corretores/coletor.php">Atualizar agora</a> se precisar de algo mais recente.<?php endif; ?></span></div>
+<?php endif; ?>
+
 <?php if ($semDados): ?>
   <div class="aviso">
-    <?php if (!is_array($agg)): ?>
-      O painel ainda não foi gerado. <?php if($isAdmin): ?>Rode o coletor: <a href="/painel-corretores/coletor.php">atualizar agora</a> (ou aguarde o cron diário).<?php else: ?>Fale com o administrador para gerar os dados.<?php endif; ?>
+    <?php if ($rodando): ?>
+      A primeira coleta está sendo gerada agora (iniciada às <?= h($st['started'] ?? '') ?>). Esta página se atualiza sozinha em instantes.
+    <?php elseif (!is_array($agg)): ?>
+      O painel ainda não foi gerado. <?php if($isAdmin): ?>Clique em <a href="/painel-corretores/coletor.php">atualizar agora</a> (roda em segundo plano por alguns minutos) ou aguarde a atualização automática da madrugada.<?php else: ?>Fale com o administrador para gerar os dados.<?php endif; ?>
     <?php else: ?>
       Você ainda não tem nenhum corretor liberado para visualizar. Fale com o administrador.
     <?php endif; ?>
