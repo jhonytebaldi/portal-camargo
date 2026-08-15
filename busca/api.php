@@ -8,17 +8,9 @@
    Tudo exige sessão autenticada.
    ===================================================================== */
 
-require_once dirname(__DIR__) . '/lib/auth.php';   // login + RBAC do portal
-require_once __DIR__ . '/config.php';
-
-/* Nível 1: precisa estar logado no portal E ter a ferramenta 'busca'. */
-$u = current_user();
-if (!$u || !user_has_tool('busca', $u)) {
-    http_response_code(401);
-    header('Content-Type: application/json');
-    echo json_encode(['erro' => 'não autenticado']);
-    exit;
-}
+require_once __DIR__ . '/_auth.php';
+$u = busca_exige_acesso_api();          // login (portal ou próprio) + nível 1
+require_once __DIR__ . '/config.php';   // caminhos/base da Busca
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
@@ -26,9 +18,10 @@ $acao = $_GET['acao'] ?? 'dados';
 
 /* Ações que alteram a base para TODOS (upload de planilha, sync do CRM,
    pontos de referência) ficam restritas a admin/gestor. Corretores (viewer)
-   podem consultar e gerar links de seleção, mas não sobrescrever a base. */
+   podem consultar e gerar links de seleção, mas não sobrescrever a base.
+   (No modo standalone o papel é 'admin', então nada muda no uso antigo.) */
 if (in_array($acao, ['salvar', 'sync', 'salvarrefs'], true)
-    && !(is_admin($u) || ($u['papel'] ?? '') === 'gestor')) {
+    && !in_array(($u['papel'] ?? ''), ['admin', 'gestor'], true)) {
     http_response_code(403);
     echo json_encode(['erro' => 'apenas administrador ou gestor pode alterar a base']);
     exit;

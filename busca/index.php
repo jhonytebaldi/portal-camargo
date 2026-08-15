@@ -1,16 +1,14 @@
 <?php
 /* =====================================================================
-   index.php — entrega a aplicação da Busca, protegida pelo LOGIN DO PORTAL.
-
-   O guarda de senha próprio da Busca foi trocado pelo controle do portal:
-   exige estar logado E ter a ferramenta 'busca' liberada (require_tool).
-   Quem não tem acesso nem chega aqui (403 / redireciona ao login).
+   index.php — entrega a aplicação da Busca, protegida pelo porteiro
+   adaptável (_auth.php): login do portal quando é módulo do portal, ou
+   login próprio quando roda sozinha.
 
    O conteúdo continua em lib/app.html, enviado com readfile() (não passa
    pelo interpretador PHP — evita erro 500 com trechos XML da lib).
    ===================================================================== */
-require_once dirname(__DIR__) . '/lib/auth.php';   // login + RBAC do portal
-$u = require_tool('busca');                          // 403 se não tiver a ferramenta
+require_once __DIR__ . '/_auth.php';
+busca_exige_acesso();
 
 header('Content-Type: text/html; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
