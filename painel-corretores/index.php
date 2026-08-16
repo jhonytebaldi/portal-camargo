@@ -489,19 +489,21 @@ function fmtWait(ms){const m=Math.floor(ms/60000);if(m<1)return 'agora';if(m<60)
 const CANAL={TYPE_WHATSAPP:'WhatsApp',TYPE_CUSTOM_SMS:'WhatsApp',TYPE_SMS:'SMS',TYPE_INSTAGRAM:'Instagram',TYPE_FACEBOOK:'Facebook',TYPE_EMAIL:'E-mail',TYPE_GMB:'Google',TYPE_LIVE_CHAT:'Chat'};
 const waPhone=p=>{const d=(p||'').replace(/\D/g,'');return d?('https://wa.me/'+d):null;};
 const escAttr=s=>(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+// normaliza p/ busca: sem acentos, minúsculas (joão -> joao, JOÃO -> joao)
+const norm=s=>(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 function renderFila(){
   const A=(AGUARDANDO&&AGUARDANDO.items)?AGUARDANDO.items.slice():[];
   const gen=(AGUARDANDO&&AGUARDANDO.gen_ms)||0;
   A.forEach(it=>it._wait=(gen&&it.since)?Math.max(0,gen-it.since):0);
-  // ---- filtros: busca livre + responsável ----
-  const q=(state.filaQ||'').toLowerCase().trim();
+  // ---- filtros: busca livre + responsável (ignora acentos e maiúsculas) ----
+  const q=norm(state.filaQ||'').trim();
   const resp=state.filaResp||'';
   // responsáveis presentes na fila (com contagem) para o seletor
   const respCount={}; A.forEach(it=>{const b=it.broker||'—'; respCount[b]=(respCount[b]||0)+1;});
   const respList=Object.keys(respCount).sort((a,b)=>a.localeCompare(b,'pt'));
   const match=it=>{
     if(resp && (it.broker||'—')!==resp) return false;
-    if(q){const hay=((it.name||'')+' '+(it.phone||'')+' '+(it.broker||'')+' '+(it.text||'')).toLowerCase();
+    if(q){const hay=norm((it.name||'')+' '+(it.phone||'')+' '+(it.broker||'')+' '+(it.text||''));
       if(!hay.includes(q)) return false;}
     return true;
   };
