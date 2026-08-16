@@ -177,7 +177,15 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         if (!$cs) break; $pages++; $algumRecente = false;
         foreach ($cs as $c) {
             $lmd = (int)($c['lastMessageDate'] ?? 0);
-            if ($lmd >= $winStartMs) { $convIds[] = $c['id']; }
+            if ($lmd >= $winStartMs) {
+                // No backfill de mês passado, só busca mensagens de conversas que
+                // JÁ EXISTIAM no mês-alvo (dateAdded <= fim do mês). Evita varrer
+                // as milhares de conversas criadas depois — que não têm mensagem
+                // no mês e só encareceriam a coleta.
+                $ok = $ehMesCorrente;
+                if (!$ok) { $da = parse_ms((string)($c['dateAdded'] ?? '')); $ok = ($da === 0 || $da <= $END); }
+                if ($ok) $convIds[] = $c['id'];
+            }
             if ($lmd >= $stopMs) $algumRecente = true;
             /* retrato de não-lidas (só mês corrente): por corretor responsável */
             if ($ehMesCorrente) {
@@ -269,6 +277,9 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         if ($lastId) $u .= '&lastMessageId=' . urlencode($lastId);
         return $u;
     };
+    // Backfill de mês passado precisa paginar mais fundo por conversa (mensagens
+    // do mês-alvo podem estar sob meses mais novos); mês corrente cabe em 6.
+    $pageCap = ($mode === 'month' && !$ehMesCorrente) ? 40 : 6;
     $queue = $convIds; $state = []; $buf = []; $mh = curl_multi_init(); $done=0; $total=count($convIds);
     $addHandle = function (string $cid, ?string $lastId, int $page) use ($mh, &$state, $msgUrl, $HDR) {
         $ch = curl_init($msgUrl($cid, $lastId));
@@ -298,7 +309,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                         }
                         $lastId=$data['lastMessageId']??null; $hasNext=!empty($data['nextPage']);
                         $moreOld = ($oldest===PHP_INT_MAX) || ($oldest>=$winStartMs);
-                        if ($lastId && $hasNext && $moreOld && $st['page']<6) { $addHandle($cid,$lastId,$st['page']+1); $advance=false; }
+                        if ($lastId && $hasNext && $moreOld && $st['page']<$pageCap) { $addHandle($cid,$lastId,$st['page']+1); $advance=false; }
                     }
                 }
             }
