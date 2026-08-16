@@ -142,6 +142,11 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 .chip.orange{background:#211a12;color:#f0b552;border-color:#5a4520}
 .chip.yellow{background:#23231a;color:#c9a253;border-color:#44401f}
 .chip.mini{padding:1px 7px;font-size:10.5px;margin:1px 3px 1px 0;border-radius:5px;cursor:default;white-space:nowrap}
+.score{display:inline-block;min-width:22px;text-align:center;padding:2px 8px;border-radius:9px;font-weight:800;font-size:13px;cursor:default;vertical-align:middle}
+.score.ok{background:#173a28;color:#57d38c}
+.score.y{background:#39340f;color:#e9c65a}
+.score.o{background:#3d2a12;color:#f0a848}
+.score.r{background:#3d1414;color:#ff6a5a}
 td.aten{white-space:normal;max-width:340px;line-height:1.9}
 .sortbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:14px 0 2px}
 .sortb{padding:4px 10px;font-size:12px;border-radius:16px}
@@ -297,7 +302,7 @@ function stats(b,days){
   days.forEach(d=>{const r=b.days[d.key];
     const cnt=r?r.n:0, ici=r?r.ic:0, cli=r?r.cl:0;
     const present=r&&(r.n>0||r.ic>0||r.cl>0);
-    series.push({...d,n:cnt,ic:ici,cl:cli,first:r?r.first:null,last:r?r.last:null,
+    series.push({...d,n:cnt,ic:ici,cl:cli,inb:r?(r.in||0):0,first:r?r.first:null,last:r?r.last:null,
                  pfirst:r?r.pfirst:null,plast:r?r.plast:null,present:!!present,
                  rt_hist:r&&r.rt_hist?r.rt_hist:null,rt_n:r?r.rt_n:0,rt_sum:r?r.rt_sum:0});
     if(r){n+=r.n;ic+=r.ic;cl+=r.cl;
@@ -329,21 +334,42 @@ const unreadClient=b=>(LIVE&&LIVE.unread_client)?(LIVE.unread_client[b.id]||0):n
 const unreadFup=b=>(LIVE&&LIVE.unread_followup)?(LIVE.unread_followup[b.id]||0):0;      // follow-up (automação/pós-ligação)
 const wait24=b=>(LIVE&&LIVE.wait24)?(LIVE.wait24[b.id]||0):0;
 
-/* -------- Alertas de atenção -------- */
+/* -------- Ranking de atenção: 3 blocos de urgência que competem --------
+   Bloco 1 — FILA AGORA (dominante): 2 pts por cliente aguardando + 3 extra por
+             cliente esperando há +24h. Só no mês corrente (dado ao vivo).
+   Bloco 2 — RESPONSIVIDADE (leve): mediana de resposta em horário comercial —
+             <15min=0, 15–30min=1 (amarelo), 30–60min=2 (laranja), +60min=3 (vermelho).
+   Bloco 3 — ABANDONO COM DEMANDA: dias úteis em que o CLIENTE falou (inbound>0)
+             e o corretor não fez nada manual. 1 pt/dia (teto 5) + 2 se for o
+             último dia útil. Dia sem cliente falando não pontua. */
 function lastBizDay(days){for(let i=days.length-1;i>=0;i--)if(!days[i].weekend)return days[i];return null;}
-function alertsFor(b,days){
-  const s=stats(b,days); const out=[];
-  const lb=lastBizDay(days);
-  if(lb){const r=b.days[lb.key];const act=r&&(r.n>0||r.ic>0||r.cl>0);
-    if(!act)out.push({w:3,c:'red',s:`sem ${lb.label}`,t:`sem atividade em ${lb.label} (último dia útil)`});}
-  if(s.gaps.length)out.push({w:2,c:'orange',s:`${s.gaps.length}d zerados`,t:`${s.gaps.length} dia(s) útil sem nenhuma atividade: ${s.gaps.join(', ')}`});
-  if(s.rtMed!=null&&s.rtMed>1800)out.push({w:2,c:'orange',s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta mediano ${fmtDur(s.rtMed)} (acima de 30 min)`});
-  if(LIVE){const un=unreadClient(b);if(un>5)out.push({w:3,c:'red',s:`${un} aguardando`,t:`${un} clientes aguardando resposta agora (última mensagem é do cliente)`});}
-  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',s:`${wq}×+24h`,t:`${wq} cliente(s) aguardando resposta há mais de 24h`});}
-  const autoDays=[];days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
-    if(r){const ah=r.ah.reduce((a,b)=>a+b,0);const man=r.n+r.ic+r.cl;if(ah>0&&man===0)autoDays.push(d.label);}});
-  if(autoDays.length)out.push({w:1,c:'yellow',s:`só auto ${autoDays.length}d`,t:`dias só com automação (nenhuma ação manual): ${autoDays.join(', ')}`});
-  return out;
+function respScore(rt){if(rt==null)return 0;if(rt<900)return 0;if(rt<1800)return 1;if(rt<3600)return 2;return 3;}
+function abandono(b,days){
+  let cnt=0,lastAb=false;const labels=[];const lb=lastBizDay(days);
+  days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
+    const inb=r?(r.in||0):0;const man=r?(r.n+r.ic+r.cl):0;
+    if(inb>0&&man===0){cnt++;labels.push(d.label);if(lb&&d.key===lb.key)lastAb=true;}});
+  return {cnt,lastAb,labels};
+}
+function scoreBand(sc){if(sc<=0)return 'ok';if(sc<=4)return 'y';if(sc<=11)return 'o';return 'r';}
+function attention(b,days,s){
+  s=s||stats(b,days);
+  const ag=unreadClient(b)||0, w24=wait24(b)||0;   // 0 se mês passado (sem LIVE)
+  const b1=LIVE?(2*ag+3*w24):0;
+  const b2=respScore(s.rtMed);
+  const ab=abandono(b,days);
+  const b3=Math.min(ab.cnt,5)+(ab.lastAb?2:0);
+  const score=b1+b2+b3;
+  const chips=[];
+  if(LIVE&&ag>0)chips.push({c:ag>5?'red':(ag>=3?'orange':'yellow'),s:`${ag} aguardando`,t:`${ag} cliente(s) aguardando resposta agora (bloco Fila = ${b1} pts)`});
+  if(LIVE&&w24>0)chips.push({c:'red',s:`${w24}×+24h`,t:`${w24} cliente(s) esperando há mais de 24h — peso extra no bloco Fila`});
+  if(b2>0)chips.push({c:b2>=3?'red':(b2>=2?'orange':'yellow'),s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta mediano ${fmtDur(s.rtMed)} em horário comercial (bloco Resposta = ${b2} pts)`});
+  if(ab.cnt>0)chips.push({c:ab.lastAb?'orange':'yellow',s:`${ab.cnt}d sem retorno`,t:`${ab.cnt} dia(s) útil com o cliente falando e nenhuma ação manual: ${ab.labels.join(', ')}${ab.lastAb?' — inclui o último dia útil':''} (bloco Abandono = ${b3} pts)`});
+  const tip=`Score de atenção: ${score} pts (blocos competem — quanto maior, mais urgente)`
+    +`\n• Fila agora: ${LIVE?`${ag} aguardando`+(w24?` (${w24} há +24h)`:''):'sem dado ao vivo'} = ${b1} pts`
+    +`\n• Responsividade: mediana ${s.rtMed==null?'—':fmtDur(s.rtMed)} = ${b2} pts`
+    +`\n• Abandono (cliente falou e ninguém agiu): ${ab.cnt} dia(s) = ${b3} pts`;
+  return {score,b1,b2,b3,ag,w24,rtMed:s.rtMed,ab,chips,tip};
 }
 
 /* ordenação da visão geral */
@@ -362,7 +388,7 @@ function sortVal(r,k){
   if(k==='unread')return unreadClient(r.b)||0;
   if(k==='fup')return unreadFup(r.b)||0;
   if(k==='dias')return r.s.activeP;
-  if(k==='aten')return r.al.reduce((a,x)=>a+x.w,0)*1000 + (r.s.n>0?0:0);
+  if(k==='aten')return r.at?r.at.score:-1;
   if(k==='nome')return r.b.name.toLowerCase();
   return r.s.n;
 }
@@ -381,21 +407,23 @@ const TT={
   resp:'RESP. MED.: tempo típico (mediana) entre o 1º recado do cliente e a 1ª resposta manual do corretor. Conta só recados recebidos em horário comercial — 8h às 20h, horário de Brasília. Laranja = acima de 30 min.',
   dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
   ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
-  aten:'ATENÇÃO: sinais de alerta do corretor. Passe o mouse em cada selo para ver o detalhe.',
+  aten:'ATENÇÃO: score de urgência do corretor (quanto maior, mais precisa de atenção). Soma três blocos que competem — fila de clientes esperando agora (dominante), tempo de resposta e dias em que o cliente falou e ninguém agiu. Passe o mouse no número para ver a conta por bloco.',
 };
 
 function renderOverview(days){
   const rows=ACT.map(b=>{const s=stats(b,days);
-    // alertas só para quem tem atividade no período (não polui com dormentes)
-    const al=(s.n+s.ic+s.cl)>0?alertsFor(b,days):[];
-    return {b,s,al};});
-  const k=state.sortKey||(LIVE?'unread':'aten'), dir=state.sortDir||-1;
+    // score de atenção para quem tem atividade no período OU clientes aguardando
+    // agora (o sumido-com-fila também precisa aparecer no topo)
+    const temFila=LIVE&&(unreadClient(b)||0)>0;
+    const at=((s.n+s.ic+s.cl)>0||temFila)?attention(b,days,s):null;
+    return {b,s,at};});
+  const k=state.sortKey||'aten', dir=state.sortDir||-1;
   rows.sort((a,b)=>{const va=sortVal(a,k),vb=sortVal(b,k);
     if(va<vb)return -dir; if(va>vb)return dir; return a.s.n<b.s.n?1:-1;});
   const totMsg=rows.reduce((s,r)=>s+r.s.n,0);
   const wdays=days.filter(d=>!d.weekend).length;
   const comAtiv=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length;
-  const comAlerta=rows.filter(r=>r.al.length>0).length;
+  const comAlerta=rows.filter(r=>r.at&&r.at.score>0).length;
   const cliTot=LIVE?ACT.reduce((s,b)=>s+(unreadClient(b)||0),0):null;
   const fupTot=LIVE?ACT.reduce((s,b)=>s+unreadFup(b),0):null;
   let h=`<div class="kpis">
@@ -416,8 +444,11 @@ function renderOverview(days){
     const waitCell=cli==null?'<span class="mut">—</span>':(cli>0?`<span class="wait-big">${cli}</span>`:'<span class="wait-zero">0</span>');
     const fupCell=cli==null?'<span class="mut">—</span>':(fup>0?`<span class="fup-num" title="não lidas de follow-up: automação/pós-ligação, sem recado novo do cliente">${fup}</span>`:'<span class="mut">0</span>');
     const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
-    const aten=r.al.length?r.al.map(a=>`<span class="chip mini ${a.c}" title="${a.t}">${a.s}</span>`).join('')
-      :((s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>');
+    let aten;
+    if(r.at){
+      const chips=r.at.chips.map(a=>`<span class="chip mini ${a.c}" title="${escAttr(a.t)}">${a.s}</span>`).join('');
+      aten=`<span class="score ${scoreBand(r.at.score)}" title="${escAttr(r.at.tip)}">${r.at.score}</span>${chips?' '+chips:(r.at.score<=0?' <span class="pill ok">ok</span>':'')}`;
+    } else aten=(s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>';
     h+=`<tr class="clk" data-id="${r.b.id}"><td title="${TT.nome}">${r.b.name}</td>
       <td class="n wait-col" title="${TT.unread}">${waitCell}</td>
       <td class="n" title="${TT.fup}">${fupCell}</td>

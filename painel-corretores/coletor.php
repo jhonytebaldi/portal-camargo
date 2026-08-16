@@ -180,7 +180,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $unreadLookMs = $ehMesCorrente ? ($now->getTimestamp() - UNREAD_LOOKBACK_DAYS*86400) * 1000 : PHP_INT_MAX;
     $stopMs = min($winStartMs, $unreadLookMs);   // pagina conversas até o mais antigo dos dois
     $base = "https://services.leadconnectorhq.com/conversations/search?locationId={$LOC}&limit=100&sortBy=last_message_date&sort=desc";
-    $cursor = null; $convIds = []; $pages = 0;
+    $cursor = null; $convIds = []; $pages = 0; $CONV_ASS = [];
     $unread_client = []; $unread_followup = []; $wait24 = []; $waitList = [];
     $nowMs = $now->getTimestamp()*1000; $dia1Ms = $nowMs - 86400*1000;
     while ($pages < 500) {
@@ -196,7 +196,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 // no mês e só encareceriam a coleta.
                 $ok = $ehMesCorrente;
                 if (!$ok) { $da = parse_ms((string)($c['dateAdded'] ?? '')); $ok = ($da === 0 || $da <= $END); }
-                if ($ok) $convIds[] = $c['id'];
+                if ($ok) { $convIds[] = $c['id']; $CONV_ASS[$c['id']] = $c['assignedTo'] ?? null; }
             }
             if ($lmd >= $stopMs) $algumRecente = true;
             /* retrato de não-lidas (só mês corrente): por corretor responsável.
@@ -229,16 +229,32 @@ function run_collection(string $mode, ?string $monthArg = null): void {
 
     /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa ===== */
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia
-    $novoDia = fn() => ['n'=>0,'app'=>0,'api'=>0,'ic'=>0,'cl'=>0,'first'=>null,'last'=>null,
+    $novoDia = fn() => ['n'=>0,'app'=>0,'api'=>0,'ic'=>0,'cl'=>0,'in'=>0,'first'=>null,'last'=>null,
                         'pfirst'=>null,'plast'=>null,'mh'=>array_fill(0,24,0),'ah'=>array_fill(0,24,0),
                         'rt_n'=>0,'rt_sum'=>0,'rt_hist'=>array_fill(0,10,0)];
 
-    $processConversa = function (array $msgs) use (&$acc, $BIDS, $CUT, $CLIENT, $winStartMs, $END, $TZ, $novoDia) {
+    // $assBroker = corretor responsável pela conversa (assignedTo). Serve para
+    // atribuir as mensagens RECEBIDAS do cliente (inbound) ao dia dele — isso
+    // mede "demanda" (houve cliente falando) e gatilha o bloco de abandono só
+    // quando de fato havia o que atender.
+    $processConversa = function (array $msgs, ?string $assBroker) use (&$acc, $BIDS, $CUT, $CLIENT, $winStartMs, $END, $TZ, $novoDia) {
         /* ordena crescente por tempo */
         usort($msgs, fn($a,$b)=>$a['e'] <=> $b['e']);
-        /* --- presença (contagem por autor) --- */
+        /* --- presença (contagem por autor) + demanda (inbound do cliente) --- */
         foreach ($msgs as $m) {
             $e = $m['e']; if (!($winStartMs <= $e && $e < $END)) continue;
+            if ($m['dir'] === 'inbound') {
+                // mensagem de fato do cliente (canal real) atribuída ao responsável
+                if ($assBroker !== null && isset($BIDS[$assBroker]) && isset($CLIENT[$m['mt']])
+                    && !(isset($CUT[$assBroker]) && $e > $CUT[$assBroker])) {
+                    $dloc = (new DateTime('@'.intdiv($e,1000)))->setTimezone($TZ);
+                    $key = $dloc->format('Y-m-d');
+                    if (!isset($acc[$assBroker])) $acc[$assBroker] = [];
+                    if (!isset($acc[$assBroker][$key])) $acc[$assBroker][$key] = $novoDia();
+                    $acc[$assBroker][$key]['in']++;
+                }
+                continue;
+            }
             if ($m['dir'] !== 'outbound') continue;
             $uid = $m['uid']; if ($uid === null || !isset($BIDS[$uid])) continue;
             if (isset($CUT[$uid]) && $e > $CUT[$uid]) continue;   // após desligamento, não conta
@@ -336,7 +352,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 }
             }
             if ($advance) {
-                if ($st) { $cid=$st['cid']; if(!empty($buf[$cid])) $processConversa($buf[$cid]); unset($buf[$cid]); }
+                if ($st) { $cid=$st['cid']; if(!empty($buf[$cid])) $processConversa($buf[$cid], $CONV_ASS[$cid] ?? null); unset($buf[$cid]); }
                 $done++; if ($done%300===0) painel_log("proc {$done}/{$total}");
                 if ($queue) { $ncid=array_shift($queue); $buf[$ncid]=[]; $addHandle($ncid,null,0); }
             }
@@ -445,7 +461,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $winDays = [];
     foreach ($acc as $bid=>$days) {
         foreach ($days as $k=>$d) {
-            $winDays[$bid][$k] = ['n'=>$d['n'],'app'=>$d['app'],'api'=>$d['api'],'ic'=>$d['ic'],'cl'=>$d['cl'],
+            $winDays[$bid][$k] = ['n'=>$d['n'],'app'=>$d['app'],'api'=>$d['api'],'ic'=>$d['ic'],'cl'=>$d['cl'],'in'=>$d['in'],
                 'first'=>$hm($d['first']),'last'=>$hm($d['last']),'pfirst'=>$hm($d['pfirst']),'plast'=>$hm($d['plast']),
                 'mh'=>$d['mh'],'ah'=>$d['ah'],'rt_n'=>$d['rt_n'],'rt_sum'=>$d['rt_sum'],'rt_hist'=>$d['rt_hist']];
         }
@@ -559,6 +575,21 @@ if (!$u || $u['papel'] !== 'admin') { http_response_code(403); exit('Apenas admi
 portal_load_config();
 header('Content-Type: text/html; charset=utf-8');
 $log = painel_data_dir() . '/coletor.log';
+// Recoleta COMPLETA do mês corrente (recomputa todos os dias, ignorando o
+// cache) — usar quando muda o formato dos dados coletados (ex.: passou a
+// contar mensagens recebidas por dia). ?full=1
+if (($_GET['full'] ?? '') === '1') {
+    status_write(['state'=>'running','mode'=>'full','started'=>(new DateTime('now',new DateTimeZone('-03:00')))->format('d/m H:i')]);
+    $spawned = spawn_background($log, '--full');
+    render_started_page($spawned, ' (recoleta completa do mês)');
+    if (!$spawned) {
+        if (function_exists('litespeed_finish_request')) litespeed_finish_request();
+        elseif (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+        @set_time_limit(0); @ignore_user_abort(true);
+        run_collection('full');
+    }
+    exit;
+}
 $mes = $_GET['mes'] ?? '';
 if (preg_match('/^\d{4}-\d{2}$/', $mes)) {
     status_write(['state'=>'running','mode'=>"backfill {$mes}",'started'=>(new DateTime('now',new DateTimeZone('-03:00')))->format('d/m H:i')]);
