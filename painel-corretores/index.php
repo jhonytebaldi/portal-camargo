@@ -146,6 +146,14 @@ td.aten{white-space:normal;max-width:340px;line-height:1.9}
 .sortbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:14px 0 2px}
 .sortb{padding:4px 10px;font-size:12px;border-radius:16px}
 .sortb.on{background:#26406e;border-color:var(--acc);color:#dbe6ff}
+.filterbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 2px}
+.filterbar #filaSearch{flex:1 1 320px;min-width:220px;padding:7px 12px;font-size:13px;border-radius:18px;
+  background:#0f1626;border:1px solid #2a3446;color:#e7edf6}
+.filterbar #filaSearch:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(90,160,255,.15)}
+.filterbar #filaSearch::placeholder{color:#6b7688}
+.filterbar #filaResp{padding:7px 10px;font-size:13px;border-radius:18px;max-width:260px;
+  background:#0f1626;border:1px solid #2a3446;color:#e7edf6}
+.filterbar #filaResp:focus{outline:none;border-color:var(--acc)}
 th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--acc)}
 .tabs{display:flex;gap:4px;margin:16px 0 2px;border-bottom:1px solid var(--line)}
 .tabb{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;color:var(--mut);padding:8px 14px;font-size:14px;cursor:pointer}
@@ -480,20 +488,46 @@ function fmtWait(ms){const m=Math.floor(ms/60000);if(m<1)return 'agora';if(m<60)
   const d=Math.floor(h/24);return d+' dia'+(d>1?'s':'')+(h%24?' '+(h%24)+'h':'');}
 const CANAL={TYPE_WHATSAPP:'WhatsApp',TYPE_CUSTOM_SMS:'WhatsApp',TYPE_SMS:'SMS',TYPE_INSTAGRAM:'Instagram',TYPE_FACEBOOK:'Facebook',TYPE_EMAIL:'E-mail',TYPE_GMB:'Google',TYPE_LIVE_CHAT:'Chat'};
 const waPhone=p=>{const d=(p||'').replace(/\D/g,'');return d?('https://wa.me/'+d):null;};
+const escAttr=s=>(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 function renderFila(){
   const A=(AGUARDANDO&&AGUARDANDO.items)?AGUARDANDO.items.slice():[];
   const gen=(AGUARDANDO&&AGUARDANDO.gen_ms)||0;
   A.forEach(it=>it._wait=(gen&&it.since)?Math.max(0,gen-it.since):0);
+  // ---- filtros: busca livre + responsável ----
+  const q=(state.filaQ||'').toLowerCase().trim();
+  const resp=state.filaResp||'';
+  // responsáveis presentes na fila (com contagem) para o seletor
+  const respCount={}; A.forEach(it=>{const b=it.broker||'—'; respCount[b]=(respCount[b]||0)+1;});
+  const respList=Object.keys(respCount).sort((a,b)=>a.localeCompare(b,'pt'));
+  const match=it=>{
+    if(resp && (it.broker||'—')!==resp) return false;
+    if(q){const hay=((it.name||'')+' '+(it.phone||'')+' '+(it.broker||'')+' '+(it.text||'')).toLowerCase();
+      if(!hay.includes(q)) return false;}
+    return true;
+  };
+  const A2=A.filter(match);
   const k=state.filaSort,dir=state.filaDir;
   const val=it=>k==='broker'?(it.broker||'').toLowerCase():k==='cliente'?(it.name||'').toLowerCase():it._wait;
-  A.sort((a,b)=>{const va=val(a),vb=val(b);if(va<vb)return -dir;if(va>vb)return dir;return b._wait-a._wait;});
+  A2.sort((a,b)=>{const va=val(a),vb=val(b);if(va<vb)return -dir;if(va>vb)return dir;return b._wait-a._wait;});
   const SF=[{k:'wait',l:'Tempo de espera'},{k:'broker',l:'Responsável'},{k:'cliente',l:'Cliente'}];
-  let h=`<div class="sortbar"><span class="tag">Ordenar por:</span>`+
+  const filtrando=(q||resp);
+  const cont=filtrando?`${A2.length} de ${A.length} aguardando`:`${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}`;
+  let h=`<div class="filterbar">
+      <input id="filaSearch" type="search" autocomplete="off" placeholder="Buscar por cliente, telefone, responsável ou mensagem…" value="${escAttr(state.filaQ||'')}" title="Filtra a fila em tempo real por qualquer trecho do nome do cliente, telefone, responsável ou da última mensagem.">
+      <select id="filaResp" title="Filtra a fila por corretor responsável.">
+        <option value="">Todos os responsáveis (${A.length})</option>
+        ${respList.map(b=>`<option value="${escAttr(b)}"${b===resp?' selected':''}>${b} (${respCount[b]})</option>`).join('')}
+      </select>
+      ${filtrando?`<button id="filaClear" class="sortb" title="Limpar filtros">✕ limpar</button>`:''}
+      <span class="tag" style="margin-left:auto">${cont}</span>
+    </div>
+    <div class="sortbar"><span class="tag">Ordenar por:</span>`+
     SF.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-fk="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
-    `<span class="tag" style="margin-left:auto">${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}</span></div>`;
+    `</div>`;
   if(!A.length){h+=`<div class="card">Nenhum cliente aguardando resposta agora. 👍</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
+  if(!A2.length){h+=`<div class="card">Nenhum resultado para esse filtro. <a href="#" id="filaClear2">Limpar</a>.</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
   h+=`<div class="card"><table class="fila"><thead><tr><th title="Clique na linha para ver as últimas mensagens da conversa."></th><th class="sortable" data-fk="cliente" title="Nome do cliente que está aguardando resposta.">Cliente</th><th title="Telefone do cliente. Clique para abrir o WhatsApp.">Telefone</th><th class="sortable" data-fk="broker" title="Corretor responsável pela conversa no CRM.">Responsável</th><th class="n sortable" data-fk="wait" title="Há quanto tempo o cliente está esperando (desde a última mensagem dele). Laranja = +4h, vermelho = +24h.">Espera</th><th title="Canal por onde o cliente falou (WhatsApp, Instagram, SMS etc.).">Canal</th><th title="Última mensagem de fato do cliente (ignora atividades do sistema, comentários internos e ligações).">Última mensagem do cliente</th><th title="Abre a ficha do cliente no WeSales, com a conversa dele ao lado.">Conversa</th></tr></thead><tbody>`;
-  A.forEach((it,i)=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
+  A2.forEach((it,i)=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
     const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
     const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
     const cu=crmUrl(it);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir o cliente no CRM (WeSales)">Abrir ↗</a>`:'—';
@@ -519,12 +553,24 @@ function renderThread(th){
 }
 function bindFila(){
   document.querySelectorAll('th[data-fk]').forEach(el=>el.onclick=()=>{
-    const nk=el.dataset.fk;if(state.filaSort===nk)state.filaDir=-state.filaDir;else{state.filaSort=nk;state.filaDir=(nk==='wait')?-1:1;}render();});
+    const nk=el.dataset.fk;if(state.filaSort===nk)state.filaDir=-state.filaDir;else{state.filaSort=nk;state.filaDir=(nk==='wait')?-1:1;}renderFila();});
   document.querySelectorAll('tr.filarow.hasthread').forEach(tr=>tr.onclick=e=>{
     if(e.target.closest('a'))return; // não intercepta cliques em links (telefone/Abrir)
     const i=tr.dataset.i;const dr=document.querySelector(`tr.threadrow[data-ti="${i}"]`);if(!dr)return;
     const open=dr.style.display!=='none';dr.style.display=open?'none':'';
     const c=tr.querySelector('.caret');if(c)c.textContent=open?'▶':'▼';tr.classList.toggle('on',!open);});
+  // ---- filtros da fila ----
+  const inp=document.getElementById('filaSearch');
+  if(inp){
+    inp.oninput=()=>{state.filaQ=inp.value;state._filaFocus=true;renderFila();};
+    if(state._filaFocus){inp.focus();const v=inp.value;inp.value='';inp.value=v;state._filaFocus=false;}
+  }
+  const sel=document.getElementById('filaResp');
+  if(sel)sel.onchange=()=>{state.filaResp=sel.value;renderFila();};
+  const clr=document.getElementById('filaClear');
+  if(clr)clr.onclick=()=>{state.filaQ='';state.filaResp='';renderFila();};
+  const clr2=document.getElementById('filaClear2');
+  if(clr2)clr2.onclick=e=>{e.preventDefault();state.filaQ='';state.filaResp='';renderFila();};
 }
 
 function buildTabs(){
