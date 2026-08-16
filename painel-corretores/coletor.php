@@ -91,7 +91,10 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $now = new DateTime('now', $TZ);
     $dir = painel_data_dir();
 
-    $lockF = fopen($dir . '/coletor.lock', 'c');
+    // Backfill de mês passado usa uma trava PRÓPRIA, para não bloquear a coleta
+    // do mês corrente (cron de hora em hora) enquanto roda.
+    $isBackfill = ($mode === 'month' && $monthArg && $monthArg !== $now->format('Y-m'));
+    $lockF = fopen($dir . '/' . ($isBackfill ? 'coletor_backfill.lock' : 'coletor.lock'), 'c');
     if ($lockF && !flock($lockF, LOCK_EX | LOCK_NB)) { painel_log('Outra coleta em andamento. Saindo.'); return; }
 
     /* ---- Período (mês) ---- */
