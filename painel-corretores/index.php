@@ -152,6 +152,11 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--acc)}
 .tabb.on{color:var(--tx);border-bottom-color:var(--acc);font-weight:600}
 td.msg{white-space:normal;max-width:440px;color:#cbd3df;font-size:12.8px;line-height:1.45}
 td a{color:var(--acc);text-decoration:none}
+/* Aguardando = ponto de atenção nº1: número grande e vermelho vivo */
+.wait-big{color:#ff2d2d;font-weight:800;font-size:21px;line-height:1}
+.wait-zero{color:#5b6472}
+.fup-num{color:#e0a13a;font-weight:600}
+th.wait-col,td.wait-col{border-left:2px solid rgba(255,45,45,.22);border-right:1px solid rgba(255,45,45,.12)}
 a.crmlink{display:inline-block;padding:3px 9px;border:1px solid var(--acc);border-radius:14px;font-size:12px;white-space:nowrap}
 a.crmlink:hover{background:var(--acc);color:#0b1220}
 table.fila tr.hasthread{cursor:pointer}
@@ -335,10 +340,11 @@ function alertsFor(b,days){
 
 /* ordenação da visão geral */
 const SORTS=[
+  {k:'unread', l:'Aguardando'},
+  {k:'fup', l:'Follow-ups pend.'},
   {k:'aten', l:'Atenção'},
   {k:'msgs', l:'Mensagens'},
   {k:'resp', l:'Tempo de resposta'},
-  {k:'unread', l:'Aguardando'},
   {k:'dias', l:'Dias ativos'},
   {k:'nome', l:'Nome'},
 ];
@@ -346,6 +352,7 @@ function sortVal(r,k){
   if(k==='msgs')return r.s.n;
   if(k==='resp')return r.s.rtMed==null?-1:r.s.rtMed;
   if(k==='unread')return unreadClient(r.b)||0;
+  if(k==='fup')return unreadFup(r.b)||0;
   if(k==='dias')return r.s.activeP;
   if(k==='aten')return r.al.reduce((a,x)=>a+x.w,0)*1000 + (r.s.n>0?0:0);
   if(k==='nome')return r.b.name.toLowerCase();
@@ -362,7 +369,7 @@ function renderOverview(days){
     // alertas só para quem tem atividade no período (não polui com dormentes)
     const al=(s.n+s.ic+s.cl)>0?alertsFor(b,days):[];
     return {b,s,al};});
-  const k=state.sortKey||'aten', dir=state.sortDir||-1;
+  const k=state.sortKey||(LIVE?'unread':'aten'), dir=state.sortDir||-1;
   rows.sort((a,b)=>{const va=sortVal(a,k),vb=sortVal(b,k);
     if(va<vb)return -dir; if(va>vb)return dir; return a.s.n<b.s.n?1:-1;});
   const totMsg=rows.reduce((s,r)=>s+r.s.n,0);
@@ -375,28 +382,31 @@ function renderOverview(days){
     <div class="kpi"><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
     <div class="kpi"><div class="v">${comAtiv}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
     <div class="kpi"><div class="v" style="color:${comAlerta?'#e06a5b':'inherit'}">${comAlerta}</div><div class="l">precisam de atenção</div></div>
-    <div class="kpi"><div class="v" style="color:${cliTot?'#e06a5b':'inherit'}">${cliTot==null?'—':cliTot}</div><div class="l">${EH_MES_CORRENTE?'clientes aguardando agora':'aguardando (só mês corrente)'}${fupTot!=null?` <span class="mut" style="font-size:11px">· ${fupTot} follow-up</span>`:''}</div></div>
+    <div class="kpi"><div class="v" style="color:${cliTot?'#ff2d2d':'inherit'};${cliTot?'font-weight:800':''}">${cliTot==null?'—':cliTot}</div><div class="l">${EH_MES_CORRENTE?'clientes aguardando agora':'aguardando (só mês corrente)'}</div></div>
+    <div class="kpi"><div class="v" style="color:${fupTot?'#e0a13a':'inherit'}">${fupTot==null?'—':fupTot}</div><div class="l">follow-ups pendentes</div></div>
   </div>
   <div class="sortbar"><span class="tag">Ordenar por:</span>`+
     SORTS.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-k="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
   `</div>
   <div class="card"><table><thead><tr>
-  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="unread">Aguardando</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
+  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable wait-col" data-k="unread">Aguardando</th><th class="n sortable" data-k="fup">Follow-ups pend.</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{const s=r.s;
     const cli=unreadClient(r.b), fup=unreadFup(r.b);
-    const unCell=cli==null?'—':((cli>5?`<span class=zero>${cli}</span>`:(cli||'0'))+(fup?` <span class="mut" style="font-size:11px" title="não lidas de follow-up (automação/pós-ligação), sem recado novo do cliente">+${fup}</span>`:''));
+    const waitCell=cli==null?'<span class="mut">—</span>':(cli>0?`<span class="wait-big">${cli}</span>`:'<span class="wait-zero">0</span>');
+    const fupCell=cli==null?'<span class="mut">—</span>':(fup>0?`<span class="fup-num" title="não lidas de follow-up: automação/pós-ligação, sem recado novo do cliente">${fup}</span>`:'<span class="mut">0</span>');
     const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
     const aten=r.al.length?r.al.map(a=>`<span class="chip mini ${a.c}" title="${a.t}">${a.s}</span>`).join('')
       :((s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>');
     h+=`<tr class="clk" data-id="${r.b.id}"><td>${r.b.name}</td>
+      <td class="n wait-col">${waitCell}</td>
+      <td class="n">${fupCell}</td>
       <td class="n">${s.n||'<span class=zero>0</span>'}</td>
       <td class="n">${rtCell}</td>
-      <td class="n">${unCell}</td>
       <td class="n">${s.activeP}/${wdays}</td>
       <td>${spark(s.series)}</td>
       <td class="aten">${aten}</td></tr>`;});
-  h+=`</tbody></table><div class="foot">Passe o mouse nos selos de <b>Atenção</b> para o detalhe. "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "<b>Aguardando</b>" = clientes com a última mensagem sem resposta (cliente de fato esperando); o "<span class="mut">+N</span>" ao lado são não lidas de <b>follow-up</b> (viraram não lida por automação/pós-ligação, sem recado novo do cliente)${EH_MES_CORRENTE?'':' — só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
