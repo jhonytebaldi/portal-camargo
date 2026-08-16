@@ -38,6 +38,16 @@ const PAINEL_CONCURRENCY = 8;
 const RT_CAP     = 216000;               // teto sanitário: 5 dias úteis (60h comerciais)
 const UNREAD_LOOKBACK_DAYS = 12;         // até onde varrer conversas p/ não-lidas
 
+/* O instante (ms) caiu dentro do horário comercial? (seg–sex 8–20, sáb 8:30–11:30). */
+function in_biz(int $ms, DateTimeZone $TZ): bool {
+    $d = (new DateTime('@'.intdiv($ms,1000)))->setTimezone($TZ);
+    $dow = (int)$d->format('N');
+    $sod = (int)$d->format('G')*3600 + (int)$d->format('i')*60 + (int)$d->format('s');
+    if ($dow >= 1 && $dow <= 5) return $sod >= 28800 && $sod < 72000;   // 8:00–20:00
+    if ($dow === 6)             return $sod >= 30600 && $sod < 41400;   // 8:30–11:30
+    return false;                                                       // domingo
+}
+
 /* Segundos de horário comercial decorridos entre dois instantes (ms). */
 function biz_seconds(int $aMs, int $bMs, DateTimeZone $TZ): int {
     if ($bMs <= $aMs) return 0;
@@ -322,13 +332,15 @@ function run_collection(string $mode, ?string $monthArg = null): void {
             if ($pend === null) continue;                 // resposta sem inbound pendente
             if ($uid === null || !isset($BIDS[$uid])) { $pend = null; continue; }
             if (isset($CUT[$uid]) && $e > $CUT[$uid]) { $pend = null; continue; }
-            // tempo de resposta = segundos COMERCIAIS decorridos (noites/domingos
-            // não contam). A madrugada some sozinha, então nada de descartar por
-            // "cross-day": só um teto sanitário de 5 dias úteis p/ par quebrado.
+            // Só conta recados que CHEGARAM em horário comercial (o cliente falou
+            // durante o expediente). O tempo é medido em segundos COMERCIAIS
+            // decorridos — noite/domingo não contam, então resposta que atravessa
+            // a madrugada não é penalizada e a lenta deixa de ser descartada.
+            // Teto sanitário de 5 dias úteis só p/ par quebrado.
             $delta = biz_seconds($pend, $e, $TZ);
             $iloc = (new DateTime('@'.intdiv($pend,1000)))->setTimezone($TZ);
             $ikey = $iloc->format('Y-m-d');
-            if ($delta > 0 && $delta <= RT_CAP
+            if ($delta > 0 && $delta <= RT_CAP && in_biz($pend, $TZ)
                 && $winStartMs <= $pend && $pend < $END) {
                 if (!isset($acc[$uid])) $acc[$uid] = [];
                 if (!isset($acc[$uid][$ikey])) $acc[$uid][$ikey] = $novoDia();
