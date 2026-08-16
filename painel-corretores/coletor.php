@@ -417,10 +417,12 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 'text'=>trim(mb_substr(trim((string)($bi['text'] ?? '')), 0, 400)),
                 'thread'=>($bi['thread'] ?? [])];
         }
-        @file_put_contents($dir.'/aguardando.json', json_encode(
+        $agJson = json_encode(
             ['generated'=>$now->format('d/m/Y H:i'), 'gen_ms'=>$now->getTimestamp()*1000, 'items'=>$aguardando],
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        painel_log('fila de atendimento: '.count($aguardando).' clientes aguardando');
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if ($agJson === false) painel_log('DBG aguardando json_encode FALSE: '.json_last_error_msg());
+        $wr = @file_put_contents($dir.'/aguardando.json', (string)$agJson);
+        painel_log('fila de atendimento: '.count($aguardando).' clientes · gravou '.var_export($wr,true).' bytes em '.$dir.'/aguardando.json');
     }
 
     /* ===== 3) Converte janela + funde com dias congelados ===== */
@@ -472,7 +474,8 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         }));
         $live = ['generated'=>$now->format('d/m/Y H:i'),'unread_client'=>$unread_client,
                  'unread_followup'=>$unread_followup,'wait24'=>$wait24,'series'=>$series];
-        @file_put_contents($liveFile, json_encode($live, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $wrl = @file_put_contents($liveFile, json_encode($live, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
+        painel_log('DBG painel_live gravou '.var_export($wrl,true).' bytes em '.$liveFile);
     }
 
     $agg = ['period'=>['start'=>$mStart->getTimestamp()*1000,'end'=>$END,
@@ -491,6 +494,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     status_write(['state'=>'done','mode'=>($incremental?'incremental':'full').($mode==='month'?" · {$monthKey}":''),
         'started'=>$now->format('d/m H:i'),'finished'=>$fim->format('d/m H:i'),
         'conversas'=>$total,'mes'=>$monthKey]);
+    painel_log('DBG aggFile='.$aggFile.' gravou (ver acima)');
     painel_log('OK — '.strlen($json).' bytes · conversas '.$total.' · mês '.$monthKey);
     if ($lockF) { flock($lockF, LOCK_UN); fclose($lockF); }
 }
