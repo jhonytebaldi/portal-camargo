@@ -24,6 +24,15 @@ try {
         $pdo->exec("ALTER TABLE users ADD COLUMN ativacao_token VARCHAR(64) NULL");
         $feitos[] = 'users.ativacao_token';
     }
+    // Garante a ferramenta 'calculadora' registrada (idempotente; não existe
+    // no seed de instalações antigas). require_tool depende dela existir.
+    $existe = (int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='calculadora'")->fetchColumn();
+    if (!$existe) {
+        $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem)
+            VALUES ('calculadora','Calculadora de Ganho e Funil','Quanto o corretor precisa produzir para ganhar o que quer','💰','/calculadora/',1,25)")
+            ->execute();
+        $feitos[] = 'tool:calculadora';
+    }
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 

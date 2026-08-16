@@ -13,6 +13,7 @@ SET NAMES utf8mb4;
 INSERT INTO tools (slug, nome, descricao, icone, caminho, ativo, ordem) VALUES
   ('busca',             'Busca de Imóveis',      'Busca e auditoria do acervo (Robust CRM)', '🏠', '/busca/', 1, 10),
   ('painel-corretores', 'Painel dos Corretores', 'Presença aproximada da equipe (GHL)',      '📊', '/painel-corretores/', 1, 20),
+  ('calculadora',       'Calculadora de Ganho e Funil', 'Quanto o corretor precisa produzir para ganhar o que quer', '💰', '/calculadora/', 1, 25),
   ('funil',             'Funil diário',          'Funil de vendas da Camargo',               '📈', '/funil/', 0, 30),
   ('conciliador',       'Conciliador',           'Conciliação (em breve)',                   '🧮', '/conciliador/', 0, 40)
 ON DUPLICATE KEY UPDATE nome=VALUES(nome), descricao=VALUES(descricao), icone=VALUES(icone), caminho=VALUES(caminho);

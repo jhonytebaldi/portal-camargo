@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Calculadora de Funil — Imobiliária Camargo</title>
+<style>
+:root{
+  color-scheme: light;
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --s1:#2a78d6; --good:#0ca30c; --warn:#fab219; --crit:#d03b3b; --good-ink:#006300;
+  --f1:#86b6ef; --f2:#6da7ec; --f3:#3987e5; --f4:#256abf; --f5:#1c5cab; --f6:#104281;
+  --r:12px;
+}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])){
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --s1:#3987e5; --good-ink:#0ca30c;
+  --f1:#184f95; --f2:#1c5cab; --f3:#256abf; --f4:#2a78d6; --f5:#3987e5; --f6:#5598e7;
+}}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --s1:#3987e5; --good-ink:#0ca30c;
+  --f1:#184f95; --f2:#1c5cab; --f3:#256abf; --f4:#2a78d6; --f5:#3987e5; --f6:#5598e7;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--ink2);font-size:13px;margin:0}
+.stamp{display:inline-flex;align-items:center;gap:6px;margin:8px 0 0;font-size:12px;
+  font-weight:600;color:var(--ink2);background:var(--surface);border:1px solid var(--border);
+  border-left:3px solid var(--warn);border-radius:8px;padding:5px 10px}
+.stamp span{font-weight:400;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.controls{display:grid;grid-template-columns:1.1fr .95fr .95fr;gap:14px;margin-bottom:16px;align-items:start}
+@media(max-width:940px){.controls{grid-template-columns:1fr}}
+label{display:block;font-size:12px;font-weight:600;color:var(--ink2);
+  letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+label .lo{text-transform:none;letter-spacing:0;font-weight:400;color:var(--muted)}
+select,input[type=text]{width:100%;padding:11px 12px;font:inherit;color:var(--ink);
+  background:var(--plane);border:1px solid var(--axis);border-radius:8px}
+input.big{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+select:focus,input:focus{outline:2px solid var(--s1);outline-offset:1px}
+.seg{display:flex;border:1px solid var(--axis);border-radius:8px;overflow:hidden}
+.seg button{flex:1;padding:9px 6px;font:inherit;font-size:13px;background:var(--plane);
+  color:var(--ink2);border:0;border-right:1px solid var(--axis);cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--s1);color:#fff;font-weight:600}
+.gap{height:12px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+.hint b{color:var(--ink2);font-variant-numeric:tabular-nums}
+.hint button{background:none;border:0;color:var(--s1);font:inherit;font-size:12px;
+  font-weight:600;cursor:pointer;padding:0;text-decoration:underline}
+/* memoria de calculo */
+.memo{margin-top:10px;border-top:1px solid var(--grid);padding-top:10px}
+.memo div{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;
+  color:var(--ink2);padding:3px 0;font-variant-numeric:tabular-nums}
+.memo div span:last-child{font-weight:600;color:var(--ink)}
+.memo div.tot{border-top:1px solid var(--grid);margin-top:4px;padding-top:7px;font-size:14px}
+.memo div.tot span:last-child{color:var(--good-ink);font-weight:700}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:720px){.tiles{grid-template-columns:1fr 1fr}}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 15px}
+.tile.hi{border-color:var(--s1);box-shadow:inset 0 0 0 1px var(--s1)}
+.tile .k{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tile .v{font-size:25px;font-weight:650;letter-spacing:-.02em;margin-top:3px;font-variant-numeric:tabular-nums}
+.tile .n{font-size:12px;color:var(--ink2);margin-top:2px}
+h2{font-size:13px;font-weight:650;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink2);margin:0 0 4px}
+.h2sub{font-size:12px;color:var(--muted);margin:0 0 14px;font-variant-numeric:tabular-nums}
+.hero{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;margin:18px 0}
+@media(max-width:860px){.hero{grid-template-columns:1fr}}
+.stage{display:grid;grid-template-columns:132px 1fr auto;gap:14px;align-items:center;padding:9px 0}
+.stage + .stage{border-top:1px solid var(--grid)}
+.stage .nm{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.bar{height:22px;background:var(--grid);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:0 4px 4px 0;transition:width .35s ease}
+.qty{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;text-align:right;min-width:74px}
+.conv{display:grid;grid-template-columns:132px 1fr;gap:14px;align-items:center;
+  padding:1px 0 3px;font-size:11.5px;color:var(--muted)}
+.conv .cv{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.conv .ref{color:var(--muted);white-space:nowrap}
+.pill{display:inline-flex;align-items:center;font-size:11px;font-weight:600;
+  padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--ink2)}
+input.rate{width:56px;padding:2px 5px;font:inherit;font-size:11.5px;text-align:right;
+  border:1px solid var(--s1);border-radius:5px;background:var(--surface);color:var(--ink);
+  font-variant-numeric:tabular-nums}
+.note{font-size:12.5px;color:var(--ink2);margin:14px 0 0;padding-top:12px;border-top:1px solid var(--grid)}
+.side{display:flex;flex-direction:column;gap:12px}
+.alert{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 15px;border-left:3px solid var(--warn)}
+.alert.ok{border-left-color:var(--good)} .alert.bad{border-left-color:var(--crit)}
+.alert .t{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.alert .b{font-size:13px;color:var(--ink2);line-height:1.5}
+.alert b{color:var(--ink);font-variant-numeric:tabular-nums}
+.pace{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.pace div{background:var(--plane);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+.pace .pk{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.pace .pv{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:1px}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th{text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.04em;padding:7px 8px;border-bottom:1px solid var(--axis);font-weight:600}
+th:first-child,td:first-child{text-align:left}
+td{padding:8px;border-bottom:1px solid var(--grid);text-align:right}
+tbody tr:hover{background:var(--plane)}
+details{margin-top:16px}
+summary{cursor:pointer;font-size:13px;color:var(--ink2);font-weight:600;padding:6px 0}
+summary:hover{color:var(--s1)}
+.toggle{background:var(--surface);border:1px solid var(--axis);border-radius:8px;
+  color:var(--ink2);padding:8px 12px;font:inherit;font-size:13px;cursor:pointer}
+footer{margin-top:34px;font-size:12px;color:var(--muted);line-height:1.6;
+  border-top:1px solid var(--grid);padding-top:14px}
+.warnrow{font-size:12.5px;color:var(--ink2);background:var(--plane);border:1px solid var(--border);
+  border-left:3px solid var(--crit);border-radius:8px;padding:9px 12px;margin-bottom:14px;display:none}
+</style></head><body>
+<div class="wrap">
+<header>
+  <div>
+    <h1>Calculadora de Ganho e Funil</h1>
+    <p class="sub">Imobiliária Camargo · quanto o corretor quer ganhar → quanto de VGV e quantos leads ele precisa</p>
+    <p class="stamp" id="stamp"></p>
+  </div>
+  <button class="toggle" id="tt">Modo escuro</button>
+</header>
+
+<div class="controls">
+  <div class="card">
+    <label for="pes">Corretor</label>
+    <select id="pes"></select>
+    <div class="gap"></div>
+    <label>Começar pelo</label>
+    <div class="seg" id="mo">
+      <button data-v="ganho" aria-pressed="true">Ganho no bolso</button>
+      <button data-v="vgv" aria-pressed="false">VGV</button>
+    </div>
+    <div class="gap"></div>
+    <label for="val" id="vl">Quanto quer ganhar no mês (R$ líquido)</label>
+    <input type="text" id="val" class="big" inputmode="numeric" placeholder="10.000">
+    <div class="hint" id="vh"></div>
+  </div>
+
+  <div class="card">
+    <label for="pct">% de ganho do corretor</label>
+    <input type="text" id="pct" class="big" inputmode="decimal" value="50">
+    <div class="gap"></div>
+    <div class="row2">
+      <div>
+        <label for="bon">Bônus médio por venda</label>
+        <input type="text" id="bon" inputmode="numeric">
+      </div>
+      <div>
+        <label for="bpc">% do bônus p/ corretor</label>
+        <input type="text" id="bpc" inputmode="decimal">
+      </div>
+    </div>
+    <div class="hint" id="bh"></div>
+    <div class="memo" id="memo"></div>
+  </div>
+
+  <div class="card">
+    <label>Base das conversões</label>
+    <div class="seg" id="per">
+      <button data-v="ytd" aria-pressed="true">Ano de 2026</button>
+      <button data-v="d90" aria-pressed="false">Últimos 90 dias</button>
+    </div>
+    <div class="gap"></div>
+    <label>Ticket médio da empresa <span class="lo">— fixo, igual para todos</span></label>
+    <div class="seg" id="tk">
+      <button data-v="share" aria-pressed="true">Ponderado Solo/Parceria</button>
+      <button data-v="full" aria-pressed="false">Só vendas solo</button>
+    </div>
+    <div style="height:10px"></div>
+    <input type="text" id="tkm" inputmode="numeric">
+    <div class="hint" id="th"></div>
+  </div>
+</div>
+
+<div class="warnrow" id="wr"></div>
+
+<div class="tiles">
+  <div class="tile hi"><div class="k">Ganho no bolso</div><div class="v" id="t0">—</div><div class="n" id="t0n"></div></div>
+  <div class="tile hi"><div class="k">VGV que precisa produzir</div><div class="v" id="t1">—</div><div class="n" id="t1n"></div></div>
+  <div class="tile"><div class="k">Vendas necessárias</div><div class="v" id="t2">—</div><div class="n" id="t2n"></div></div>
+  <div class="tile"><div class="k">Leads necessários</div><div class="v" id="t3">—</div><div class="n" id="t3n"></div></div>
+</div>
+
+<div class="hero">
+  <div class="card">
+    <h2>O que precisa acontecer no mês</h2>
+    <p class="h2sub" id="h2s"></p>
+    <div id="funil"></div>
+    <p class="note" id="nota"></p>
+  </div>
+  <div class="side">
+    <div class="alert" id="al">
+      <div class="t"><span>⏱</span><span>Data-limite de captação</span></div>
+      <div class="b" id="alb"></div>
+      <div class="pace">
+        <div><div class="pk">Leads por dia útil</div><div class="pv" id="p1">—</div></div>
+        <div><div class="pk">Visitas por semana</div><div class="pv" id="p2">—</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Histórico que gerou os números</h2>
+      <p class="h2sub" id="h3s"></p>
+      <table><thead><tr><th>Etapa</th><th>Real</th><th>Conv.</th></tr></thead>
+      <tbody id="hist"></tbody></table>
+      <div class="hint" id="ref" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<details>
+  <summary>Ver todos os corretores lado a lado</summary>
+  <div class="card" style="margin-top:10px;overflow-x:auto">
+    <table><thead><tr>
+      <th>Corretor</th><th>Leads</th><th>Atend.</th><th>Agend.</th><th>Visitas</th>
+      <th>Prop.</th><th>Neg.</th><th>Lead→venda</th><th>Assin. 2026</th>
+    </tr></thead><tbody id="all"></tbody></table>
+  </div>
+</details>
+
+<footer id="ft"></footer>
+</div>
+
+<script>
+const DATA = {"gerado": "2026-08-15", "ciclo_mediana": 11, "ciclo_p75": 17, "pessoas": [{"id": 23, "nome": "João Paulo Emmenderfer", "cargo": "Corretor", "grupo": "Corretor", "ytd": [378, 290, 125, 115, 20, 15], "d90": [166, 135, 43, 38, 4, 2], "vendas": 15, "vgv": 5417250.0, "bruto": 7460500.0, "ticket": 361150.0, "ticket_bruto": 497366.67, "meta": 500000}, {"id": 12, "nome": "Katlrin Gorll", "cargo": "Corretor", "grupo": "Corretor", "ytd": [1728, 1206, 380, 287, 41, 25], "d90": [719, 462, 132, 87, 13, 8], "vendas": 27, "vgv": 4859545.0, "bruto": 9719090.0, "ticket": 179983.15, "ticket_bruto": 359966.3, "meta": 833333.33}, {"id": 18, "nome": "Alexsander Fortunato", "cargo": "Corretor", "grupo": "Corretor", "ytd": [530, 421, 200, 185, 43, 27], "d90": [131, 105, 61, 55, 13, 9], "vendas": 27, "vgv": 4753550.0, "bruto": 9135100.0, "ticket": 176057.41, "ticket_bruto": 338337.04, "meta": 700000}, {"id": 41, "nome": "Gustavo Cruz", "cargo": "Corretor", "grupo": "Corretor", "ytd": [951, 678, 179, 132, 24, 16], "d90": [337, 233, 64, 48, 8, 6], "vendas": 16, "vgv": 4428243.12, "bruto": 6198596.23, "ticket": 276765.2, "ticket_bruto": 387412.26, "meta": 500000}, {"id": 6, "nome": "Deivison de Carvalho", "cargo": "Gerente de Vendas", "grupo": "Corretor", "ytd": [135, 110, 101, 98, 17, 16], "d90": [28, 26, 24, 23, 8, 8], "vendas": 19, "vgv": 4229735.45, "bruto": 7069470.9, "ticket": 222617.66, "ticket_bruto": 372077.42, "meta": 708333.33}, {"id": 15, "nome": "Maykon Wyllyan De Souza", "cargo": "Gerente de Vendas", "grupo": "Corretor", "ytd": [287, 258, 161, 129, 20, 16], "d90": [77, 56, 34, 30, 7, 6], "vendas": 16, "vgv": 4036146.88, "bruto": 6076496.88, "ticket": 252259.18, "ticket_bruto": 379781.05, "meta": 833333.33}, {"id": 24, "nome": "Lucas Salvador", "cargo": "Corretor", "grupo": "Corretor", "ytd": [189, 134, 56, 47, 13, 13], "d90": [83, 55, 25, 23, 5, 5], "vendas": 13, "vgv": 3410700.0, "bruto": 4221200.0, "ticket": 262361.54, "ticket_bruto": 324707.69, "meta": 500000}, {"id": 10, "nome": "Fernando Frigheto", "cargo": "Corretor", "grupo": "Corretor", "ytd": [411, 369, 121, 106, 18, 11], "d90": [114, 105, 31, 26, 4, 1], "vendas": 11, "vgv": 3152300.0, "bruto": 4186800.0, "ticket": 286572.73, "ticket_bruto": 380618.18, "meta": 666666.67}, {"id": 17, "nome": "Brayan Oliveira", "cargo": "Corretor", "grupo": "Corretor", "ytd": [298, 250, 125, 110, 17, 12], "d90": [116, 86, 38, 36, 7, 7], "vendas": 9, "vgv": 2764895.0, "bruto": 3379890.0, "ticket": 307210.56, "ticket_bruto": 375543.33, "meta": 500000}, {"id": 97, "nome": "Fredson Efraim Sousa Da Paz", "cargo": "Corretor", "grupo": "Corretor", "ytd": [261, 178, 68, 55, 11, 9], "d90": [138, 91, 38, 32, 9, 8], "vendas": 10, "vgv": 2584896.0, "bruto": 3238396.0, "ticket": 258489.6, "ticket_bruto": 323839.6, "meta": 333333.33}, {"id": 11, "nome": "Thiago Vidal", "cargo": "Corretor", "grupo": "Corretor", "ytd": [202, 175, 109, 102, 11, 9], "d90": [75, 59, 31, 28, 1, 1], "vendas": 10, "vgv": 2566450.0, "bruto": 3647900.0, "ticket": 256645.0, "ticket_bruto": 364790.0, "meta": 666666.67}, {"id": 16, "nome": "Osvaldo Rocha", "cargo": "Corretor", "grupo": "Corretor", "ytd": [191, 159, 104, 91, 14, 7], "d90": [42, 38, 33, 26, 2, 2], "vendas": 7, "vgv": 1520000.0, "bruto": 2387000.0, "ticket": 217142.86, "ticket_bruto": 341000.0, "meta": 416666.67}, {"id": 49, "nome": "Jhony Tebaldi", "cargo": "Diretor", "grupo": "Corretor", "ytd": [481, 425, 360, 127, 14, 7], "d90": [138, 118, 98, 37, 3, 1], "vendas": 7, "vgv": 1264500.0, "bruto": 2529000.0, "ticket": 180642.86, "ticket_bruto": 361285.71, "meta": 0}, {"id": 7, "nome": "Fernando Fossile", "cargo": "Gerente de Vendas", "grupo": "Corretor", "ytd": [62, 43, 38, 36, 4, 3], "d90": [4, 4, 4, 4, 1, 1], "vendas": 4, "vgv": 998900.0, "bruto": 1377900.0, "ticket": 249725.0, "ticket_bruto": 344475.0, "meta": 333333.33}, {"id": 102, "nome": "Felipe Lisboa", "cargo": "Corretor", "grupo": "Corretor", "ytd": [443, 358, 77, 30, 7, 3], "d90": [325, 271, 59, 21, 6, 3], "vendas": 2, "vgv": 345350.0, "bruto": 690700.0, "ticket": 172675.0, "ticket_bruto": 345350.0, "meta": 0}, {"id": 106, "nome": "Dusthin Christopher Mota Paz", "cargo": "Corretor", "grupo": "Corretor", "ytd": [374, 237, 72, 19, 2, 2], "d90": [369, 233, 68, 19, 2, 2], "vendas": 2, "vgv": 282500.0, "bruto": 565000.0, "ticket": 141250.0, "ticket_bruto": 282500.0, "meta": 333333.33}, {"id": 5, "nome": "Guilherme Souza", "cargo": "Diretor", "grupo": "Corretor", "ytd": [6, 6, 5, 2, 1, 1], "d90": [3, 3, 2, 1, 1, 1], "vendas": 1, "vgv": 183450.0, "bruto": 366900.0, "ticket": 183450.0, "ticket_bruto": 366900.0, "meta": 0}, {"id": 112, "nome": "Klenio Pereira Blanco", "cargo": "Corretor", "grupo": "Corretor", "ytd": [14, 8, 3, 1, 1, 0], "d90": [14, 8, 3, 1, 1, 0], "vendas": 0, "vgv": 0.0, "bruto": 0.0, "ticket": 0, "ticket_bruto": 0, "meta": 0}, {"id": 3, "nome": "Michael Camargo", "cargo": "CEO", "grupo": "Corretor", "ytd": [368, 112, 0, 0, 0, 0], "d90": [49, 0, 0, 0, 0, 0], "vendas": 0, "vgv": 0.0, "bruto": 0.0, "ticket": 0, "ticket_bruto": 0, "meta": 0}, {"id": 110, "nome": "Reiner Mijares Abreu", "cargo": "Corretor", "grupo": "Corretor", "ytd": [38, 9, 6, 1, 0, 0], "d90": [38, 9, 6, 1, 0, 0], "vendas": 0, "vgv": 0.0, "bruto": 0.0, "ticket": 0, "ticket_bruto": 0, "meta": 0}, {"id": 114, "nome": "Rosana Custodia Rocha Biff", "cargo": "Corretor", "grupo": "Corretor", "ytd": [50, 28, 0, 0, 0, 0], "d90": [50, 28, 0, 0, 0, 0], "vendas": 0, "vgv": 0.0, "bruto": 0.0, "ticket": 0, "ticket_bruto": 0, "meta": 0}, {"id": 113, "nome": "Vitor Hugo Oliveira Souza", "cargo": "Corretor", "grupo": "Corretor", "ytd": [15, 10, 5, 0, 0, 0], "d90": [15, 10, 5, 0, 0, 0], "vendas": 0, "vgv": 0.0, "bruto": 0.0, "ticket": 0, "ticket_bruto": 0, "meta": 0}, {"id": 87, "nome": "Brayan Krelling Laurindo", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [2848, 1949, 579, 213, 22, 19], "d90": [1142, 712, 152, 51, 5, 5], "vendas": 20, "vgv": 3514760.5, "bruto": 7029521.0, "ticket": 175738.02, "ticket_bruto": 351476.05, "meta": 291666.67}, {"id": 91, "nome": "Victor Gabriel Mendes Coelho", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [1231, 1177, 178, 83, 15, 11], "d90": [499, 480, 91, 49, 8, 4], "vendas": 13, "vgv": 2272050.0, "bruto": 4174100.0, "ticket": 174773.08, "ticket_bruto": 321084.62, "meta": 333333.33}, {"id": 80, "nome": "Ismael Teles Ribeiro Teixeira", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [1336, 928, 165, 81, 7, 6], "d90": [433, 287, 71, 33, 2, 2], "vendas": 6, "vgv": 1208018.5, "bruto": 2416037.0, "ticket": 201336.42, "ticket_bruto": 402672.83, "meta": 250000}, {"id": 88, "nome": "Isaac Lima Bessa Bezerra", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [693, 590, 173, 79, 7, 7], "d90": [336, 259, 57, 24, 1, 1], "vendas": 7, "vgv": 1200000.0, "bruto": 2400000.0, "ticket": 171428.57, "ticket_bruto": 342857.14, "meta": 0}, {"id": 84, "nome": "Gabrielly Carolina da Rosa", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [973, 683, 190, 84, 11, 6], "d90": [185, 114, 38, 12, 2, 2], "vendas": 6, "vgv": 1118450.0, "bruto": 2236900.0, "ticket": 186408.33, "ticket_bruto": 372816.67, "meta": 166666.67}, {"id": 93, "nome": "Maria Eduarda Dorn", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [603, 387, 77, 36, 5, 5], "d90": [312, 206, 33, 16, 3, 3], "vendas": 4, "vgv": 803450.0, "bruto": 1606900.0, "ticket": 200862.5, "ticket_bruto": 401725.0, "meta": 0}, {"id": 103, "nome": "Luiza Fioroto da Silva", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [384, 275, 105, 36, 4, 2], "d90": [325, 232, 82, 31, 4, 2], "vendas": 2, "vgv": 361000.0, "bruto": 722000.0, "ticket": 180500.0, "ticket_bruto": 361000.0, "meta": 0}, {"id": 111, "nome": "Kaue Rosa Mello Oliveira", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [294, 193, 49, 5, 2, 2], "d90": [294, 193, 49, 5, 2, 2], "vendas": 2, "vgv": 347500.0, "bruto": 695000.0, "ticket": 173750.0, "ticket_bruto": 347500.0, "meta": 0}, {"id": 107, "nome": "Marlon Emanuel Ortis da Luz", "cargo": "Pré-venda", "grupo": "Pré-venda", "ytd": [263, 238, 31, 13, 1, 1], "d90": [263, 238, 31, 13, 1, 1], "vendas": 1, "vgv": 180000.0, "bruto": 360000.0, "ticket": 180000.0, "ticket_bruto": 360000.0, "meta": 0}], "equipe": {"ytd": [18039, 13275, 3316, 1514, 251, 181], "d90": [6888, 4804, 1159, 484, 81, 62], "ticket": 245474.43, "ticket_bruto": 365247.87, "vendas": 184, "vgv": 45167295.45}, "bonus": {"bonus_pond": 1564.67, "bonus_solo": 2155.42, "bonus_medio": 2426.49, "ticket_solo_real": 385483.05, "pct_com_bonus": 56.0, "bonus_quando_tem": 4334.71}};
+const NAMES = ['Lead','Atendimento','Agendamento','Visita','Proposta','Venda'];
+const FILL  = ['--f1','--f2','--f3','--f4','--f5','--f6'];
+const IMPOSTO = 0.14, FIXO = 420, COMISSAO = 0.05;
+const BONUS_PADRAO = 5000, BPCT_PADRAO = 60;
+const BRL = n => n.toLocaleString('pt-BR',{style:'currency',currency:'BRL',maximumFractionDigits:0});
+const BRL2= n => n.toLocaleString('pt-BR',{style:'currency',currency:'BRL',minimumFractionDigits:2,maximumFractionDigits:2});
+const NUM = n => n.toLocaleString('pt-BR');
+const PCT = n => (n*100).toLocaleString('pt-BR',{minimumFractionDigits:n<0.1?2:1,maximumFractionDigits:n<0.1?2:1})+'%';
+
+const setVal = (id,txt)=>{ const el=document.getElementById(id);
+  if(el && document.activeElement!==el) el.value=txt; };
+
+let state = {id:null, per:'ytd', tk:'share', mo:'ganho', val:null, pct:50,
+         bonus:BONUS_PADRAO, bpct:BPCT_PADRAO, ticket:null, rates:null};
+
+const sel = document.getElementById('pes');
+['Corretor','Pré-venda'].forEach(g=>{
+  const og=document.createElement('optgroup');
+  og.label = g==='Corretor'?'Corretores e gestores':'Time de pré-venda';
+  DATA.pessoas.filter(p=>p.grupo===g).forEach(p=>{
+    const o=document.createElement('option'); o.value=p.id;
+    o.textContent = p.nome + (p.vendas? ` · ${p.vendas} venda${p.vendas>1?'s':''}` : ' · sem venda assinada');
+    og.appendChild(o);
+  });
+  if(og.children.length) sel.appendChild(og);
+});
+const P = () => DATA.pessoas.find(p=>p.id===state.id);
+
+function rates(){
+  const p=P(), h=p[state.per], e=DATA.equipe[state.per], out=[], fb=[];
+  for(let i=0;i<5;i++){
+    let r = h[i]>0 ? h[i+1]/h[i] : 0;
+    if(!(r>0) || h[i] < 12){ r = e[i]>0 ? e[i+1]/e[i] : 0; fb.push(i); }
+    out.push(r);
+  }
+  return {r:out, fb};
+}
+const ticketEmpresa = () => state.tk==='share' ? DATA.equipe.ticket : DATA.equipe.ticket_bruto;
+/* bonus e 100% do usuario: sugerido por padrao, nunca sobrescrito depois */
+const bonusAtual = () => state.bonus;
+
+/* comissao de UMA venda no ticket medio */
+function comissao(ticket, pct, bonus, bpct){
+  const bruta = ticket * COMISSAO;
+  const posImposto = bruta * (1 - IMPOSTO);
+  const posFixo = posImposto - FIXO;
+  const comi = posFixo * (pct/100);
+  const bon = (bonus||0) * ((bpct||0)/100);
+  return {bruta, posImposto, posFixo, comi, bon, liquido: comi + bon,
+          // receita por venda ANTES do fixo, e o fixo isolado — o R$ 420 é
+          // cobrado pelo nº TOTAL (inteiro) de vendas, nunca por uma fração
+          semFixo: posImposto*(pct/100) + bon,
+          fixo:    FIXO*(pct/100)};
+}
+
+/* Resolve o nº de vendas cobrando o fixo sobre o total inteiro.
+   ganho(X) = X*semFixo − ceil(X)*fixo   →   X = (G + N*fixo)/semFixo, N=ceil(X). */
+function vendasPara(ganho, cm){
+  if(!(cm.semFixo>0) || !(ganho>0)) return 0;
+  let N=1, X=0;
+  for(let i=0;i<8;i++){
+    X = (ganho + N*cm.fixo)/cm.semFixo;
+    const novo = Math.max(1, Math.ceil(X - 1e-9));
+    if(novo===N) break;
+    N = novo;
+  }
+  return X;
+}
+const ganhoDe = (X, cm) => X>0 ? X*cm.semFixo - Math.ceil(X-1e-9)*cm.fixo : 0;
+
+function mesInfo(){
+  const now=new Date(), y=now.getFullYear(), m=now.getMonth();
+  const last=new Date(y,m+1,0), hoje=now.getDate();
+  let uteis=0, restantes=0;
+  for(let d=1; d<=last.getDate(); d++){
+    const w=new Date(y,m,d).getDay();
+    if(w!==0){ uteis++; if(d>=hoje) restantes++; }
+  }
+  const lim=new Date(y,m+1,0); lim.setDate(lim.getDate()-DATA.ciclo_mediana);
+  return {uteis,restantes,lim,nomeMes:now.toLocaleDateString('pt-BR',{month:'long'}),
+    diasAteLim: Math.ceil((lim - new Date(y,m,hoje))/86400000)};
+}
+
+function render(){
+  const p=P(); if(!p) return;
+  const {r:rt, fb} = state.rates || rates();
+  const ticket = state.ticket ?? ticketEmpresa();
+  const pct = state.pct;
+  const bonus = bonusAtual();
+  const cm = comissao(ticket, pct, bonus, state.bpct);
+
+  setVal('tkm', Math.round(ticket).toLocaleString('pt-BR'));
+  setVal('pct', String(pct).replace('.',','));
+
+  // memoria de calculo da comissao
+  document.getElementById('memo').innerHTML =
+    `<div><span>VGV da venda (ticket médio)</span><span>${BRL(ticket)}</span></div>` +
+    `<div><span>Comissão 5%</span><span>${BRL2(cm.bruta)}</span></div>` +
+    `<div><span>− 14%</span><span>${BRL2(cm.posImposto)}</span></div>` +
+    `<div><span>− R$ 420 fixos <span style="color:var(--muted)">(por venda inteira)</span></span><span>${BRL2(cm.posFixo)}</span></div>` +
+    `<div><span>× ${String(pct).replace('.',',')}% do corretor</span><span>${BRL2(cm.comi)}</span></div>` +
+    (cm.bon>0 ? `<div><span>+ bônus ${BRL(bonus)} × ${String(state.bpct).replace('.',',')}%</span><span>${BRL2(cm.bon)}</span></div>` : '') +
+    `<div class="tot"><span>No bolso por venda</span><span>${BRL2(cm.liquido)}</span></div>`;
+  setVal('bon', Math.round(bonus).toLocaleString('pt-BR'));
+  setVal('bpc', String(state.bpct).replace('.',','));
+  const mexeu = Math.round(state.bonus)!==BONUS_PADRAO || state.bpct!==BPCT_PADRAO;
+  document.getElementById('bh').innerHTML =
+    `Sugestão: <b>${BRL(BONUS_PADRAO)}</b> e <b>${BPCT_PADRAO}%</b>. Na planilha 2026 o bônus mais frequente é R$ 5.000 ` +
+    `(76 das ${DATA.equipe.vendas} vendas); a média de todas é ${BRL(DATA.bonus.bonus_medio)}, ou ${BRL(DATA.bonus.bonus_pond)} se ratear a parceria. ` +
+    `O bônus é do negócio — em parceria, o corretor leva metade.` +
+    (mexeu ? ` · <button id="brst">voltar ao padrão</button>` : '');
+  const brb=document.getElementById('brst');
+  if(brb) brb.onclick=()=>{ state.bonus=BONUS_PADRAO; state.bpct=BPCT_PADRAO; render(); };
+
+  // avisos
+  const w=[];
+  if(!(cm.liquido>0)) w.push(`<b>Não dá para calcular:</b> com ticket de ${BRL(ticket)} e ${String(pct).replace('.',',')}%, o corretor não fica com nada por venda. Revise o percentual.`);
+  if(fb.length) w.push(`<b>Etapa com pouca amostra:</b> a conversão de ${fb.map(i=>NAMES[i]+'→'+NAMES[i+1]).join(', ')} de ${p.nome.split(' ')[0]} tem base fraca — usei a média da empresa nessa etapa.`);
+  const wr=document.getElementById('wr');
+  wr.innerHTML=w.join('<br>'); wr.style.display=w.length?'block':'none';
+
+  // modo de entrada
+  const modoGanho = state.mo==='ganho';
+  document.getElementById('vl').textContent = modoGanho
+    ? 'Quanto quer ganhar no mês (R$ líquido)' : 'Meta de VGV do mês (R$)';
+  const entrada = state.val;
+  setVal('val', entrada!==null ? Math.round(entrada).toLocaleString('pt-BR') : '');
+
+  let vendasExatas=0, ganho=0, vgv=0;
+  if(entrada!==null && cm.liquido>0 && ticket>0){
+    if(modoGanho){ ganho=entrada; vendasExatas=vendasPara(ganho, cm); vgv=vendasExatas*ticket; }
+    else { vgv=entrada; vendasExatas=vgv/ticket; ganho=ganhoDe(vendasExatas, cm); }
+  }
+
+  document.getElementById('vh').innerHTML = modoGanho
+    ? (p.meta>0 ? `Referência: a meta de VGV dele na planilha é <b>${BRL(p.meta)}</b>/mês.` : 'Sem meta definida na planilha para esta pessoa.')
+    : (p.meta>0 ? `Meta da planilha: <b>${BRL(p.meta)}</b>/mês` + (entrada!==null && Math.round(entrada)!==Math.round(p.meta) ? ` · <button id="rst">usar essa</button>` : '') : 'Sem meta definida na planilha para esta pessoa.');
+  const rb=document.getElementById('rst'); if(rb) rb.onclick=()=>{ state.val=p.meta; render(); };
+
+  const oth = state.tk==='share' ? DATA.equipe.ticket_bruto : DATA.equipe.ticket;
+  document.getElementById('th').innerHTML = state.tk==='share'
+    ? `Média da empresa nas <b>${DATA.equipe.vendas}</b> vendas assinadas de 2026, já com o rateio de parceria (50% cada). Só vendas solo seria ${BRL(oth)}.`
+    : `Média da empresa por venda, <b>sem ratear parceria</b> — é o “VGV MÉDIO” da planilha. ` +
+      `A média só das 60 vendas realmente solo é ${BRL(DATA.bonus.ticket_solo_real)} · <button id="tsolo">usar essa</button>`;
+  const ts=document.getElementById('tsolo'); if(ts) ts.onclick=()=>{ state.ticket=DATA.bonus.ticket_solo_real; render(); };
+
+  // funil reverso
+  const need=[0,0,0,0,0,0]; need[5]=vendasExatas;
+  for(let i=4;i>=0;i--) need[i] = rt[i]>0 ? need[i+1]/rt[i] : 0;
+  const up = need.map(n=> n>0 ? Math.ceil(n-1e-9) : 0);
+  const up5 = up[5];
+  const l2v = rt.reduce((a,b)=>a*b,1);
+
+  document.getElementById('t0').textContent = ganho>0? BRL(ganho) : '—';
+  document.getElementById('t0n').textContent = ganho>0
+    ? `${vendasExatas.toLocaleString('pt-BR',{maximumFractionDigits:2})} vendas · R$ 420 cobrado ${up5} vez${up5===1?'':'es'}` +
+      (cm.bon>0? ` · inclui bônus` : '') : (modoGanho?'informe o valor':'—');
+  document.getElementById('t1').textContent = vgv>0? BRL(vgv) : '—';
+  document.getElementById('t1n').textContent = vgv>0? `ticket médio de ${BRL(ticket)}` : (modoGanho?'—':'informe a meta');
+  document.getElementById('t2').textContent = up[5]||'—';
+  document.getElementById('t2n').textContent = vendasExatas>0
+    ? `${vendasExatas.toLocaleString('pt-BR',{maximumFractionDigits:1})} arredondado para cima` : '—';
+  document.getElementById('t3').textContent = up[0]? NUM(up[0]) : '—';
+  document.getElementById('t3n').textContent = l2v>0? `1 venda a cada ${Math.round(1/l2v)} leads` : '—';
+
+  const eq = DATA.equipe[state.per];
+  document.getElementById('h2s').innerHTML =
+    `Ticket médio aplicado ${BRL(ticket)} · conversão lead→venda de ${p.nome.split(' ')[0]}: ${l2v>0?PCT(l2v):'—'}`;
+  document.getElementById('h3s').textContent =
+    `${p.nome} · ${state.per==='ytd'?'ano de 2026':'últimos 90 dias'}`;
+
+  const max = up[0]||1; let html='';
+  for(let i=0;i<6;i++){
+    html += `<div class="stage">
+      <div class="nm"><span class="dot" style="background:var(${FILL[i]})"></span>${NAMES[i]}</div>
+      <div class="bar"><i style="width:${Math.max(2,100*up[i]/max)}%;background:var(${FILL[i]})"></i></div>
+      <div class="qty">${up[i]?NUM(up[i]):'—'}</div></div>`;
+    if(i<5) html += `<div class="conv"><div></div><div class="cv">
+        <span>↳ converte</span>
+        <input class="rate" data-i="${i}" value="${(rt[i]*100).toFixed(1).replace('.',',')}">
+        <span>% em ${NAMES[i+1].toLowerCase()}</span>
+        ${fb.includes(i) ? '<span class="pill">é a média da empresa</span>'
+                         : `<span class="ref">· empresa: ${eq[i]>0?PCT(eq[i+1]/eq[i]):'—'}</span>`}
+      </div></div>`;
+  }
+  document.getElementById('funil').innerHTML = html;
+  document.querySelectorAll('input.rate').forEach(el=>{
+    el.addEventListener('change',e=>{
+      const v=parseFloat(String(e.target.value).replace(',','.'))/100;
+      const cur = state.rates ? state.rates.r.slice() : rates().r.slice();
+      if(v>0 && v<=1) cur[+e.target.dataset.i]=v;
+      state.rates={r:cur, fb:[]}; render();
+    });
+  });
+
+  document.getElementById('nota').innerHTML = ganho>0
+    ? `Para levar <b>${BRL(ganho)}</b> no bolso, ${p.nome.split(' ')[0]} precisa produzir <b>${BRL(vgv)}</b> de VGV ` +
+      `— ou seja <b>${up[5]}</b> venda${up[5]===1?'':'s'}, <b>${NUM(up[3])} visitas</b> e <b>${NUM(up[0])} leads</b> no mês. ` +
+      `As taxas em azul são editáveis — mexa nelas para simular melhoria.`
+    : `Preencha o valor no campo à esquerda para ver o funil.`;
+
+  const mi=mesInfo(), al=document.getElementById('al');
+  al.className='alert' + (mi.diasAteLim<0?' bad':(mi.diasAteLim<=5?'':' ok'));
+  document.getElementById('alb').innerHTML = mi.diasAteLim>=0
+    ? `O ciclo médio entre o lead entrar e a venda ser negociada é de <b>${DATA.ciclo_mediana} dias</b>. Leads captados depois de <b>${mi.lim.toLocaleDateString('pt-BR')}</b> tendem a assinar só no mês seguinte. Faltam <b>${mi.diasAteLim} dia${mi.diasAteLim===1?'':'s'}</b> para essa data e <b>${mi.restantes}</b> dias úteis no mês.`
+    : `A data-limite de captação (<b>${mi.lim.toLocaleDateString('pt-BR')}</b>) já passou. Leads novos agora tendem a assinar no mês que vem — o fechamento de ${mi.nomeMes} depende do <b>pipeline já aberto</b>. Restam <b>${mi.restantes}</b> dias úteis.`;
+  document.getElementById('p1').textContent = up[0]? Math.ceil(up[0]/mi.uteis) : '—';
+  document.getElementById('p2').textContent = up[3]? Math.ceil(up[3]/4.3) : '—';
+
+  const h=p[state.per];
+  document.getElementById('hist').innerHTML = h.map((v,i)=>
+    `<tr><td>${NAMES[i]}</td><td>${NUM(v)}</td><td>${i<5?(h[i]>0?PCT(h[i+1]/h[i]):'—'):'—'}</td></tr>`).join('');
+  document.getElementById('ref').innerHTML = p.vendas
+    ? `${p.nome.split(' ')[0]} assinou <b>${p.vendas}</b> venda${p.vendas>1?'s':''} em 2026, com ticket próprio de <b>${BRL(state.tk==='share'?p.ticket:p.ticket_bruto)}</b> — referência, não entra na conta.`
+    : `${p.nome.split(' ')[0]} não tem venda assinada em 2026 na planilha.`;
+
+  document.getElementById('all').innerHTML = DATA.pessoas.map(q=>{
+    const g=q[state.per], c=g[0]>0?g[5]/g[0]:0;
+    return `<tr><td>${q.nome}</td>${g.map(x=>`<td>${NUM(x)}</td>`).join('')}<td>${c?PCT(c):'—'}</td><td>${q.vendas||'—'}</td></tr>`;
+  }).join('');
+}
+
+const parseBR = s => { const n=parseFloat(String(s).replace(/[^\d.,]/g,'').replace(/\./g,'').replace(',','.')); return isFinite(n)?n:0; };
+sel.addEventListener('change',()=>{ state.id=+sel.value; state.rates=null; render(); });
+document.getElementById('mo').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b||b.dataset.v===state.mo) return;
+  const cm=comissao(state.ticket??ticketEmpresa(), state.pct, bonusAtual(), state.bpct);
+  if(state.val!==null && cm.liquido>0){   // converte o valor ja digitado
+    const t=state.ticket??ticketEmpresa();
+    state.val = b.dataset.v==='vgv' ? (state.val/cm.liquido)*t : (state.val/t)*cm.liquido;
+  }
+  state.mo=b.dataset.v;
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed', x===b));
+  render();
+});
+document.getElementById('per').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  state.per=b.dataset.v; state.rates=null;
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed', x===b));
+  render();
+});
+document.getElementById('tk').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  state.tk=b.dataset.v; state.ticket=null;   // bonus e % ficam como o usuario deixou
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed', x===b));
+  render();
+});
+document.getElementById('val').addEventListener('input',e=>{ state.val=parseBR(e.target.value)||null; render(); });
+document.getElementById('pct').addEventListener('input',e=>{
+  const v=parseFloat(String(e.target.value).replace(',','.'));
+  if(isFinite(v)&&v>0&&v<=100){ state.pct=Math.round(v*1e4)/1e4; render(); }
+});
+document.getElementById('pct').addEventListener('blur',()=>render());
+document.getElementById('bon').addEventListener('input',e=>{ state.bonus=parseBR(e.target.value)||0; render(); });
+document.getElementById('bpc').addEventListener('input',e=>{
+  const v=parseFloat(String(e.target.value).replace(',','.'));
+  if(isFinite(v)&&v>=0&&v<=100){ state.bpct=Math.round(v*1e4)/1e4; render(); }
+});
+document.getElementById('bpc').addEventListener('blur',()=>render());
+document.getElementById('tkm').addEventListener('change',e=>{ state.ticket=parseBR(e.target.value)||null; render(); });
+document.getElementById('tt').addEventListener('click',()=>{
+  const d=document.documentElement.getAttribute('data-theme')==='dark';
+  document.documentElement.setAttribute('data-theme', d?'light':'dark');
+  document.getElementById('tt').textContent = d?'Modo escuro':'Modo claro';
+});
+
+document.getElementById('stamp').innerHTML =
+  `Dados de ${new Date(DATA.gerado+'T12:00:00').toLocaleDateString('pt-BR')} ` +
+  `<span>· conversões do ano de 2026 e vendas assinadas até essa data</span>`;
+
+document.getElementById('ft').innerHTML =
+  `<b>Comissão.</b> VGV × 5% → −14% → −R$ 420 fixos por venda → × o percentual do corretor. ` +
+  `O R$ 420 incide sobre o <b>número total de vendas</b> (inteiro), não sobre a fração — 1,3 venda paga o fixo 2 vezes, não 1,3. ` +
+  `Em parceria, o ticket “ponderado” já é a metade do VGV, então cada corretor absorve o fixo na sua ponta. ` +
+  `<b>Bônus:</b> somado por fora, depois da comissão. Começa em ${BRL(BONUS_PADRAO)} × ${BPCT_PADRAO}% como sugestão e <b>fica como você deixar</b> — trocar de cenário não mexe nele. ` +
+  `Referências da coluna BONUS da planilha 2026: mais frequente R$ 5.000, média de todas as vendas ${BRL(DATA.bonus.bonus_medio)}, média já rateada por parceria ${BRL(DATA.bonus.bonus_pond)}. ` +
+  `<b>Por que o VGV quase não muda entre os dois cenários:</b> comissão e bônus são proporcionais ao VGV, então o cenário só troca o tamanho e o número das vendas. ` +
+  `O que sobra de diferença é o R$ 420 fixo por venda — quem faz mais vendas menores paga esse fixo mais vezes. ` +
+  `<b>Funil:</b> atendimentos da jornada de venda no Robust CRM, por etapa alcançada — quem está em Proposta já passou por Agendamento e Visita, então conta em todas. ` +
+  `<b>Média da empresa:</b> atendimentos <i>distintos</i> (um negócio tocado por corretor e pré-venda entra uma vez só), por isso não é a soma das linhas da tabela. ` +
+  `<b>Ticket médio:</b> fixo, da empresa inteira — ${DATA.equipe.vendas} vendas com status <i>Assinado</i> na planilha VENDAS CAMARGO 2026, ${BRL(DATA.equipe.vgv)} de VGV. ` +
+  `<b>Ciclo de ${DATA.ciclo_mediana} dias:</b> mediana entre a entrada do lead e o fechamento nas 181 negociações de 2026. ` +
+  `Dados de ${new Date(DATA.gerado+'T12:00:00').toLocaleDateString('pt-BR')}.`;
+
+state.id = DATA.pessoas[0].id; sel.value = state.id; render();
+</script></body></html>
