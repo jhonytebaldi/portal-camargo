@@ -26,10 +26,21 @@ if (is_array($ag)) {
     $k = $items[0] ?? null; if ($k) echo "keys[0]: " . implode(',', array_keys($k)) . "\n";
 } else echo "(inválido/vazio)\n";
 
-echo "\n--- coletor.log (últimas 60 linhas) ---\n";
+echo "\n--- código implantado ---\n";
+foreach (['coletor.php','index.php'] as $src) {
+    $p = __DIR__ . '/' . $src;
+    $c = (string)@file_get_contents($p);
+    echo sprintf("%-12s mtime=%s  tem 'thread'=%s  tem 'wesalescrm'=%s\n",
+        $src, date('d/m H:i:s', (int)@filemtime($p)),
+        (strpos($c, "'thread'") !== false || strpos($c,'thread') !== false) ? 'SIM' : 'não',
+        (strpos($c, 'wesalescrm') !== false) ? 'SIM' : 'não');
+}
+echo "opcache: " . (function_exists('opcache_get_status') ? 'disponível' : 'ausente') . "\n";
+
+echo "\n--- coletor.log (últimas 40 linhas) ---\n";
 $log = $dir . '/coletor.log';
 if (is_file($log)) {
     $lines = @file($log, FILE_IGNORE_NEW_LINES);
-    if ($lines) echo implode("\n", array_slice($lines, -60));
+    if ($lines) echo implode("\n", array_slice($lines, -40));
 } else echo "(sem log)";
 echo "\n";
