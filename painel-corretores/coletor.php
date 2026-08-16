@@ -172,7 +172,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $stopMs = min($winStartMs, $unreadLookMs);   // pagina conversas até o mais antigo dos dois
     $base = "https://services.leadconnectorhq.com/conversations/search?locationId={$LOC}&limit=100&sortBy=last_message_date&sort=desc";
     $cursor = null; $convIds = []; $pages = 0;
-    $unread_client = []; $unread_followup = []; $wait24 = [];
+    $unread_client = []; $unread_followup = []; $wait24 = []; $waitList = [];
     $nowMs = $now->getTimestamp()*1000; $dia1Ms = $nowMs - 86400*1000;
     while ($pages < 500) {
         $url = $cursor === null ? $base : $base . '&startAfterDate=' . urlencode((string)$cursor);
@@ -200,6 +200,10 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                     if (($c['lastMessageDirection'] ?? '') === 'inbound') {
                         $unread_client[$ass] = ($unread_client[$ass] ?? 0) + 1;
                         if ($lmd < $dia1Ms) $wait24[$ass] = ($wait24[$ass] ?? 0) + 1;
+                        $nm = (string)($c['contactName'] ?? ''); if ($nm === '') $nm = (string)($c['fullName'] ?? '');
+                        $waitList[] = ['id'=>$c['id'], 'name'=>($nm !== '' ? $nm : 'Sem nome'),
+                            'phone'=>(string)($c['phone'] ?? ''), 'ass'=>$ass, 'since'=>$lmd,
+                            'type'=>(string)($c['lastMessageType'] ?? '')];
                     } else {
                         $unread_followup[$ass] = ($unread_followup[$ass] ?? 0) + 1;
                     }
@@ -330,6 +334,41 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     } while ($running || $state || $queue);
     curl_multi_close($mh);
     painel_log("conversas processadas: {$total}");
+
+    /* ===== 2.5) Fila de atendimento: conteúdo da última msg de quem aguarda ===== */
+    if ($ehMesCorrente && $waitList) {
+        if (count($waitList) > 400) $waitList = array_slice($waitList, 0, 400);
+        $bodies = []; $mh2 = curl_multi_init(); $st2 = []; $q2 = $waitList;
+        $addB = function(array $item) use ($mh2, &$st2, $HDR) {
+            $ch = curl_init("https://services.leadconnectorhq.com/conversations/{$item['id']}/messages?limit=1");
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_HTTPHEADER=>$HDR, CURLOPT_TIMEOUT=>20]);
+            curl_multi_add_handle($mh2, $ch); $st2[(int)$ch] = $item;
+        };
+        while (count($st2) < PAINEL_CONCURRENCY && $q2) $addB(array_shift($q2));
+        do {
+            curl_multi_exec($mh2, $run2); curl_multi_select($mh2, 1.0);
+            while ($info = curl_multi_info_read($mh2)) {
+                $ch=$info['handle']; $item=$st2[(int)$ch]??null; unset($st2[(int)$ch]);
+                $body=curl_multi_getcontent($ch); curl_multi_remove_handle($mh2,$ch); curl_close($ch);
+                $text='';
+                if ($body){ $jj=json_decode($body,true); $ms=$jj['messages']['messages']??[]; if($ms) $text=(string)($ms[0]['body']??''); }
+                if ($item) $bodies[$item['id']] = $text;
+                if ($q2) $addB(array_shift($q2));
+            }
+        } while ($run2 || $st2 || $q2);
+        curl_multi_close($mh2);
+        $bn = []; foreach ($brokersRows as $b) $bn[$b['id']] = $b['nome'];
+        $aguardando = [];
+        foreach ($waitList as $it) {
+            $aguardando[] = ['name'=>$it['name'], 'phone'=>$it['phone'], 'broker_id'=>$it['ass'],
+                'broker'=>($bn[$it['ass']] ?? $it['ass']), 'since'=>$it['since'], 'type'=>$it['type'],
+                'text'=>trim(mb_substr(trim((string)($bodies[$it['id']] ?? '')), 0, 400))];
+        }
+        @file_put_contents($dir.'/aguardando.json', json_encode(
+            ['generated'=>$now->format('d/m/Y H:i'), 'gen_ms'=>$now->getTimestamp()*1000, 'items'=>$aguardando],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        painel_log('fila de atendimento: '.count($aguardando).' clientes aguardando');
+    }
 
     /* ===== 3) Converte janela + funde com dias congelados ===== */
     $hm = fn(?int $ms) => $ms ? (new DateTime('@'.intdiv($ms,1000)))->setTimezone($TZ)->format('H:i') : null;

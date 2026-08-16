@@ -61,6 +61,18 @@ $stFile = $dir . '/status.json';
 $st = is_readable($stFile) ? json_decode((string)file_get_contents($stFile), true) : null;
 $rodando = is_array($st) && ($st['state'] ?? '') === 'running';
 
+/* Fila de atendimento (clientes aguardando resposta) — só no mês corrente. */
+$aguardando = null;
+if ($ehMesCorrente) {
+    $af = $dir . '/aguardando.json';
+    $aguardando = is_readable($af) ? json_decode((string)file_get_contents($af), true) : null;
+    if (is_array($aguardando) && !$isAdmin) {
+        $permit2 = array_flip(allowed_broker_ids($u));
+        $aguardando['items'] = array_values(array_filter($aguardando['items'] ?? [],
+            fn($it) => isset($permit2[$it['broker_id'] ?? ''])));
+    }
+}
+
 /* nome amigável do mês */
 function mes_label(string $ym): string {
     $meses = [1=>'jan',2=>'fev',3=>'mar',4=>'abr',5=>'mai',6=>'jun',7=>'jul',8=>'ago',9=>'set',10=>'out',11=>'nov',12=>'dez'];
@@ -135,6 +147,11 @@ td.aten{white-space:normal;max-width:340px;line-height:1.9}
 .sortb{padding:4px 10px;font-size:12px;border-radius:16px}
 .sortb.on{background:#26406e;border-color:var(--acc);color:#dbe6ff}
 th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--acc)}
+.tabs{display:flex;gap:4px;margin:16px 0 2px;border-bottom:1px solid var(--line)}
+.tabb{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;color:var(--mut);padding:8px 14px;font-size:14px;cursor:pointer}
+.tabb.on{color:var(--tx);border-bottom-color:var(--acc);font-weight:600}
+td.msg{white-space:normal;max-width:440px;color:#cbd3df;font-size:12.8px;line-height:1.45}
+td a{color:var(--acc);text-decoration:none}
 .rt-hi{color:#f0a020;font-weight:600}
 details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
 details.desl summary::-webkit-details-marker{display:none}
@@ -170,7 +187,8 @@ tr.off td{color:#6f7684}
 </div></body></html>
 <?php return; endif; ?>
 
-<div class="ctrl">
+<div class="tabs" id="tabs"></div>
+<div class="ctrl" id="ctrl">
   <label class="tag">Mês</label>
   <select id="mes" onchange="location.search='?mes='+this.value">
     <?php foreach ($months as $mk => $_): ?>
@@ -196,6 +214,7 @@ tr.off td{color:#6f7684}
 <script>
 const D=<?= json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
+const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
 const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);
@@ -209,7 +228,8 @@ const fsel=document.getElementById('from'), tsel=document.getElementById('to');
 AD.forEach(d=>{const t=d.label+" "+d.wd;
   let o1=document.createElement('option');o1.value=d.key;o1.textContent=t;fsel.appendChild(o1);
   let o2=document.createElement('option');o2.value=d.key;o2.textContent=t;tsel.appendChild(o2);});
-let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1};
+let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1,
+           tab:'geral',filaSort:'wait',filaDir:-1};
 
 const RT_BOUNDS=[0,60,180,300,600,1200,1800,3600,7200,21600,43200];
 function rtMedian(hist){const n=hist.reduce((a,b)=>a+b,0);if(!n)return null;const half=n/2;let cum=0;
@@ -406,11 +426,55 @@ function renderBroker(b,days){
     <div class="foot">Manuais em horário comercial = presença humana; automação espalhada/madrugada = robô.</div></div>`;
   document.getElementById('view').innerHTML=h;
 }
-function render(){const days=rangeDays();
-  if(state.broker==='__all__')renderOverview(days);else renderBroker(byId[state.broker],days);}
+/* -------- Fila de atendimento (clientes aguardando resposta) -------- */
+function fmtWait(ms){const m=Math.floor(ms/60000);if(m<1)return 'agora';if(m<60)return m+' min';
+  const h=Math.floor(m/60);if(h<24)return h+'h'+(m%60?String(m%60).padStart(2,'0'):'');
+  const d=Math.floor(h/24);return d+' dia'+(d>1?'s':'')+(h%24?' '+(h%24)+'h':'');}
+const CANAL={TYPE_WHATSAPP:'WhatsApp',TYPE_CUSTOM_SMS:'WhatsApp',TYPE_SMS:'SMS',TYPE_INSTAGRAM:'Instagram',TYPE_FACEBOOK:'Facebook',TYPE_EMAIL:'E-mail',TYPE_GMB:'Google',TYPE_LIVE_CHAT:'Chat'};
+const waPhone=p=>{const d=(p||'').replace(/\D/g,'');return d?('https://wa.me/'+d):null;};
+function renderFila(){
+  const A=(AGUARDANDO&&AGUARDANDO.items)?AGUARDANDO.items.slice():[];
+  const gen=(AGUARDANDO&&AGUARDANDO.gen_ms)||0;
+  A.forEach(it=>it._wait=(gen&&it.since)?Math.max(0,gen-it.since):0);
+  const k=state.filaSort,dir=state.filaDir;
+  const val=it=>k==='broker'?(it.broker||'').toLowerCase():k==='cliente'?(it.name||'').toLowerCase():it._wait;
+  A.sort((a,b)=>{const va=val(a),vb=val(b);if(va<vb)return -dir;if(va>vb)return dir;return b._wait-a._wait;});
+  const SF=[{k:'wait',l:'Tempo de espera'},{k:'broker',l:'Responsável'},{k:'cliente',l:'Cliente'}];
+  let h=`<div class="sortbar"><span class="tag">Ordenar por:</span>`+
+    SF.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-fk="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
+    `<span class="tag" style="margin-left:auto">${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}</span></div>`;
+  if(!A.length){h+=`<div class="card">Nenhum cliente aguardando resposta agora. 👍</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
+  h+=`<div class="card"><table><thead><tr><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th></tr></thead><tbody>`;
+  A.forEach(it=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
+    const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
+    const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
+    h+=`<tr><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td></tr>`;});
+  h+=`</tbody></table><div class="foot">Só clientes com a <b>última mensagem sem resposta</b> (aguardando de fato — não conta follow-up). <span class="rt-hi">Laranja</span> = +4h; <span class="zero">vermelho</span> = +24h. O telefone abre o WhatsApp. Atualiza a cada coleta.</div></div>`;
+  document.getElementById('view').innerHTML=h;bindFila();
+}
+function bindFila(){document.querySelectorAll('[data-fk]').forEach(el=>el.onclick=()=>{
+  const nk=el.dataset.fk;if(state.filaSort===nk)state.filaDir=-state.filaDir;else{state.filaSort=nk;state.filaDir=(nk==='wait')?-1:1;}render();});}
+
+function buildTabs(){
+  const t=document.getElementById('tabs');if(!t)return;
+  const n=(AGUARDANDO&&AGUARDANDO.items)?AGUARDANDO.items.length:0;
+  let h=`<button class="tabb ${state.tab==='geral'?'on':''}" data-tab="geral">Visão geral</button>`;
+  if(EH_MES_CORRENTE&&AGUARDANDO)h+=`<button class="tabb ${state.tab==='fila'?'on':''}" data-tab="fila">Fila de atendimento${n?` (${n})`:''}</button>`;
+  t.innerHTML=h;
+  t.querySelectorAll('.tabb').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;buildTabs();render();});
+}
+
+function render(){
+  const ctrl=document.getElementById('ctrl');
+  if(state.tab==='fila'){if(ctrl)ctrl.style.display='none';renderFila();return;}
+  if(ctrl)ctrl.style.display='';
+  const days=rangeDays();
+  if(state.broker==='__all__')renderOverview(days);else renderBroker(byId[state.broker],days);
+}
 bsel.onchange=()=>{state.broker=bsel.value;render();};
 fsel.onchange=()=>{state.from=fsel.value;render();};
 tsel.onchange=()=>{state.to=tsel.value;render();};
 document.querySelectorAll('#presets button').forEach(bt=>bt.onclick=()=>setPreset(bt.dataset.p));
+buildTabs();
 setPreset('all');
 </script></body></html>
