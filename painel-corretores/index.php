@@ -281,7 +281,8 @@ let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten'
            tab:'geral',filaSort:'wait',filaDir:-1};
 
 // Metas de tempo de resposta (nível de serviço), em segundos comerciais.
-const SLA1=900, SLA2=1800;   // 15 min e 30 min
+const SLA1=600, SLA2=1800;   // metas: 10 min e 30 min (em segundos comerciais)
+const M1=Math.round(SLA1/60), M2=Math.round(SLA2/60);   // rótulos (min)
 const RT_MINN=8;             // amostra mínima p/ julgar o nível de serviço
 // Legado (meses coletados antes das listas de resposta): mediana por histograma.
 const RT_BOUNDS=[0,60,180,300,600,1200,1800,3600,7200,21600,43200];
@@ -332,12 +333,12 @@ function stats(b,days){
       } else if(!d.weekend) gaps.push(d.label);
     } else if(!d.weekend) gaps.push(d.label);
   });
-  let rtMed=null,rtMean=null,sl15=null,sl30=null,rtN=0;
+  let rtMed=null,rtMean=null,sl1=null,sl2=null,rtN=0;
   if(hasList){ rtN=rts.length;
     if(rtN){rts.sort((a,b)=>a-b); rtMed=pct(rts,0.5); rtMean=Math.round(rts.reduce((a,b)=>a+b,0)/rtN);
-      sl15=Math.round(rts.filter(x=>x<=SLA1).length/rtN*100); sl30=Math.round(rts.filter(x=>x<=SLA2).length/rtN*100);} }
+      sl1=Math.round(rts.filter(x=>x<=SLA1).length/rtN*100); sl2=Math.round(rts.filter(x=>x<=SLA2).length/rtN*100);} }
   else { rtMed=rtMedian(rt_hist); rtN=rt_n; rtMean=rt_n?Math.round(rt_sum/rt_n):null; }  // legado: sem nível de serviço
-  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rtMed,rtMean,sl15,sl30,rtN};
+  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rtMed,rtMean,sl1,sl2,rtN};
 }
 function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
   return '<span class="spark">'+series.map(s=>{
@@ -355,21 +356,21 @@ const wait24=b=>(LIVE&&LIVE.wait24)?(LIVE.wait24[b.id]||0):0;
 /* -------- Ranking de atenção: 3 blocos de urgência que competem --------
    Bloco 1 — FILA AGORA (dominante): 2 pts por cliente aguardando + 3 extra por
              cliente esperando há +24h. Só no mês corrente (dado ao vivo).
-   Bloco 2 — RESPONSIVIDADE (leve): mediana de resposta em horário comercial —
-             <15min=0, 15–30min=1 (amarelo), 30–60min=2 (laranja), +60min=3 (vermelho).
+   Bloco 2 — RESPONSIVIDADE (leve): nível de serviço — % de clientes respondidos
+             dentro da 1ª meta (ver respScore); poucos dados não pontua.
    Bloco 3 — ABANDONO COM DEMANDA: dias úteis em que o CLIENTE falou (inbound>0)
              e o corretor não fez nada manual. 1 pt/dia (teto 5) + 2 se for o
              último dia útil. Dia sem cliente falando não pontua. */
 function lastBizDay(days){for(let i=days.length-1;i>=0;i--)if(!days[i].weekend)return days[i];return null;}
-// Bloco 2: NÍVEL DE SERVIÇO — % de clientes respondidos em até 15 min (meta).
-// Quanto menos gente dentro da meta, mais atenção. Calibrado pela realidade do
-// time (média ~54% em 15min): >=60% ok, 40–60 leve, 25–40 abaixo, <25 ruim.
+// Bloco 2: NÍVEL DE SERVIÇO — % de clientes respondidos dentro da 1ª meta.
+// Quanto menos gente na meta, mais atenção. Calibrado pela realidade do time
+// (média ~48% em 10min): >=50% ok, 35–50 leve, 22–35 abaixo, <22 ruim.
 // Só julga com amostra suficiente (RT_MINN); poucos dados = não pontua.
-function respScore(sl15,n){
-  if(n<RT_MINN || sl15==null) return 0;
-  if(sl15>=60) return 0;
-  if(sl15>=40) return 1;
-  if(sl15>=25) return 2;
+function respScore(sl1,n){
+  if(n<RT_MINN || sl1==null) return 0;
+  if(sl1>=50) return 0;
+  if(sl1>=35) return 1;
+  if(sl1>=22) return 2;
   return 3;
 }
 function abandono(b,days){
@@ -384,16 +385,16 @@ function attention(b,days,s){
   s=s||stats(b,days);
   const ag=unreadClient(b)||0, w24=wait24(b)||0;   // 0 se mês passado (sem LIVE)
   const b1=LIVE?(2*ag+3*w24):0;
-  const b2=respScore(s.sl15,s.rtN);
+  const b2=respScore(s.sl1,s.rtN);
   const ab=abandono(b,days);
   const b3=Math.min(ab.cnt,5)+(ab.lastAb?2:0);
   const score=b1+b2+b3;
   const chips=[];
   if(LIVE&&ag>0)chips.push({c:ag>5?'red':(ag>=3?'orange':'yellow'),s:`${ag} aguardando`,t:`${ag} cliente(s) aguardando resposta agora (bloco Fila = ${b1} pts)`});
   if(LIVE&&w24>0)chips.push({c:'red',s:`${w24}×+24h`,t:`${w24} cliente(s) esperando há mais de 24h — peso extra no bloco Fila`});
-  if(b2>0)chips.push({c:b2>=3?'red':(b2>=2?'orange':'yellow'),s:`${s.sl15}% em 15m`,t:`só ${s.sl15}% dos clientes respondidos em até 15 min (${s.sl30}% em até 30 min · ${s.rtN} respostas) — bloco Resposta = ${b2} pts`});
+  if(b2>0)chips.push({c:b2>=3?'red':(b2>=2?'orange':'yellow'),s:`${s.sl1}% em ${M1}m`,t:`só ${s.sl1}% dos clientes respondidos em até ${M1} min (${s.sl2}% em até ${M2} min · ${s.rtN} respostas) — bloco Resposta = ${b2} pts`});
   if(ab.cnt>0)chips.push({c:ab.lastAb?'orange':'yellow',s:`${ab.cnt}d sem retorno`,t:`${ab.cnt} dia(s) útil com o cliente falando e nenhuma ação manual: ${ab.labels.join(', ')}${ab.lastAb?' — inclui o último dia útil':''} (bloco Abandono = ${b3} pts)`});
-  const rtTxt=(s.rtN>=RT_MINN&&s.sl15!=null)?`${s.sl15}% em ≤15min (${s.sl30}% em ≤30min)`:(s.rtN?`poucos dados (${s.rtN} resp.)`:'sem respostas');
+  const rtTxt=(s.rtN>=RT_MINN&&s.sl1!=null)?`${s.sl1}% em ≤${M1}min (${s.sl2}% em ≤${M2}min)`:(s.rtN?`poucos dados (${s.rtN} resp.)`:'sem respostas');
   const tip=`Score de atenção: ${score} pts (blocos competem — quanto maior, mais urgente)`
     +`\n• Fila agora: ${LIVE?`${ag} aguardando`+(w24?` (${w24} há +24h)`:''):'sem dado ao vivo'} = ${b1} pts`
     +`\n• Responsividade: ${rtTxt} = ${b2} pts`
@@ -433,7 +434,7 @@ const TT={
   unread:'CLIENTES AGUARDANDO: conversas cuja última mensagem é do cliente — ou seja, ele está de fato esperando resposta agora. É um retrato do momento (não do período) e o principal ponto de atenção.',
   fup:'FOLLOW-UPS PENDENTES: conversas não lidas que a automação ou o pós-ligação deixou na caixa, SEM um recado novo do cliente esperando. Precisam de ação (ex.: retornar a ligação), mas ninguém está parado esperando resposta.',
   msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa). Exclui automação; notas internas e ligações não contam aqui.',
-  resp:'RESPOSTA: em cima, o tempo TÍPICO (mediana) até a 1ª resposta manual. Embaixo, o NÍVEL DE SERVIÇO — % dos clientes respondidos dentro da meta de 15 min (e de 30 min). Tudo em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; Brasília — noites/domingos não são cobrados). Conta só recados que chegaram no expediente; não inclui quem ainda não foi respondido (esses estão em Aguardando). "poucos dados" = respostas de menos pra medir bem.',
+  resp:`RESPOSTA: em cima, o tempo TÍPICO (mediana) até a 1ª resposta manual. Embaixo, o NÍVEL DE SERVIÇO — % dos clientes respondidos dentro da meta de ${M1} min (e de ${M2} min). Tudo em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; Brasília — noites/domingos não são cobrados). Conta só recados que chegaram no expediente; não inclui quem ainda não foi respondido (esses estão em Aguardando). "poucos dados" = respostas de menos pra medir bem.`,
   dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
   ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
   aten:'ATENÇÃO: score de urgência do corretor (quanto maior, mais precisa de atenção). Soma três blocos que competem — fila de clientes esperando agora (dominante), tempo de resposta e dias em que o cliente falou e ninguém agiu. Passe o mouse no número para ver a conta por bloco.',
@@ -476,8 +477,8 @@ function renderOverview(days){
     if(s.rtMed==null) rtCell='—';
     else{
       let sla;
-      if(s.rtN>=RT_MINN&&s.sl15!=null){const bd=s.sl15>=60?'sl-ok':(s.sl15>=40?'sl-y':(s.sl15>=25?'sl-o':'sl-r'));
-        sla=`<div class="sla"><span class="${bd}" title="${s.sl15}% dos clientes respondidos em até 15 min (${s.rtN} respostas)">${s.sl15}% ≤15m</span> · <span title="${s.sl30}% respondidos em até 30 min">${s.sl30}% ≤30m</span></div>`;}
+      if(s.rtN>=RT_MINN&&s.sl1!=null){const bd=s.sl1>=50?'sl-ok':(s.sl1>=35?'sl-y':(s.sl1>=22?'sl-o':'sl-r'));
+        sla=`<div class="sla"><span class="${bd}" title="${s.sl1}% dos clientes respondidos em até ${M1} min (${s.rtN} respostas)">${s.sl1}% ≤${M1}m</span> · <span title="${s.sl2}% respondidos em até ${M2} min">${s.sl2}% ≤${M2}m</span></div>`;}
       else sla=`<div class="sla mut">poucos dados (${s.rtN} resp.)</div>`;
       rtCell=`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>${sla}`;
     }
@@ -494,7 +495,7 @@ function renderOverview(days){
       <td class="n" title="${TT.dias}">${s.activeP}/${wdays}</td>
       <td title="${TT.ativ}">${spark(s.series)}</td>
       <td class="aten" title="${TT.aten}">${aten}</td></tr>`;});
-  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resposta" = tempo <b>típico</b> (mediana) em cima e o <b>nível de serviço</b> embaixo (% dos clientes respondidos em até <b>15 min</b> e <b>30 min</b>, metas), tudo em <b>horas comerciais</b> (noites/domingos não contam). Não inclui quem ainda não foi respondido. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resposta" = tempo <b>típico</b> (mediana) em cima e o <b>nível de serviço</b> embaixo (% dos clientes respondidos em até <b>${M1} min</b> e <b>${M2} min</b>, metas), tudo em <b>horas comerciais</b> (noites/domingos não contam). Não inclui quem ainda não foi respondido. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
@@ -516,7 +517,7 @@ function renderBroker(b,days){
   <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}${off?' · <span style="color:#f0a020">desligado</span>':''}</span></h2>
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
-    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤15m/≤30m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=RT_MINN&&s.sl15!=null)?` · ${s.sl15}% ≤15m · ${s.sl30}% ≤30m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
+    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤${M1}m/≤${M2}m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=RT_MINN&&s.sl1!=null)?` · ${s.sl1}% ≤${M1}m · ${s.sl2}% ≤${M2}m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
     <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>
   </div>`;
