@@ -186,6 +186,7 @@ tr.filarow.hasthread:hover td{background:rgba(255,255,255,.02)}
 .tmsg .tbody{color:#dbe2ee;white-space:normal;word-break:break-word}
 .tmsg.tsys .tbody{color:var(--mut)}
 .rt-hi{color:#f0a020;font-weight:600}
+.p85{color:var(--mut);font-size:11.5px}
 details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
 details.desl summary::-webkit-details-marker{display:none}
 details.desl summary:before{content:"▸ ";color:var(--mut)}
@@ -275,10 +276,14 @@ AD.forEach(d=>{const t=d.label+" "+d.wd;
 let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1,
            tab:'geral',filaSort:'wait',filaDir:-1};
 
+// Legado (meses coletados antes das listas de resposta): mediana por histograma.
 const RT_BOUNDS=[0,60,180,300,600,1200,1800,3600,7200,21600,43200];
 function rtMedian(hist){const n=hist.reduce((a,b)=>a+b,0);if(!n)return null;const half=n/2;let cum=0;
   for(let i=0;i<10;i++){if(cum+hist[i]>=half){const lo=RT_BOUNDS[i],hi=RT_BOUNDS[i+1];const frac=(half-cum)/Math.max(1,hist[i]);return Math.round(lo+(hi-lo)*frac);}cum+=hist[i];}
   return RT_BOUNDS[10];}
+// Percentil exato (interpolado) de uma lista JÁ ORDENADA. p em [0,1].
+function pct(sorted,p){if(!sorted.length)return null;const idx=(sorted.length-1)*p;const lo=Math.floor(idx),hi=Math.ceil(idx);
+  if(lo===hi)return sorted[lo];return Math.round(sorted[lo]+(sorted[hi]-sorted[lo])*(idx-lo));}
 function fmtDur(sec){if(sec==null)return '—';if(sec<60)return sec+'s';const m=Math.round(sec/60);if(m<60)return m+' min';const h=Math.floor(m/60),mm=m%60;return h+'h'+(mm?String(mm).padStart(2,'0'):'');}
 
 function rangeDays(){const i0=AD.findIndex(d=>d.key===state.from),i1=AD.findIndex(d=>d.key===state.to);
@@ -297,16 +302,18 @@ function fmtSpan(m){return Math.floor(m/60)+"h"+String(m%60).padStart(2,'0');}
 
 function stats(b,days){
   let n=0,ic=0,cl=0,cfirst=null,clast=null,pfirst=null,plast=null,activeP=0,gaps=[];
-  let rt_n=0,rt_sum=0; const rt_hist=new Array(10).fill(0);
+  let rt_n=0,rt_sum=0; const rt_hist=new Array(10).fill(0); let rts=[]; let hasList=false;
   const mh=new Array(24).fill(0),ah=new Array(24).fill(0),series=[];
   days.forEach(d=>{const r=b.days[d.key];
     const cnt=r?r.n:0, ici=r?r.ic:0, cli=r?r.cl:0;
     const present=r&&(r.n>0||r.ic>0||r.cl>0);
     series.push({...d,n:cnt,ic:ici,cl:cli,inb:r?(r.in||0):0,first:r?r.first:null,last:r?r.last:null,
                  pfirst:r?r.pfirst:null,plast:r?r.plast:null,present:!!present,
-                 rt_hist:r&&r.rt_hist?r.rt_hist:null,rt_n:r?r.rt_n:0,rt_sum:r?r.rt_sum:0});
+                 rt:r&&Array.isArray(r.rt)?r.rt:null,rt_hist:r&&r.rt_hist?r.rt_hist:null,rt_n:r?r.rt_n:0,rt_sum:r?r.rt_sum:0});
     if(r){n+=r.n;ic+=r.ic;cl+=r.cl;
-      rt_n+=r.rt_n||0; rt_sum+=r.rt_sum||0; if(r.rt_hist)for(let i=0;i<10;i++)rt_hist[i]+=r.rt_hist[i];
+      rt_n+=r.rt_n||0; rt_sum+=r.rt_sum||0;
+      if(Array.isArray(r.rt)){hasList=true; if(r.rt.length)rts=rts.concat(r.rt);}
+      else if(r.rt_hist)for(let i=0;i<10;i++)rt_hist[i]+=r.rt_hist[i];
       for(let h=0;h<24;h++){mh[h]+=r.mh[h];ah[h]+=r.ah[h];}
       if(present){activeP++;
         const pf=toMin(r.pfirst),pl=toMin(r.plast);
@@ -318,8 +325,10 @@ function stats(b,days){
       } else if(!d.weekend) gaps.push(d.label);
     } else if(!d.weekend) gaps.push(d.label);
   });
-  const rtMed=rtMedian(rt_hist), rtMean=rt_n?Math.round(rt_sum/rt_n):null;
-  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rt_hist,rtMed,rtMean};
+  let rtMed,rtP85,rtMean;
+  if(hasList){ if(rts.length){rts.sort((a,b)=>a-b); rtMed=pct(rts,0.5); rtP85=pct(rts,0.85); rtMean=Math.round(rts.reduce((a,b)=>a+b,0)/rts.length);} else {rtMed=null;rtP85=null;rtMean=null;} }
+  else { rtMed=rtMedian(rt_hist); rtP85=null; rtMean=rt_n?Math.round(rt_sum/rt_n):null; }
+  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rtMed,rtP85,rtMean};
 }
 function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
   return '<span class="spark">'+series.map(s=>{
@@ -343,7 +352,16 @@ const wait24=b=>(LIVE&&LIVE.wait24)?(LIVE.wait24[b.id]||0):0;
              e o corretor não fez nada manual. 1 pt/dia (teto 5) + 2 se for o
              último dia útil. Dia sem cliente falando não pontua. */
 function lastBizDay(days){for(let i=days.length-1;i>=0;i--)if(!days[i].weekend)return days[i];return null;}
-function respScore(rt){if(rt==null)return 0;if(rt<900)return 0;if(rt<1800)return 1;if(rt<3600)return 2;return 3;}
+// Bloco 2: mediana (o típico, leve) + cauda P85 (lentidão recorrente).
+//   mediana:  <15min=0, 15–30=1, 30–60=2, +60=3  (em minutos comerciais)
+//   cauda P85: +1 se >=4h, +2 se >=8h  (15% dos clientes esperam isso)
+// Tudo em segundos comerciais decorridos. Teto do bloco = 4.
+function respScore(med,p85){
+  let sc=0;
+  if(med!=null){ if(med>=3600)sc=3; else if(med>=1800)sc=2; else if(med>=900)sc=1; }
+  if(p85!=null){ if(p85>=28800)sc+=2; else if(p85>=14400)sc+=1; }
+  return Math.min(sc,4);
+}
 function abandono(b,days){
   let cnt=0,lastAb=false;const labels=[];const lb=lastBizDay(days);
   days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
@@ -356,18 +374,21 @@ function attention(b,days,s){
   s=s||stats(b,days);
   const ag=unreadClient(b)||0, w24=wait24(b)||0;   // 0 se mês passado (sem LIVE)
   const b1=LIVE?(2*ag+3*w24):0;
-  const b2=respScore(s.rtMed);
+  const b2=respScore(s.rtMed,s.rtP85);
   const ab=abandono(b,days);
   const b3=Math.min(ab.cnt,5)+(ab.lastAb?2:0);
   const score=b1+b2+b3;
+  const medBand=(s.rtMed==null?0:(s.rtMed>=3600?3:(s.rtMed>=1800?2:(s.rtMed>=900?1:0))));
+  const tailBump=(s.rtP85==null?0:(s.rtP85>=28800?2:(s.rtP85>=14400?1:0)));
   const chips=[];
   if(LIVE&&ag>0)chips.push({c:ag>5?'red':(ag>=3?'orange':'yellow'),s:`${ag} aguardando`,t:`${ag} cliente(s) aguardando resposta agora (bloco Fila = ${b1} pts)`});
   if(LIVE&&w24>0)chips.push({c:'red',s:`${w24}×+24h`,t:`${w24} cliente(s) esperando há mais de 24h — peso extra no bloco Fila`});
-  if(b2>0)chips.push({c:b2>=3?'red':(b2>=2?'orange':'yellow'),s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta mediano ${fmtDur(s.rtMed)} em horário comercial (bloco Resposta = ${b2} pts)`});
+  if(medBand>0)chips.push({c:medBand>=3?'red':(medBand>=2?'orange':'yellow'),s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta típico (mediana) ${fmtDur(s.rtMed)} em horas comerciais (bloco Resposta)`});
+  if(tailBump>0)chips.push({c:tailBump>=2?'red':'orange',s:`P85 ${fmtDur(s.rtP85)}`,t:`lentidão recorrente: 15% dos clientes esperam ${fmtDur(s.rtP85)} ou mais (P85, horas comerciais) — bloco Resposta`});
   if(ab.cnt>0)chips.push({c:ab.lastAb?'orange':'yellow',s:`${ab.cnt}d sem retorno`,t:`${ab.cnt} dia(s) útil com o cliente falando e nenhuma ação manual: ${ab.labels.join(', ')}${ab.lastAb?' — inclui o último dia útil':''} (bloco Abandono = ${b3} pts)`});
   const tip=`Score de atenção: ${score} pts (blocos competem — quanto maior, mais urgente)`
     +`\n• Fila agora: ${LIVE?`${ag} aguardando`+(w24?` (${w24} há +24h)`:''):'sem dado ao vivo'} = ${b1} pts`
-    +`\n• Responsividade: mediana ${s.rtMed==null?'—':fmtDur(s.rtMed)} = ${b2} pts`
+    +`\n• Responsividade: mediana ${s.rtMed==null?'—':fmtDur(s.rtMed)}${s.rtP85!=null?` · P85 ${fmtDur(s.rtP85)}`:''} = ${b2} pts`
     +`\n• Abandono (cliente falou e ninguém agiu): ${ab.cnt} dia(s) = ${b3} pts`;
   return {score,b1,b2,b3,ag,w24,rtMed:s.rtMed,ab,chips,tip};
 }
@@ -404,7 +425,7 @@ const TT={
   unread:'CLIENTES AGUARDANDO: conversas cuja última mensagem é do cliente — ou seja, ele está de fato esperando resposta agora. É um retrato do momento (não do período) e o principal ponto de atenção.',
   fup:'FOLLOW-UPS PENDENTES: conversas não lidas que a automação ou o pós-ligação deixou na caixa, SEM um recado novo do cliente esperando. Precisam de ação (ex.: retornar a ligação), mas ninguém está parado esperando resposta.',
   msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa). Exclui automação; notas internas e ligações não contam aqui.',
-  resp:'RESP. MED.: tempo típico (mediana) entre o 1º recado do cliente e a 1ª resposta manual do corretor. Conta só recados recebidos em horário comercial — 8h às 20h, horário de Brasília. Laranja = acima de 30 min.',
+  resp:'RESP. MED. · P85: tempo entre o 1º recado do cliente e a 1ª resposta manual, medido em HORAS COMERCIAIS decorridas (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; horário de Brasília — noites e domingos não são cobrados). A mediana é o típico; o P85 mostra a cauda lenta (15% dos clientes esperam isso ou mais). Não inclui quem ainda não foi respondido (esses estão em Aguardando).',
   dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
   ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
   aten:'ATENÇÃO: score de urgência do corretor (quanto maior, mais precisa de atenção). Soma três blocos que competem — fila de clientes esperando agora (dominante), tempo de resposta e dias em que o cliente falou e ninguém agiu. Passe o mouse no número para ver a conta por bloco.',
@@ -443,7 +464,7 @@ function renderOverview(days){
     const cli=unreadClient(r.b), fup=unreadFup(r.b);
     const waitCell=cli==null?'<span class="mut">—</span>':(cli>0?`<span class="wait-big">${cli}</span>`:'<span class="wait-zero">0</span>');
     const fupCell=cli==null?'<span class="mut">—</span>':(fup>0?`<span class="fup-num" title="não lidas de follow-up: automação/pós-ligação, sem recado novo do cliente">${fup}</span>`:'<span class="mut">0</span>');
-    const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
+    const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>${s.rtP85!=null?`<span class="p85" title="P85: 15% dos clientes esperam isso ou mais (horas comerciais)"> · P85 ${fmtDur(s.rtP85)}</span>`:''}`;
     let aten;
     if(r.at){
       const chips=r.at.chips.map(a=>`<span class="chip mini ${a.c}" title="${escAttr(a.t)}">${a.s}</span>`).join('');
@@ -457,7 +478,7 @@ function renderOverview(days){
       <td class="n" title="${TT.dias}">${s.activeP}/${wdays}</td>
       <td title="${TT.ativ}">${spark(s.series)}</td>
       <td class="aten" title="${TT.aten}">${aten}</td></tr>`;});
-  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resp. med. · P85" = tempo até a 1ª resposta manual em <b>horas comerciais</b> (noites/domingos não contam); a mediana é o típico e o <b>P85</b> revela a cauda lenta (15% esperam isso ou mais). Não inclui quem ainda não foi respondido. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
@@ -479,7 +500,7 @@ function renderBroker(b,days){
   <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}${off?' · <span style="color:#f0a020">desligado</span>':''}</span></h2>
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
-    <div class="kpi"><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
+    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; P85 = 15% esperam isso ou mais; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${s.rtP85!=null?` · P85 ${fmtDur(s.rtP85)}`:''}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
     <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>
   </div>`;
@@ -499,7 +520,7 @@ function renderBroker(b,days){
     else bar='<div class="barwrap"></div>';
     const cls=d.weekend?'we':(!d.present?'zero':'');
     const nf=d.n>0?d.n:(d.weekend?'—':(d.present?'<span style="color:#f0a020">0</span>':'<span class=zero>0</span>'));
-    const dMed=d.rt_hist?rtMedian(d.rt_hist):null;
+    const dMed=Array.isArray(d.rt)?(d.rt.length?pct([...d.rt].sort((a,b)=>a-b),0.5):null):(d.rt_hist?rtMedian(d.rt_hist):null);
     const rtd=dMed==null?'—':`${fmtDur(dMed)} · ${d.rt_n}`;
     h+=`<tr><td class="${cls}">${d.label} <span class="we">${d.wd}</span></td><td class="n">${nf}</td><td class="n mut">${(d.ic+d.cl)||'—'}</td><td class="n mut">${rtd}</td><td>${d.pfirst||'—'}</td><td>${d.plast||'—'}</td><td>${span} ${bar}</td></tr>`;});
   h+='</tbody></table><div class="foot">Barra <span style="color:#4f8cff">azul</span> = teve mensagem ao cliente · <span style="color:#f0a020">laranja</span> = só nota/ligação. "Resp. med · n" = mediana de resposta no dia e nº de respostas medidas.</div></div>';

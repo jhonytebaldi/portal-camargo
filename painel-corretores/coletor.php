@@ -30,9 +30,36 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
 
 const PAINEL_CONCURRENCY = 8;
-const RT_BIZ_INI = 8, RT_BIZ_FIM = 20;   // horário comercial p/ tempo de resposta
-const RT_CAP     = 43200;                // ignora respostas acima de 12h (cross-day)
+// Horário comercial p/ tempo de resposta (horário de Brasília):
+//   seg–sex 8h–20h · sábado 8h30–11h30 · domingo não conta.
+// O tempo de resposta é medido em SEGUNDOS COMERCIAIS DECORRIDOS (noites e
+// domingos não contam), então uma resposta que atravessa a madrugada não é
+// penalizada — e a resposta genuinamente lenta deixa de ser descartada.
+const RT_CAP     = 216000;               // teto sanitário: 5 dias úteis (60h comerciais)
 const UNREAD_LOOKBACK_DAYS = 12;         // até onde varrer conversas p/ não-lidas
+
+/* Segundos de horário comercial decorridos entre dois instantes (ms). */
+function biz_seconds(int $aMs, int $bMs, DateTimeZone $TZ): int {
+    if ($bMs <= $aMs) return 0;
+    $cur = intdiv($aMs, 1000); $end = intdiv($bMs, 1000); $sec = 0; $guard = 0;
+    while ($cur < $end && $guard++ < 400) {
+        $d   = (new DateTime('@'.$cur))->setTimezone($TZ);
+        $dow = (int)$d->format('N');   // 1=seg … 7=dom
+        $sod = (int)$d->format('G')*3600 + (int)$d->format('i')*60 + (int)$d->format('s');
+        $nextMid = $cur - $sod + 86400;
+        $stepEnd = min($end, $nextMid);
+        if     ($dow >= 1 && $dow <= 5) { $ini = 28800; $fim = 72000; }  // 8:00–20:00
+        elseif ($dow === 6)             { $ini = 30600; $fim = 41400; }  // 8:30–11:30
+        else                            { $ini = 0;     $fim = 0;     }  // domingo
+        if ($fim > $ini) {
+            $lo = max($sod, $ini);
+            $hi = min($sod + ($stepEnd - $cur), $fim);
+            if ($hi > $lo) $sec += ($hi - $lo);
+        }
+        $cur = $stepEnd;
+    }
+    return $sec;
+}
 
 /* canais em que a mensagem é REALMENTE do cliente (não é atividade do sistema,
    comentário interno, "opportunity updated" nem registro de ligação). Usado
@@ -229,9 +256,11 @@ function run_collection(string $mode, ?string $monthArg = null): void {
 
     /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa ===== */
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia
+    // 'rt' = lista de tempos de resposta do dia (segundos comerciais decorridos);
+    // guardar a lista crua permite mediana E percentil (P85) exatos no painel.
     $novoDia = fn() => ['n'=>0,'app'=>0,'api'=>0,'ic'=>0,'cl'=>0,'in'=>0,'first'=>null,'last'=>null,
                         'pfirst'=>null,'plast'=>null,'mh'=>array_fill(0,24,0),'ah'=>array_fill(0,24,0),
-                        'rt_n'=>0,'rt_sum'=>0,'rt_hist'=>array_fill(0,10,0)];
+                        'rt_n'=>0,'rt_sum'=>0,'rt'=>[]];
 
     // $assBroker = corretor responsável pela conversa (assignedTo). Serve para
     // atribuir as mensagens RECEBIDAS do cliente (inbound) ao dia dele — isso
@@ -293,18 +322,19 @@ function run_collection(string $mode, ?string $monthArg = null): void {
             if ($pend === null) continue;                 // resposta sem inbound pendente
             if ($uid === null || !isset($BIDS[$uid])) { $pend = null; continue; }
             if (isset($CUT[$uid]) && $e > $CUT[$uid]) { $pend = null; continue; }
-            $delta = intdiv($e - $pend, 1000);            // segundos
+            // tempo de resposta = segundos COMERCIAIS decorridos (noites/domingos
+            // não contam). A madrugada some sozinha, então nada de descartar por
+            // "cross-day": só um teto sanitário de 5 dias úteis p/ par quebrado.
+            $delta = biz_seconds($pend, $e, $TZ);
             $iloc = (new DateTime('@'.intdiv($pend,1000)))->setTimezone($TZ);
-            $ih = (int)$iloc->format('G');
             $ikey = $iloc->format('Y-m-d');
-            $dentroBiz = ($ih >= RT_BIZ_INI && $ih < RT_BIZ_FIM);
-            if ($dentroBiz && $delta > 0 && $delta <= RT_CAP
+            if ($delta > 0 && $delta <= RT_CAP
                 && $winStartMs <= $pend && $pend < $END) {
                 if (!isset($acc[$uid])) $acc[$uid] = [];
                 if (!isset($acc[$uid][$ikey])) $acc[$uid][$ikey] = $novoDia();
                 $acc[$uid][$ikey]['rt_n']++;
                 $acc[$uid][$ikey]['rt_sum'] += $delta;
-                $acc[$uid][$ikey]['rt_hist'][rt_bucket($delta)]++;
+                $acc[$uid][$ikey]['rt'][] = $delta;
             }
             $pend = null;                                 // respondeu; zera pendência
         }
@@ -463,7 +493,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         foreach ($days as $k=>$d) {
             $winDays[$bid][$k] = ['n'=>$d['n'],'app'=>$d['app'],'api'=>$d['api'],'ic'=>$d['ic'],'cl'=>$d['cl'],'in'=>$d['in'],
                 'first'=>$hm($d['first']),'last'=>$hm($d['last']),'pfirst'=>$hm($d['pfirst']),'plast'=>$hm($d['plast']),
-                'mh'=>$d['mh'],'ah'=>$d['ah'],'rt_n'=>$d['rt_n'],'rt_sum'=>$d['rt_sum'],'rt_hist'=>$d['rt_hist']];
+                'mh'=>$d['mh'],'ah'=>$d['ah'],'rt_n'=>$d['rt_n'],'rt_sum'=>$d['rt_sum'],'rt'=>$d['rt']];
         }
     }
     $final = [];
