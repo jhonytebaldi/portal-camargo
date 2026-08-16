@@ -20,6 +20,10 @@ define('DB_PASS', 'COLE_A_SENHA');
 // Token de integração privada do GHL (Private Integration Token).
 define('GHL_TOKEN',    'COLE_O_TOKEN_GHL');
 define('GHL_LOCATION', '9o1WOaGvZNxhcdSgqAaG');
+// Endereço do CRM para abrir a conversa direto (botão na Fila de atendimento).
+// Use o domínio do WeSales que você acessa. Se não souber, deixe o padrão do
+// GoHighLevel. Sem barra no final.
+define('GHL_APP_URL',  'https://app.gohighlevel.com');
 
 // --- Caminhos de dados (fora da área pública) ---
 // Onde o coletor do painel grava o agregado diário.

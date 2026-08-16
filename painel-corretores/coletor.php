@@ -34,6 +34,15 @@ const RT_BIZ_INI = 8, RT_BIZ_FIM = 20;   // horário comercial p/ tempo de respo
 const RT_CAP     = 43200;                // ignora respostas acima de 12h (cross-day)
 const UNREAD_LOOKBACK_DAYS = 12;         // até onde varrer conversas p/ não-lidas
 
+/* canais em que a mensagem é REALMENTE do cliente (não é atividade do sistema,
+   comentário interno, "opportunity updated" nem registro de ligação). Usado
+   na Fila de atendimento para mostrar a última fala de fato do cliente. */
+const CLIENT_MSG_TYPES = [
+    'TYPE_WHATSAPP','TYPE_CUSTOM_SMS','TYPE_SMS','TYPE_INSTAGRAM','TYPE_FACEBOOK',
+    'TYPE_MESSENGER','TYPE_EMAIL','TYPE_CUSTOM_EMAIL','TYPE_GMB','TYPE_LIVE_CHAT',
+    'TYPE_WEBCHAT','TYPE_REVIEW',
+];
+
 /* limites (superiores, em segundos) dos 10 baldes do histograma de resposta */
 const RT_BOUNDS = [60,180,300,600,1200,1800,3600,7200,21600,43200];
 function rt_bucket(int $sec): int {
@@ -340,7 +349,10 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         if (count($waitList) > 400) $waitList = array_slice($waitList, 0, 400);
         $bodies = []; $mh2 = curl_multi_init(); $st2 = []; $q2 = $waitList;
         $addB = function(array $item) use ($mh2, &$st2, $HDR) {
-            $ch = curl_init("https://services.leadconnectorhq.com/conversations/{$item['id']}/messages?limit=1");
+            // Busca as últimas mensagens (não só a última do fio, que pode ser
+            // atividade do sistema / comentário interno) para achar a última
+            // mensagem de FATO do cliente.
+            $ch = curl_init("https://services.leadconnectorhq.com/conversations/{$item['id']}/messages?limit=25");
             curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_HTTPHEADER=>$HDR, CURLOPT_TIMEOUT=>20]);
             curl_multi_add_handle($mh2, $ch); $st2[(int)$ch] = $item;
         };
@@ -350,9 +362,28 @@ function run_collection(string $mode, ?string $monthArg = null): void {
             while ($info = curl_multi_info_read($mh2)) {
                 $ch=$info['handle']; $item=$st2[(int)$ch]??null; unset($st2[(int)$ch]);
                 $body=curl_multi_getcontent($ch); curl_multi_remove_handle($mh2,$ch); curl_close($ch);
-                $text='';
-                if ($body){ $jj=json_decode($body,true); $ms=$jj['messages']['messages']??[]; if($ms) $text=(string)($ms[0]['body']??''); }
-                if ($item) $bodies[$item['id']] = $text;
+                $text=''; $realType='';
+                if ($body){
+                    $jj=json_decode($body,true); $ms=$jj['messages']['messages']??[];
+                    // ordena por data desc (mais recente primeiro) por garantia
+                    usort($ms, function($a,$b){
+                        return (int)($b['dateAdded']??0 ? strtotime((string)$b['dateAdded']) : 0)
+                             - (int)($a['dateAdded']??0 ? strtotime((string)$a['dateAdded']) : 0);
+                    });
+                    foreach ($ms as $m) {
+                        if (($m['direction'] ?? '') !== 'inbound') continue;      // fala do cliente
+                        $mt = (string)($m['messageType'] ?? '');
+                        if (!in_array($mt, CLIENT_MSG_TYPES, true)) continue;     // ignora sistema/interno/ligação
+                        $bd = trim((string)($m['body'] ?? ''));
+                        // remove metadados que o GHL às vezes anexa ao corpo
+                        $bd = preg_replace('/\s*\n\s*Source:.*$/is', '', $bd);
+                        $bd = preg_replace('/^\s*id:\s*\S+\s*\n/im', '', $bd);
+                        $bd = trim($bd);
+                        if ($bd === '') continue;                                 // ignora anexos sem texto
+                        $text = $bd; $realType = $mt; break;
+                    }
+                }
+                if ($item) $bodies[$item['id']] = ['text'=>$text, 'type'=>$realType];
                 if ($q2) $addB(array_shift($q2));
             }
         } while ($run2 || $st2 || $q2);
@@ -360,9 +391,12 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         $bn = []; foreach ($brokersRows as $b) $bn[$b['id']] = $b['nome'];
         $aguardando = [];
         foreach ($waitList as $it) {
+            $bi = $bodies[$it['id']] ?? ['text'=>'','type'=>''];
             $aguardando[] = ['name'=>$it['name'], 'phone'=>$it['phone'], 'broker_id'=>$it['ass'],
-                'broker'=>($bn[$it['ass']] ?? $it['ass']), 'since'=>$it['since'], 'type'=>$it['type'],
-                'text'=>trim(mb_substr(trim((string)($bodies[$it['id']] ?? '')), 0, 400))];
+                'broker'=>($bn[$it['ass']] ?? $it['ass']), 'since'=>$it['since'],
+                'type'=>($bi['type'] !== '' ? $bi['type'] : $it['type']),
+                'conv'=>$it['id'],
+                'text'=>trim(mb_substr(trim((string)($bi['text'] ?? '')), 0, 400))];
         }
         @file_put_contents($dir.'/aguardando.json', json_encode(
             ['generated'=>$now->format('d/m/Y H:i'), 'gen_ms'=>$now->getTimestamp()*1000, 'items'=>$aguardando],

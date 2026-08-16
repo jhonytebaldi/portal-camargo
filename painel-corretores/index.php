@@ -152,6 +152,8 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--acc)}
 .tabb.on{color:var(--tx);border-bottom-color:var(--acc);font-weight:600}
 td.msg{white-space:normal;max-width:440px;color:#cbd3df;font-size:12.8px;line-height:1.45}
 td a{color:var(--acc);text-decoration:none}
+a.crmlink{display:inline-block;padding:3px 9px;border:1px solid var(--acc);border-radius:14px;font-size:12px;white-space:nowrap}
+a.crmlink:hover{background:var(--acc);color:#0b1220}
 .rt-hi{color:#f0a020;font-weight:600}
 details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
 details.desl summary::-webkit-details-marker{display:none}
@@ -215,6 +217,9 @@ tr.off td{color:#6f7684}
 const D=<?= json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
 const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+const CRM_URL=<?= json_encode(rtrim(defined('GHL_APP_URL')?GHL_APP_URL:'https://app.gohighlevel.com','/')) ?>;
+const CRM_LOC=<?= json_encode(defined('GHL_LOCATION')?GHL_LOCATION:'') ?>;
+const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}`:null;
 const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
 const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);
@@ -444,12 +449,13 @@ function renderFila(){
     SF.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-fk="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
     `<span class="tag" style="margin-left:auto">${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}</span></div>`;
   if(!A.length){h+=`<div class="card">Nenhum cliente aguardando resposta agora. 👍</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
-  h+=`<div class="card"><table><thead><tr><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th></tr></thead><tbody>`;
+  h+=`<div class="card"><table><thead><tr><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th><th>Conversa</th></tr></thead><tbody>`;
   A.forEach(it=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
     const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
     const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
-    h+=`<tr><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td></tr>`;});
-  h+=`</tbody></table><div class="foot">Só clientes com a <b>última mensagem sem resposta</b> (aguardando de fato — não conta follow-up). <span class="rt-hi">Laranja</span> = +4h; <span class="zero">vermelho</span> = +24h. O telefone abre o WhatsApp. Atualiza a cada coleta.</div></div>`;
+    const cu=convUrl(it.conv);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir no CRM (WeSales/GHL)">Abrir ↗</a>`:'—';
+    h+=`<tr><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td><td>${abrir}</td></tr>`;});
+  h+=`</tbody></table><div class="foot">Só clientes com a <b>última mensagem sem resposta</b> (aguardando de fato — não conta follow-up) e apenas mensagens <b>reais do cliente</b> (ignora "opportunity updated", comentários internos e registros de ligação). <span class="rt-hi">Laranja</span> = +4h; <span class="zero">vermelho</span> = +24h. O telefone abre o WhatsApp; "Abrir ↗" abre a conversa no CRM. Atualiza a cada coleta.</div></div>`;
   document.getElementById('view').innerHTML=h;bindFila();
 }
 function bindFila(){document.querySelectorAll('[data-fk]').forEach(el=>el.onclick=()=>{
