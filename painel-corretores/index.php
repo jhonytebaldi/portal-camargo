@@ -273,7 +273,11 @@ function alertsFor(b,days){
   return out;
 }
 function renderAlerts(days){
-  const rows=ACT.map(b=>({b,a:alertsFor(b,days)})).filter(x=>x.a.length)
+  // Só alerta quem está TRABALHANDO e escorregando em algo: exclui contas sem
+  // nenhuma atividade no período (contas de sistema / não-corretores / quem
+  // deveria estar como desligado) — senão a lista vira ruído.
+  const rows=ACT.filter(b=>{const s=stats(b,days);return (s.n+s.ic+s.cl)>0;})
+    .map(b=>({b,a:alertsFor(b,days)})).filter(x=>x.a.length)
     .sort((x,y)=>y.a.reduce((s,z)=>s+z.w,0)-x.a.reduce((s,z)=>s+z.w,0));
   if(!rows.length) return `<h2>Alertas de atenção</h2><div class="card">Nenhum alerta no período selecionado. 👍</div>`;
   let h=`<h2>Alertas de atenção — ${rows.length} corretor(es)</h2><div class="card alertcard">`;
