@@ -232,7 +232,15 @@ const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
 const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const CRM_URL=<?= json_encode(rtrim(defined('GHL_APP_URL')?GHL_APP_URL:'https://app.wesalescrm.com','/')) ?>;
 const CRM_LOC=<?= json_encode(defined('GHL_LOCATION')?GHL_LOCATION:'') ?>;
+// Link para o CRM. O deep-link direto de conversa (/conversations/conversations/ID)
+// NÃO é confiável no WeSales/GHL: o app ignora a conversa da URL e mantém o
+// filtro de caixa que o usuário deixou salvo, caindo na 1ª conversa desse filtro.
+// Já a ficha do contato (/contacts/detail/ID) abre SEMPRE o cliente certo, com a
+// conversa/atividade dele ao lado. Por isso preferimos o contactId; a conversa
+// fica como reserva caso um item antigo não tenha o contato.
+const contactUrl=cid=>(cid&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/contacts/detail/${cid}`:null;
 const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}?view=contact`:null;
+const crmUrl=it=>contactUrl(it.contact)||convUrl(it.conv);
 const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
 const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);
@@ -466,7 +474,7 @@ function renderFila(){
   A.forEach((it,i)=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
     const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
     const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
-    const cu=convUrl(it.conv);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir no CRM (WeSales)">Abrir ↗</a>`:'—';
+    const cu=crmUrl(it);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir o cliente no CRM (WeSales)">Abrir ↗</a>`:'—';
     const nmsg=(it.thread&&it.thread.length)||0;
     const caret=nmsg?`<span class="caret" title="Ver a conversa (${nmsg} msgs)">▶</span>`:'';
     h+=`<tr class="filarow${nmsg?' hasthread':''}" data-i="${i}"><td class="cx">${caret}</td><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td><td>${abrir}</td></tr>`;
