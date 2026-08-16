@@ -232,7 +232,7 @@ const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
 const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const CRM_URL=<?= json_encode(rtrim(defined('GHL_APP_URL')?GHL_APP_URL:'https://app.wesalescrm.com','/')) ?>;
 const CRM_LOC=<?= json_encode(defined('GHL_LOCATION')?GHL_LOCATION:'') ?>;
-const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}?category=team-inbox&tab=all`:null;
+const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}?view=contact`:null;
 const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
 const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);

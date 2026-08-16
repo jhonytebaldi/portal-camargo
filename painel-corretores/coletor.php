@@ -212,7 +212,8 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                         $nm = (string)($c['contactName'] ?? ''); if ($nm === '') $nm = (string)($c['fullName'] ?? '');
                         $waitList[] = ['id'=>$c['id'], 'name'=>($nm !== '' ? $nm : 'Sem nome'),
                             'phone'=>(string)($c['phone'] ?? ''), 'ass'=>$ass, 'since'=>$lmd,
-                            'type'=>(string)($c['lastMessageType'] ?? '')];
+                            'type'=>(string)($c['lastMessageType'] ?? ''),
+                            'contact'=>(string)($c['contactId'] ?? '')];
                     } else {
                         $unread_followup[$ass] = ($unread_followup[$ass] ?? 0) + 1;
                     }
@@ -363,15 +364,15 @@ function run_collection(string $mode, ?string $monthArg = null): void {
             $bd = preg_replace('/^\s*id:\s*\S+\s*\n/im', '', $bd);
             return trim($bd);
         };
-        do {
-            curl_multi_exec($mh2, $run2); curl_multi_select($mh2, 1.0);
-            while ($info = curl_multi_info_read($mh2)) {
-                $ch=$info['handle']; $item=$st2[(int)$ch]??null; unset($st2[(int)$ch]);
-                $body=curl_multi_getcontent($ch); curl_multi_remove_handle($mh2,$ch); curl_close($ch);
-                $text=''; $realType=''; $thread=[];
-                if ($body){
-                    $jj=json_decode($body,true); $ms=$jj['messages']['messages']??[];
-                    // ordena por data ASC (mais antiga primeiro) — leitura do fio
+        // Interpreta a resposta de /messages -> ['text','type','thread','ok'].
+        // ok=false quando a chamada falhou (corpo vazio/sem JSON) — permite
+        // um retry só das conversas que não vieram (evita "buracos" na fila).
+        $parseMsgs = function(?string $body) use ($limpaBody, $TZ): array {
+            $text=''; $realType=''; $thread=[]; $ok=false;
+            if ($body) {
+                $jj=json_decode($body,true);
+                if (is_array($jj) && isset($jj['messages'])) {
+                    $ok=true; $ms=$jj['messages']['messages']??[];
                     usort($ms, function($a,$b){
                         return (strtotime((string)($a['dateAdded']??'')) ?: 0)
                              - (strtotime((string)($b['dateAdded']??'')) ?: 0);
@@ -380,32 +381,46 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                         $mdir = (($m['direction'] ?? '') === 'inbound') ? 'in' : 'out';
                         $mt  = (string)($m['messageType'] ?? '');
                         $bd  = $limpaBody((string)($m['body'] ?? ''));
-                        // classifica: msg real, comentário interno, atividade, ligação
                         if ($mt === 'TYPE_INTERNAL_COMMENT')         $kind = 'int';
                         elseif (strpos($mt, 'TYPE_ACTIVITY') === 0)  $kind = 'sys';
                         elseif ($mt === 'TYPE_CALL')                 $kind = 'call';
                         elseif (in_array($mt, CLIENT_MSG_TYPES, true)) $kind = 'msg';
                         else                                         $kind = 'sys';
                         if ($kind === 'call' && $bd === '') $bd = '(ligação)';
-                        if ($bd === '' && $kind !== 'msg') continue;   // pula atividade vazia
+                        if ($bd === '' && $kind !== 'msg') continue;
                         $ts = strtotime((string)($m['dateAdded'] ?? ''));
-                        $thread[] = [
-                            'dir'  => $mdir,
-                            'kind' => $kind,
-                            't'    => $ts ? (new DateTime('@'.$ts))->setTimezone($TZ)->format('d/m H:i') : '',
-                            'body' => mb_substr($bd, 0, 600),
-                        ];
-                        // última mensagem de FATO do cliente = resumo da linha
-                        if ($mdir === 'in' && $kind === 'msg' && $bd !== '') {
-                            $text = $bd; $realType = $mt;
-                        }
+                        $thread[] = ['dir'=>$mdir, 'kind'=>$kind,
+                            't'=>$ts ? (new DateTime('@'.$ts))->setTimezone($TZ)->format('d/m H:i') : '',
+                            'body'=>mb_substr($bd, 0, 600)];
+                        if ($mdir === 'in' && $kind === 'msg' && $bd !== '') { $text=$bd; $realType=$mt; }
                     }
                 }
-                if ($item) $bodies[$item['id']] = ['text'=>$text, 'type'=>$realType, 'thread'=>$thread];
+            }
+            return ['text'=>$text, 'type'=>$realType, 'thread'=>$thread, 'ok'=>$ok];
+        };
+        do {
+            curl_multi_exec($mh2, $run2); curl_multi_select($mh2, 1.0);
+            while ($info = curl_multi_info_read($mh2)) {
+                $ch=$info['handle']; $item=$st2[(int)$ch]??null; unset($st2[(int)$ch]);
+                $body=curl_multi_getcontent($ch); curl_multi_remove_handle($mh2,$ch); curl_close($ch);
+                if ($item) $bodies[$item['id']] = $parseMsgs($body);
                 if ($q2) $addB(array_shift($q2));
             }
         } while ($run2 || $st2 || $q2);
         curl_multi_close($mh2);
+        // Retry (sequencial, timeout maior) das conversas cuja 1ª chamada falhou
+        // ou veio sem nenhuma mensagem real — cobre timeouts/rate-limit pontuais.
+        $retry = array_filter($waitList, function($it) use ($bodies) {
+            $b = $bodies[$it['id']] ?? null;
+            return !$b || !$b['ok'] || empty($b['thread']);
+        });
+        foreach ($retry as $it) {
+            $ch = curl_init("https://services.leadconnectorhq.com/conversations/{$it['id']}/messages?limit=25");
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_HTTPHEADER=>$HDR, CURLOPT_TIMEOUT=>30]);
+            $body = curl_exec($ch); curl_close($ch);
+            $r = $parseMsgs($body);
+            if ($r['ok'] && (!isset($bodies[$it['id']]) || !empty($r['thread']))) $bodies[$it['id']] = $r;
+        }
         $bn = []; foreach ($brokersRows as $b) $bn[$b['id']] = $b['nome'];
         $aguardando = [];
         foreach ($waitList as $it) {
@@ -414,6 +429,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 'broker'=>($bn[$it['ass']] ?? $it['ass']), 'since'=>$it['since'],
                 'type'=>($bi['type'] !== '' ? $bi['type'] : $it['type']),
                 'conv'=>$it['id'],
+                'contact'=>($it['contact'] ?? ''),
                 'text'=>trim(mb_substr(trim((string)($bi['text'] ?? '')), 0, 400)),
                 'thread'=>($bi['thread'] ?? [])];
         }
