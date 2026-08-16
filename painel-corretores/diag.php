@@ -8,7 +8,7 @@ if (!$u || $u['papel'] !== 'admin') { http_response_code(403); exit('Apenas admi
 portal_load_config();
 header('Content-Type: text/plain; charset=utf-8');
 
-$dir = painel_data_dir();
+$dir = rtrim(defined('PAINEL_DATA_DIR') ? PAINEL_DATA_DIR : (dirname(__DIR__, 2) . '/painel-dados'), '/');
 echo "data_dir: $dir\n\n";
 
 foreach (['aguardando.json','painel_live.json','status.json','coletor.log'] as $f) {
