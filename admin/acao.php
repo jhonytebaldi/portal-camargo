@@ -54,11 +54,13 @@ try {
             jout(['ok'=>true]);
 
         case 'broker_deactivate':
-            $pdo->prepare('UPDATE brokers SET ativo=0 WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
+            // Marca a data do desligamento: o coletor congela os dados dele
+            // nessa data e para de acumular atividade nova.
+            $pdo->prepare('UPDATE brokers SET ativo=0, desligado_em=NOW() WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
             jout(['ok'=>true]);
 
         case 'broker_activate':
-            $pdo->prepare('UPDATE brokers SET ativo=1 WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
+            $pdo->prepare('UPDATE brokers SET ativo=1, desligado_em=NULL WHERE id=?')->execute([(string)($_POST['broker_id'] ?? '')]);
             jout(['ok'=>true]);
 
         case 'ghl_sync':

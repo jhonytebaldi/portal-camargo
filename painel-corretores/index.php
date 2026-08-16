@@ -5,29 +5,44 @@
    Nível 1: exige a ferramenta 'painel-corretores'.
    Nível 2: mostra SÓ os corretores que o usuário pode ver
             (equipes liberadas + o próprio corretor vinculado; admin vê todos).
-   Lê o agregado gerado pelo coletor (cron) e injeta já filtrado.
+   Lê o agregado do MÊS escolhido (um arquivo por mês) + o painel_live.json
+   (não lidas do momento). Filtra pelo escopo do usuário e injeta.
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/../lib/auth.php';
 
 $u = require_tool('painel-corretores');
 
-/* Carrega o agregado (fora da web). */
 portal_load_config();
-$dir  = defined('PAINEL_DATA_DIR') ? PAINEL_DATA_DIR : (dirname(__DIR__, 2) . '/painel-dados');
-$file = rtrim($dir, '/') . '/presenca_agg.json';
+$dir  = rtrim(defined('PAINEL_DATA_DIR') ? PAINEL_DATA_DIR : (dirname(__DIR__, 2) . '/painel-dados'), '/');
+
+/* Meses disponíveis (um arquivo presenca_AAAA-MM.json por mês). */
+$months = [];
+foreach (glob($dir . '/presenca_20??-??.json') ?: [] as $f) {
+    if (preg_match('#presenca_(\d{4}-\d{2})\.json$#', $f, $mm)) $months[$mm[1]] = $f;
+}
+krsort($months);
+$curMonthKey = (new DateTime('now', new DateTimeZone('-03:00')))->format('Y-m');
+$selMonth = (string)($_GET['mes'] ?? '');
+if (!isset($months[$selMonth])) $selMonth = $months ? array_key_first($months) : $curMonthKey;
+
+/* Arquivo do mês (fallback para o legado presenca_agg.json). */
+$file = $months[$selMonth] ?? ($dir . '/presenca_agg.json');
 $agg  = is_readable($file) ? json_decode((string)file_get_contents($file), true) : null;
+$ehMesCorrente = ($selMonth === $curMonthKey);
 
 /* Filtra corretores pelo escopo do usuário. */
 $semDados = false;
 if (is_array($agg) && isset($agg['brokers'])) {
-    if (is_admin($u)) {
-        // admin: todos os que estão no agregado
-    } else {
-        $permit = array_flip(allowed_broker_ids($u)); // ids de corretores visíveis
-        $agg['brokers'] = array_values(array_filter($agg['brokers'], function ($b) use ($permit) {
-            return isset($permit[$b['id']]);
-        }));
+    if (!is_admin($u)) {
+        $permit = array_flip(allowed_broker_ids($u));
+        $agg['brokers'] = array_values(array_filter($agg['brokers'], fn($b) => isset($permit[$b['id']])));
+        // filtra também o live (não lidas) pelo escopo
+        if (!empty($agg['live'])) {
+            foreach (['unread_now','wait24'] as $k) {
+                if (!empty($agg['live'][$k])) $agg['live'][$k] = array_intersect_key($agg['live'][$k], $permit);
+            }
+        }
     }
     if (!$agg['brokers']) $semDados = true;
 } else {
@@ -35,23 +50,27 @@ if (is_array($agg) && isset($agg['brokers'])) {
 }
 $isAdmin = is_admin($u);
 
-/* Status da última/atual coleta (para banner claro de atualização). */
-$stFile = rtrim($dir, '/') . '/status.json';
+$stFile = $dir . '/status.json';
 $st = is_readable($stFile) ? json_decode((string)file_get_contents($stFile), true) : null;
 $rodando = is_array($st) && ($st['state'] ?? '') === 'running';
+
+/* nome amigável do mês */
+function mes_label(string $ym): string {
+    $meses = [1=>'jan',2=>'fev',3=>'mar',4=>'abr',5=>'mai',6=>'jun',7=>'jul',8=>'ago',9=>'set',10=>'out',11=>'nov',12=>'dez'];
+    [$y,$m] = array_map('intval', explode('-', $ym));
+    return ($meses[$m] ?? $ym) . '/' . $y;
+}
 ?><!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<?php if ($rodando): /* enquanto coleta roda, a página se atualiza sozinha */ ?>
-<meta http-equiv="refresh" content="20">
-<?php endif; ?>
+<?php if ($rodando): ?><meta http-equiv="refresh" content="20"><?php endif; ?>
 <title>Presença dos Corretores — Imobiliária Camargo</title>
 <style>
 :root{--bg:#0f1115;--card:#181b22;--card2:#1e222b;--line:#262b36;--tx:#e7eaf0;--mut:#9aa4b2;--acc:#4f8cff;--auto:#5b6472;--warn:#f0a020;--bad:#e06a5b;--good:#2fbf71}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--tx);line-height:1.5}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;background:#0b0d11;border-bottom:1px solid var(--line);font-size:13px}
 .topbar a{color:var(--acc);text-decoration:none}.topbar .who{color:var(--mut)}
-.wrap{max-width:1120px;margin:0 auto;padding:24px 18px 70px}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 18px 70px}
 h1{font-size:21px;margin:0 0 3px}.sub{color:var(--mut);font-size:13.5px}
 .disc{border-left:3px solid var(--acc);background:#141824;padding:10px 14px;border-radius:8px;font-size:12.6px;color:#cbd3df;margin-top:12px}
 .updbar{margin-top:12px;padding:9px 14px;border-radius:8px;font-size:12.8px;color:var(--mut);background:#131820;border:1px solid var(--line)}
@@ -77,6 +96,8 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 .spark{display:inline-flex;align-items:flex-end;gap:1.5px;height:22px}
 .spark i{width:5px;background:#3f6fd0;border-radius:1px;display:inline-block;min-height:1px}
 .spark i.we{background:#333b47}.spark i.z{background:#3a2020}.spark i.note{background:#f0a020}
+.uspark{display:inline-flex;align-items:flex-end;gap:1px;height:20px}
+.uspark i{width:3px;background:#c9a253;border-radius:1px;display:inline-block;min-height:1px}
 .pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600}
 .pill.ok{background:#173a28;color:#57d38c}.pill.no{background:#3a1c1c;color:#ef8a7d}.pill.wk{background:#2a2f3a;color:#c9a253}
 .barwrap{position:relative;height:15px;background:#11141a;border-radius:4px;min-width:150px;display:inline-block;vertical-align:middle}
@@ -93,6 +114,20 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 .back{color:var(--acc);cursor:pointer;font-size:13px}
 .mut{color:var(--mut)}
 .aviso{background:#211a12;border:1px solid #6a5320;color:#ffcf8f;padding:16px 18px;border-radius:12px;margin-top:20px;font-size:14px}
+.alertcard{border-left:3px solid var(--bad)}
+.al-row{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.al-row:last-child{border-bottom:0}
+.al-nm{font-weight:600;min-width:190px;cursor:pointer}.al-nm:hover{color:var(--acc)}
+.chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;border:1px solid var(--line)}
+.chip.red{background:#3a1c1c;color:#ef8a7d;border-color:#5a2a2a}
+.chip.orange{background:#211a12;color:#f0b552;border-color:#5a4520}
+.chip.yellow{background:#23231a;color:#c9a253;border-color:#44401f}
+.rt-hi{color:#f0a020;font-weight:600}
+details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
+details.desl summary::-webkit-details-marker{display:none}
+details.desl summary:before{content:"▸ ";color:var(--mut)}
+details.desl[open] summary:before{content:"▾ "}
+tr.off td{color:#6f7684}
 </style></head><body>
 <div class="topbar">
   <a href="/">← Portal</a>
@@ -101,20 +136,20 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 <div class="wrap">
 <h1>Presença dos Corretores <span class="tag" style="font-weight:400">· aproximada</span></h1>
 <div class="sub" id="periodlbl"></div>
-<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença aqui = rastro de trabalho no CRM: <b>mensagens manuais</b> (digitadas no GHL + WhatsApp externo), mais <b>notas internas e ligações</b> registradas por ele. Automação (workflow) é excluída. A "janela" vai da 1ª à última ação do dia — subestima o dia real. Escopo: conversas atribuídas a cada corretor (o que ele faz em conversas de outro dono não entra).</div>
+<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença = rastro no CRM: <b>mensagens manuais</b> + <b>notas/ligações</b>, por autor, excluindo automação. <b>Tempo de resposta</b> = do 1º recado do cliente até a 1ª resposta manual, só em horário comercial (8h–20h). <b>Não lidas</b> = retrato do momento (conversas do cliente esperando na caixa do corretor responsável).</div>
 
 <?php if ($rodando): ?>
-  <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> a coleta começou às <?= h($st['started'] ?? '') ?> e leva alguns minutos. Esta página se atualiza sozinha quando terminar.</div>
+  <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> começou às <?= h($st['started'] ?? '') ?>. Esta página se atualiza sozinha quando terminar.</div>
 <?php elseif (is_array($st) && ($st['state'] ?? '') === 'done'): ?>
-  <div class="updbar"><span>Dados atualizados <?= isset($st['finished']) ? 'às ' . h($st['finished']) : '' ?><?= isset($st['mode']) && $st['mode']==='full' ? ' (varredura completa)' : '' ?>. Atualização automática diária.<?php if($isAdmin): ?> <a href="/painel-corretores/coletor.php">Atualizar agora</a> se precisar de algo mais recente.<?php endif; ?></span></div>
+  <div class="updbar"><span>Dados atualizados <?= isset($st['finished']) ? 'às ' . h($st['finished']) : '' ?>.<?php if($isAdmin): ?> <a href="/painel-corretores/coletor.php">Atualizar agora</a>.<?php endif; ?></span></div>
 <?php endif; ?>
 
 <?php if ($semDados): ?>
   <div class="aviso">
     <?php if ($rodando): ?>
-      A primeira coleta está sendo gerada agora (iniciada às <?= h($st['started'] ?? '') ?>). Esta página se atualiza sozinha em instantes.
+      A coleta está sendo gerada agora (iniciada às <?= h($st['started'] ?? '') ?>). Esta página se atualiza sozinha em instantes.
     <?php elseif (!is_array($agg)): ?>
-      O painel ainda não foi gerado. <?php if($isAdmin): ?>Clique em <a href="/painel-corretores/coletor.php">atualizar agora</a> (roda em segundo plano por alguns minutos) ou aguarde a atualização automática da madrugada.<?php else: ?>Fale com o administrador para gerar os dados.<?php endif; ?>
+      O painel ainda não foi gerado. <?php if($isAdmin): ?>Clique em <a href="/painel-corretores/coletor.php">atualizar agora</a> (roda em segundo plano) ou aguarde a atualização automática.<?php else: ?>Fale com o administrador.<?php endif; ?>
     <?php else: ?>
       Você ainda não tem nenhum corretor liberado para visualizar. Fale com o administrador.
     <?php endif; ?>
@@ -123,6 +158,13 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 <?php return; endif; ?>
 
 <div class="ctrl">
+  <label class="tag">Mês</label>
+  <select id="mes" onchange="location.search='?mes='+this.value">
+    <?php foreach ($months as $mk => $_): ?>
+      <option value="<?= h($mk) ?>" <?= $mk===$selMonth?'selected':'' ?>><?= h(mes_label($mk)) ?></option>
+    <?php endforeach; ?>
+    <?php if (!$months): ?><option selected><?= h(mes_label($selMonth)) ?></option><?php endif; ?>
+  </select>
   <label class="tag">Corretor</label>
   <select id="broker"><option value="__all__">▦ Todos (visão geral)</option></select>
   <span class="presets" id="presets">
@@ -140,19 +182,27 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 </div>
 <script>
 const D=<?= json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-const AD=D.alldays, B=D.brokers, byId={};
+const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
+const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
-document.getElementById('periodlbl').textContent="Período coletado: "+D.period.start_str+" – "+D.period.end_str+" · fuso America/São_Paulo (UTC-3)";
-document.getElementById('genlbl').textContent="Dados gerados em "+D.period.generated+" · "+B.length+" corretores · fonte: GHL API v2.";
+const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);
+document.getElementById('periodlbl').textContent="Período: "+D.period.start_str+" – "+D.period.end_str+" · fuso America/São_Paulo (UTC-3)";
+document.getElementById('genlbl').textContent="Dados gerados em "+D.period.generated+" · "+ACT.length+" corretores ativos"+(OFF.length?(" · "+OFF.length+" desligados"):"")+" · fonte: GHL API v2.";
 const clientTot=b=>Object.values(b.days).reduce((s,d)=>s+d.n,0);
-const totals=B.map(b=>({id:b.id,name:b.name,t:clientTot(b)})).sort((a,b)=>b.t-a.t);
 const bsel=document.getElementById('broker');
-totals.forEach(x=>{const o=document.createElement('option');o.value=x.id;o.textContent=x.name+"  ("+x.t+")";bsel.appendChild(o);});
+ACT.map(b=>({id:b.id,name:b.name,t:clientTot(b)})).sort((a,b)=>b.t-a.t)
+  .forEach(x=>{const o=document.createElement('option');o.value=x.id;o.textContent=x.name+"  ("+x.t+")";bsel.appendChild(o);});
 const fsel=document.getElementById('from'), tsel=document.getElementById('to');
 AD.forEach(d=>{const t=d.label+" "+d.wd;
   let o1=document.createElement('option');o1.value=d.key;o1.textContent=t;fsel.appendChild(o1);
   let o2=document.createElement('option');o2.value=d.key;o2.textContent=t;tsel.appendChild(o2);});
 let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key};
+
+const RT_BOUNDS=[0,60,180,300,600,1200,1800,3600,7200,21600,43200];
+function rtMedian(hist){const n=hist.reduce((a,b)=>a+b,0);if(!n)return null;const half=n/2;let cum=0;
+  for(let i=0;i<10;i++){if(cum+hist[i]>=half){const lo=RT_BOUNDS[i],hi=RT_BOUNDS[i+1];const frac=(half-cum)/Math.max(1,hist[i]);return Math.round(lo+(hi-lo)*frac);}cum+=hist[i];}
+  return RT_BOUNDS[10];}
+function fmtDur(sec){if(sec==null)return '—';if(sec<60)return sec+'s';const m=Math.round(sec/60);if(m<60)return m+' min';const h=Math.floor(m/60),mm=m%60;return h+'h'+(mm?String(mm).padStart(2,'0'):'');}
 
 function rangeDays(){const i0=AD.findIndex(d=>d.key===state.from),i1=AD.findIndex(d=>d.key===state.to);
   return AD.slice(Math.min(i0,i1),Math.max(i0,i1)+1);}
@@ -170,13 +220,16 @@ function fmtSpan(m){return Math.floor(m/60)+"h"+String(m%60).padStart(2,'0');}
 
 function stats(b,days){
   let n=0,ic=0,cl=0,cfirst=null,clast=null,pfirst=null,plast=null,activeP=0,gaps=[];
+  let rt_n=0,rt_sum=0; const rt_hist=new Array(10).fill(0);
   const mh=new Array(24).fill(0),ah=new Array(24).fill(0),series=[];
   days.forEach(d=>{const r=b.days[d.key];
     const cnt=r?r.n:0, ici=r?r.ic:0, cli=r?r.cl:0;
     const present=r&&(r.n>0||r.ic>0||r.cl>0);
     series.push({...d,n:cnt,ic:ici,cl:cli,first:r?r.first:null,last:r?r.last:null,
-                 pfirst:r?r.pfirst:null,plast:r?r.plast:null,present:!!present});
+                 pfirst:r?r.pfirst:null,plast:r?r.plast:null,present:!!present,
+                 rt_hist:r&&r.rt_hist?r.rt_hist:null,rt_n:r?r.rt_n:0,rt_sum:r?r.rt_sum:0});
     if(r){n+=r.n;ic+=r.ic;cl+=r.cl;
+      rt_n+=r.rt_n||0; rt_sum+=r.rt_sum||0; if(r.rt_hist)for(let i=0;i<10;i++)rt_hist[i]+=r.rt_hist[i];
       for(let h=0;h<24;h++){mh[h]+=r.mh[h];ah[h]+=r.ah[h];}
       if(present){activeP++;
         const pf=toMin(r.pfirst),pl=toMin(r.plast);
@@ -188,7 +241,8 @@ function stats(b,days){
       } else if(!d.weekend) gaps.push(d.label);
     } else if(!d.weekend) gaps.push(d.label);
   });
-  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series};
+  const rtMed=rtMedian(rt_hist), rtMean=rt_n?Math.round(rt_sum/rt_n):null;
+  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rt_hist,rtMed,rtMean};
 }
 function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
   return '<span class="spark">'+series.map(s=>{
@@ -199,51 +253,103 @@ function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
     else {cls='z';h=2;}
     return `<i class="${cls}" style="height:${h}px" title="${s.label} ${s.wd}: ${s.n} msg${s.ic?', '+s.ic+' nota(s)':''}${s.cl?', '+s.cl+' lig':''}"></i>`;
   }).join('')+'</span>';}
+const unreadNow=b=>LIVE?(LIVE.unread_now[b.id]||0):null;
+const wait24=b=>LIVE?(LIVE.wait24[b.id]||0):0;
+
+/* -------- Alertas de atenção -------- */
+function lastBizDay(days){for(let i=days.length-1;i>=0;i--)if(!days[i].weekend)return days[i];return null;}
+function alertsFor(b,days){
+  const s=stats(b,days); const out=[];
+  const lb=lastBizDay(days);
+  if(lb){const r=b.days[lb.key];const act=r&&(r.n>0||r.ic>0||r.cl>0);
+    if(!act)out.push({w:3,c:'red',t:`sem atividade em ${lb.label} (último dia útil)`});}
+  if(s.gaps.length)out.push({w:2,c:'orange',t:`${s.gaps.length} dia(s) útil sem atividade`});
+  if(s.rtMed!=null&&s.rtMed>1800)out.push({w:2,c:'orange',t:`resposta mediana ${fmtDur(s.rtMed)}`});
+  if(LIVE){const un=unreadNow(b);if(un>10)out.push({w:3,c:'red',t:`${un} não lidas agora`});}
+  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',t:`${wq} cliente(s) parado(s) +24h`});}
+  const autoDays=[];days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
+    if(r){const ah=r.ah.reduce((a,b)=>a+b,0);const man=r.n+r.ic+r.cl;if(ah>0&&man===0)autoDays.push(d.label);}});
+  if(autoDays.length)out.push({w:1,c:'yellow',t:`só automação em ${autoDays.slice(0,3).join(', ')}${autoDays.length>3?'…':''}`});
+  return out;
+}
+function renderAlerts(days){
+  const rows=ACT.map(b=>({b,a:alertsFor(b,days)})).filter(x=>x.a.length)
+    .sort((x,y)=>y.a.reduce((s,z)=>s+z.w,0)-x.a.reduce((s,z)=>s+z.w,0));
+  if(!rows.length) return `<h2>Alertas de atenção</h2><div class="card">Nenhum alerta no período selecionado. 👍</div>`;
+  let h=`<h2>Alertas de atenção — ${rows.length} corretor(es)</h2><div class="card alertcard">`;
+  rows.forEach(r=>{h+=`<div class="al-row"><span class="al-nm" data-id="${r.b.id}">${r.b.name}</span>`+
+    r.a.map(a=>`<span class="chip ${a.c}">${a.t}</span>`).join('')+`</div>`;});
+  h+=`<div class="foot">Critérios: sem atividade no último dia útil · dias úteis zerados · tempo de resposta mediano acima de 30 min · +10 não lidas agora · cliente parado há +24h · dias só com automação. Clique no nome para abrir o corretor.</div></div>`;
+  return h;
+}
 
 function renderOverview(days){
-  const rows=B.map(b=>({b,s:stats(b,days)})).sort((a,b)=>b.s.n-a.s.n);
+  const rows=ACT.map(b=>({b,s:stats(b,days)})).sort((a,b)=>b.s.n-a.s.n);
   const totMsg=rows.reduce((s,r)=>s+r.s.n,0);
   const wdays=days.filter(d=>!d.weekend).length;
   const withGap=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0 && r.s.gaps.length>0).length;
   const silent=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)===0).length;
-  let h=`<div class="kpis">
+  const unTot=LIVE?ACT.reduce((s,b)=>s+(unreadNow(b)||0),0):null;
+  let h=renderAlerts(days);
+  h+=`<div class="kpis">
     <div class="kpi"><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
-    <div class="kpi"><div class="v">${rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length}/${B.length}</div><div class="l">corretores com atividade</div></div>
+    <div class="kpi"><div class="v">${rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
     <div class="kpi"><div class="v" style="color:${withGap?'#f0a020':'inherit'}">${withGap}</div><div class="l">com falhas em dia útil</div></div>
-    <div class="kpi"><div class="v" style="color:${silent?'#e06a5b':'inherit'}">${silent}</div><div class="l">sem nenhuma atividade</div></div>
+    <div class="kpi"><div class="v" style="color:${unTot?'#f0a020':'inherit'}">${unTot==null?'—':unTot}</div><div class="l">${EH_MES_CORRENTE?'não lidas agora (total)':'não lidas (só mês corrente)'}</div></div>
   </div>
   <h2>Visão geral — clique num corretor para o detalhe</h2>
   <div class="card"><table><thead><tr>
-  <th>Corretor</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Dias ativos</th><th>1ª típ.</th><th>Últ. típ.</th><th>Atividade diária</th><th>Falhas (dia útil)</th>
+  <th>Corretor</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. mediana</th><th class="n">Não lidas</th><th class="n">Dias ativos</th><th>1ª típ.</th><th>Últ. típ.</th><th>Atividade diária</th><th>Falhas (dia útil)</th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{const s=r.s;const any=s.n+s.ic+s.cl;
     const stat=any===0?'<span class="pill no">sem atividade</span>'
       :s.gaps.length?`<span class="pill wk">${s.gaps.length} dia(s): ${s.gaps.slice(0,4).join(', ')}${s.gaps.length>4?'…':''}</span>`
       :'<span class="pill ok">ok</span>';
+    const un=unreadNow(r.b); const unCell=un==null?'—':(un>10?`<span class=zero>${un}</span>`:(un||'—'));
+    const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
     h+=`<tr class="clk" data-id="${r.b.id}"><td>${r.b.name}</td>
       <td class="n">${s.n||'<span class=zero>0</span>'}</td>
       <td class="n mut">${(s.ic+s.cl)||'—'}</td>
+      <td class="n">${rtCell}</td>
+      <td class="n">${unCell}</td>
       <td class="n">${s.activeP}/${wdays}</td>
       <td>${s.pfirst!=null?fmtHM(s.pfirst):'—'}</td>
       <td>${s.plast!=null?fmtHM(s.plast):'—'}</td>
       <td>${spark(s.series)}</td><td>${stat}</td></tr>`;});
-  h+='</tbody></table><div class="foot">"Msgs" = mensagens manuais ao cliente. "Notas/Lig" = comentários internos + ligações (sinal de presença sem mensagem). "Dias ativos" = dias úteis com qualquer atividade. "Falhas" = dias úteis sem <b>nenhuma</b> atividade (barra <span style="color:#f0a020">laranja</span> = só nota/ligação; <span style="color:#e06a5b">vermelha fina</span> = ausência). "1ª/Últ. típ." considera toda ação (msg, nota, ligação).</div></div>';
+  h+=`</tbody></table><div class="foot">"Resp. mediana" = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "Não lidas" = clientes esperando agora na caixa dele${EH_MES_CORRENTE?'':' (só no mês corrente)'}. "Falhas" = dias úteis sem <b>nenhuma</b> atividade.</div></div>`;
+  /* Desligados (recolhível) */
+  if(OFF.length){
+    const orows=OFF.map(b=>({b,s:stats(b,days)}));
+    h+=`<details class="desl"><summary>Desligados (${OFF.length}) — dados congelados, sem coleta nova</summary><div class="card"><table><thead><tr><th>Corretor</th><th class="n">Msgs no período</th><th class="n">Último dia ativo</th></tr></thead><tbody>`;
+    orows.forEach(r=>{const la=[...r.s.series].reverse().find(x=>x.present);
+      h+=`<tr class="off clk" data-id="${r.b.id}"><td>${r.b.name}</td><td class="n">${r.s.n||'—'}</td><td class="n">${la?la.label:'—'}</td></tr>`;});
+    h+=`</tbody></table><div class="foot">Marcados como desligados no controle de equipes. O coletor congela os dados na data do desligamento e não busca atividade nova deles.</div></div></details>`;
+  }
   document.getElementById('view').innerHTML=h;
-  document.querySelectorAll('tr.clk').forEach(tr=>tr.onclick=()=>{state.broker=tr.dataset.id;bsel.value=tr.dataset.id;render();});
+  document.querySelectorAll('tr.clk,[data-id].al-nm').forEach(el=>el.onclick=()=>{state.broker=el.dataset.id;bsel.value=byId[el.dataset.id]&&el.dataset.id;render();});
 }
+
 function renderBroker(b,days){
   const s=stats(b,days);const wdays=days.filter(d=>!d.weekend).length;
   const lastAct=[...s.series].reverse().find(x=>x.present);
+  const off=b.ativo===0;
   let h=`<div class="back" onclick="state.broker='__all__';document.getElementById('broker').value='__all__';render()">← voltar à visão geral</div>
-  <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}</span></h2>
+  <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}${off?' · <span style="color:#f0a020">desligado</span>':''}</span></h2>
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
+    <div class="kpi"><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
-    <div class="kpi"><div class="v">${lastAct?lastAct.label:'—'}</div><div class="l">último dia com atividade</div></div>
-    <div class="kpi"><div class="v" style="color:${s.gaps.length?'#f0a020':'inherit'}">${s.gaps.length}</div><div class="l">dias úteis sem atividade</div></div>
+    <div class="kpi"><div class="v" style="color:${(LIVE&&unreadNow(b)>10)?'#e06a5b':'inherit'}">${LIVE?unreadNow(b):'—'}</div><div class="l">não lidas agora${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}</div></div>
   </div>`;
   if(s.gaps.length)h+=`<div class="disc" style="border-color:#f0a020;background:#211a12;color:#ffcf8f;margin-top:0">Sem <b>nenhuma</b> atividade em dia útil: <b>${s.gaps.join(', ')}</b>.</div>`;
-  h+='<h2>Presença diária</h2><div class="card"><table><thead><tr><th>Dia</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th>1ª ação</th><th>Última</th><th>Janela ativa</th></tr></thead><tbody>';
+  /* série horária de não lidas (mês corrente) */
+  if(LIVE&&LIVE.series&&LIVE.series.length){
+    const pts=LIVE.series.map(p=>({t:p.t,v:(p.u&&p.u[b.id])||0}));
+    const mx=Math.max(1,...pts.map(p=>p.v));
+    const bars=pts.slice(-72).map(p=>`<i style="height:${Math.max(1,Math.round(p.v/mx*20))}px" title="${p.t}: ${p.v} não lidas"></i>`).join('');
+    h+=`<h2>Não lidas ao longo do tempo</h2><div class="card"><div class="uspark">${bars}</div><div class="foot">Um retrato por hora (últimos dias). Cada barra = nº de conversas do cliente esperando resposta na caixa dele naquele momento.</div></div>`;
+  }
+  h+='<h2>Presença diária</h2><div class="card"><table><thead><tr><th>Dia</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. med · n</th><th>1ª ação</th><th>Última</th><th>Janela ativa</th></tr></thead><tbody>';
   s.series.forEach(d=>{
     let bar='',span='—';const pf=toMin(d.pfirst),pl=toMin(d.plast);
     if(d.present&&pf!=null){const base=7*60;const L=Math.max(0,(pf-base)/720*100),W=Math.max(1.5,(pl-pf)/720*100);
@@ -251,8 +357,10 @@ function renderBroker(b,days){
     else bar='<div class="barwrap"></div>';
     const cls=d.weekend?'we':(!d.present?'zero':'');
     const nf=d.n>0?d.n:(d.weekend?'—':(d.present?'<span style="color:#f0a020">0</span>':'<span class=zero>0</span>'));
-    h+=`<tr><td class="${cls}">${d.label} <span class="we">${d.wd}</span></td><td class="n">${nf}</td><td class="n mut">${(d.ic+d.cl)||'—'}</td><td>${d.pfirst||'—'}</td><td>${d.plast||'—'}</td><td>${span} ${bar}</td></tr>`;});
-  h+='</tbody></table><div class="foot">Barra <span style="color:#4f8cff">azul</span> = teve mensagem ao cliente · <span style="color:#f0a020">laranja</span> = só nota/ligação nesse dia.</div></div>';
+    const dMed=d.rt_hist?rtMedian(d.rt_hist):null;
+    const rtd=dMed==null?'—':`${fmtDur(dMed)} · ${d.rt_n}`;
+    h+=`<tr><td class="${cls}">${d.label} <span class="we">${d.wd}</span></td><td class="n">${nf}</td><td class="n mut">${(d.ic+d.cl)||'—'}</td><td class="n mut">${rtd}</td><td>${d.pfirst||'—'}</td><td>${d.plast||'—'}</td><td>${span} ${bar}</td></tr>`;});
+  h+='</tbody></table><div class="foot">Barra <span style="color:#4f8cff">azul</span> = teve mensagem ao cliente · <span style="color:#f0a020">laranja</span> = só nota/ligação. "Resp. med · n" = mediana de resposta no dia e nº de respostas medidas.</div></div>';
   const mx=Math.max(1,...s.mh,...s.ah);let ch='';
   for(let hh=0;hh<24;hh++)ch+=`<div class="hcol"><div class="hbar"><div class="hb-a" style="height:${s.ah[hh]/mx*100}%" title="auto ${s.ah[hh]} às ${hh}h"></div><div class="hb-m" style="height:${s.mh[hh]/mx*100}%" title="manual ${s.mh[hh]} às ${hh}h"></div></div><div class="hlab">${hh}</div></div>`;
   const app=s.series.reduce((a,d)=>a+(b.days[d.key]?b.days[d.key].app:0),0);

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS brokers (
   nome   VARCHAR(160) NOT NULL,
   email  VARCHAR(190) NOT NULL DEFAULT '',
   ativo  TINYINT(1)   NOT NULL DEFAULT 1,
+  desligado_em DATETIME NULL,                 -- quando foi desligado (congela os dados a partir daí)
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

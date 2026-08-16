@@ -33,6 +33,10 @@ try {
             ->execute();
         $feitos[] = 'tool:calculadora';
     }
+    if (!col_existe($pdo, 'brokers', 'desligado_em')) {
+        $pdo->exec("ALTER TABLE brokers ADD COLUMN desligado_em DATETIME NULL");
+        $feitos[] = 'brokers.desligado_em';
+    }
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 
