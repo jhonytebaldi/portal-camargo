@@ -23,7 +23,7 @@ define('GHL_LOCATION', '9o1WOaGvZNxhcdSgqAaG');
 // Endereço do CRM para abrir a conversa direto (botão na Fila de atendimento).
 // Use o domínio do WeSales que você acessa. Se não souber, deixe o padrão do
 // GoHighLevel. Sem barra no final.
-define('GHL_APP_URL',  'https://app.gohighlevel.com');
+define('GHL_APP_URL',  'https://app.wesalescrm.com');
 
 // --- Caminhos de dados (fora da área pública) ---
 // Onde o coletor do painel grava o agregado diário.

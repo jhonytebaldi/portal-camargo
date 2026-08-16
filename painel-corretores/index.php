@@ -154,6 +154,19 @@ td.msg{white-space:normal;max-width:440px;color:#cbd3df;font-size:12.8px;line-he
 td a{color:var(--acc);text-decoration:none}
 a.crmlink{display:inline-block;padding:3px 9px;border:1px solid var(--acc);border-radius:14px;font-size:12px;white-space:nowrap}
 a.crmlink:hover{background:var(--acc);color:#0b1220}
+table.fila tr.hasthread{cursor:pointer}
+table.fila tr.filarow.on{background:rgba(90,160,255,.06)}
+table.fila td.cx{width:20px;text-align:center}
+.caret{color:var(--mut);font-size:10px;user-select:none}
+tr.filarow.hasthread:hover td{background:rgba(255,255,255,.02)}
+.thread{display:flex;flex-direction:column;gap:6px;padding:8px 4px 10px;max-height:360px;overflow:auto}
+.tmsg{max-width:78%;padding:6px 10px;border-radius:12px;font-size:12.8px;line-height:1.4}
+.tmsg .thead{font-size:10.5px;color:var(--mut);margin-bottom:2px}
+.tmsg.tin{align-self:flex-start;background:#1d2a1c;border:1px solid #2c4327}
+.tmsg.tout{align-self:flex-end;background:#182233;border:1px solid #24344c}
+.tmsg.tsys{align-self:center;max-width:92%;background:transparent;border:1px dashed #333c4a;color:var(--mut);font-size:12px}
+.tmsg .tbody{color:#dbe2ee;white-space:normal;word-break:break-word}
+.tmsg.tsys .tbody{color:var(--mut)}
 .rt-hi{color:#f0a020;font-weight:600}
 details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
 details.desl summary::-webkit-details-marker{display:none}
@@ -217,9 +230,9 @@ tr.off td{color:#6f7684}
 const D=<?= json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
 const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-const CRM_URL=<?= json_encode(rtrim(defined('GHL_APP_URL')?GHL_APP_URL:'https://app.gohighlevel.com','/')) ?>;
+const CRM_URL=<?= json_encode(rtrim(defined('GHL_APP_URL')?GHL_APP_URL:'https://app.wesalescrm.com','/')) ?>;
 const CRM_LOC=<?= json_encode(defined('GHL_LOCATION')?GHL_LOCATION:'') ?>;
-const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}`:null;
+const convUrl=id=>(id&&CRM_LOC)?`${CRM_URL}/v2/location/${CRM_LOC}/conversations/conversations/${id}?category=team-inbox&tab=all`:null;
 const AD=D.alldays, B=D.brokers, LIVE=D.live||null, byId={};
 B.forEach(b=>byId[b.id]=b);
 const ACT=B.filter(b=>b.ativo!==0), OFF=B.filter(b=>b.ativo===0);
@@ -449,17 +462,40 @@ function renderFila(){
     SF.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-fk="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
     `<span class="tag" style="margin-left:auto">${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}</span></div>`;
   if(!A.length){h+=`<div class="card">Nenhum cliente aguardando resposta agora. 👍</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
-  h+=`<div class="card"><table><thead><tr><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th><th>Conversa</th></tr></thead><tbody>`;
-  A.forEach(it=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
+  h+=`<div class="card"><table class="fila"><thead><tr><th></th><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th><th>Conversa</th></tr></thead><tbody>`;
+  A.forEach((it,i)=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
     const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
     const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
-    const cu=convUrl(it.conv);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir no CRM (WeSales/GHL)">Abrir ↗</a>`:'—';
-    h+=`<tr><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td><td>${abrir}</td></tr>`;});
-  h+=`</tbody></table><div class="foot">Só clientes com a <b>última mensagem sem resposta</b> (aguardando de fato — não conta follow-up) e apenas mensagens <b>reais do cliente</b> (ignora "opportunity updated", comentários internos e registros de ligação). <span class="rt-hi">Laranja</span> = +4h; <span class="zero">vermelho</span> = +24h. O telefone abre o WhatsApp; "Abrir ↗" abre a conversa no CRM. Atualiza a cada coleta.</div></div>`;
+    const cu=convUrl(it.conv);const abrir=cu?`<a class="crmlink" href="${cu}" target="_blank" rel="noopener" title="Abrir no CRM (WeSales)">Abrir ↗</a>`:'—';
+    const nmsg=(it.thread&&it.thread.length)||0;
+    const caret=nmsg?`<span class="caret" title="Ver a conversa (${nmsg} msgs)">▶</span>`:'';
+    h+=`<tr class="filarow${nmsg?' hasthread':''}" data-i="${i}"><td class="cx">${caret}</td><td>${it.name||'—'}</td><td class="mut">${fone}</td><td>${it.broker||'—'}</td><td class="n"><span class="${wcls}">${fmtWait(it._wait)}</span></td><td class="mut">${CANAL[it.type]||it.type||'—'}</td><td class="msg" title="${(txt||'').replace(/"/g,'&quot;')}">${short}</td><td>${abrir}</td></tr>`;
+    if(nmsg)h+=`<tr class="threadrow" data-ti="${i}" style="display:none"><td></td><td colspan="7">${renderThread(it.thread)}</td></tr>`;});
+  h+=`</tbody></table><div class="foot">Só clientes com a <b>última mensagem sem resposta</b> (aguardando de fato — não conta follow-up) e apenas mensagens <b>reais do cliente</b> (ignora "opportunity updated", comentários internos e registros de ligação). <span class="rt-hi">Laranja</span> = +4h; <span class="zero">vermelho</span> = +24h. Clique na linha para ver as últimas mensagens da conversa. O telefone abre o WhatsApp; "Abrir ↗" abre no CRM (WeSales). Atualiza a cada coleta.</div></div>`;
   document.getElementById('view').innerHTML=h;bindFila();
 }
-function bindFila(){document.querySelectorAll('[data-fk]').forEach(el=>el.onclick=()=>{
-  const nk=el.dataset.fk;if(state.filaSort===nk)state.filaDir=-state.filaDir;else{state.filaSort=nk;state.filaDir=(nk==='wait')?-1:1;}render();});}
+const KIND={in:{c:'#cbe8c0',l:'Cliente'},sys:{c:'#8a93a3',l:'Sistema'},int:{c:'#c9a76a',l:'Nota interna'},call:{c:'#8a93a3',l:'Ligação'}};
+function renderThread(th){
+  if(!th||!th.length)return '<div class="mut" style="padding:6px 0">Sem mensagens.</div>';
+  let s='<div class="thread">';
+  th.forEach(m=>{
+    const cli=m.dir==='in';
+    const who=m.kind==='msg'?(cli?'Cliente':'Corretor'):(KIND[m.kind]?KIND[m.kind].l:'Sistema');
+    const sys=(m.kind==='sys'||m.kind==='int'||m.kind==='call');
+    const body=(m.body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    s+=`<div class="tmsg ${cli?'tin':'tout'} ${sys?'tsys':''}"><div class="thead">${who}${m.t?` · ${m.t}`:''}</div><div class="tbody">${body||'—'}</div></div>`;
+  });
+  return s+'</div>';
+}
+function bindFila(){
+  document.querySelectorAll('th[data-fk]').forEach(el=>el.onclick=()=>{
+    const nk=el.dataset.fk;if(state.filaSort===nk)state.filaDir=-state.filaDir;else{state.filaSort=nk;state.filaDir=(nk==='wait')?-1:1;}render();});
+  document.querySelectorAll('tr.filarow.hasthread').forEach(tr=>tr.onclick=e=>{
+    if(e.target.closest('a'))return; // não intercepta cliques em links (telefone/Abrir)
+    const i=tr.dataset.i;const dr=document.querySelector(`tr.threadrow[data-ti="${i}"]`);if(!dr)return;
+    const open=dr.style.display!=='none';dr.style.display=open?'none':'';
+    const c=tr.querySelector('.caret');if(c)c.textContent=open?'▶':'▼';tr.classList.toggle('on',!open);});
+}
 
 function buildTabs(){
   const t=document.getElementById('tabs');if(!t)return;

@@ -357,33 +357,51 @@ function run_collection(string $mode, ?string $monthArg = null): void {
             curl_multi_add_handle($mh2, $ch); $st2[(int)$ch] = $item;
         };
         while (count($st2) < PAINEL_CONCURRENCY && $q2) $addB(array_shift($q2));
+        // limpa metadados que o GHL às vezes anexa ao corpo da mensagem
+        $limpaBody = function(string $bd): string {
+            $bd = preg_replace('/\s*\n\s*Source:.*$/is', '', $bd);
+            $bd = preg_replace('/^\s*id:\s*\S+\s*\n/im', '', $bd);
+            return trim($bd);
+        };
         do {
             curl_multi_exec($mh2, $run2); curl_multi_select($mh2, 1.0);
             while ($info = curl_multi_info_read($mh2)) {
                 $ch=$info['handle']; $item=$st2[(int)$ch]??null; unset($st2[(int)$ch]);
                 $body=curl_multi_getcontent($ch); curl_multi_remove_handle($mh2,$ch); curl_close($ch);
-                $text=''; $realType='';
+                $text=''; $realType=''; $thread=[];
                 if ($body){
                     $jj=json_decode($body,true); $ms=$jj['messages']['messages']??[];
-                    // ordena por data desc (mais recente primeiro) por garantia
+                    // ordena por data ASC (mais antiga primeiro) — leitura do fio
                     usort($ms, function($a,$b){
-                        return (int)($b['dateAdded']??0 ? strtotime((string)$b['dateAdded']) : 0)
-                             - (int)($a['dateAdded']??0 ? strtotime((string)$a['dateAdded']) : 0);
+                        return (strtotime((string)($a['dateAdded']??'')) ?: 0)
+                             - (strtotime((string)($b['dateAdded']??'')) ?: 0);
                     });
                     foreach ($ms as $m) {
-                        if (($m['direction'] ?? '') !== 'inbound') continue;      // fala do cliente
-                        $mt = (string)($m['messageType'] ?? '');
-                        if (!in_array($mt, CLIENT_MSG_TYPES, true)) continue;     // ignora sistema/interno/ligação
-                        $bd = trim((string)($m['body'] ?? ''));
-                        // remove metadados que o GHL às vezes anexa ao corpo
-                        $bd = preg_replace('/\s*\n\s*Source:.*$/is', '', $bd);
-                        $bd = preg_replace('/^\s*id:\s*\S+\s*\n/im', '', $bd);
-                        $bd = trim($bd);
-                        if ($bd === '') continue;                                 // ignora anexos sem texto
-                        $text = $bd; $realType = $mt; break;
+                        $dir = (($m['direction'] ?? '') === 'inbound') ? 'in' : 'out';
+                        $mt  = (string)($m['messageType'] ?? '');
+                        $bd  = $limpaBody((string)($m['body'] ?? ''));
+                        // classifica: msg real, comentário interno, atividade, ligação
+                        if ($mt === 'TYPE_INTERNAL_COMMENT')         $kind = 'int';
+                        elseif (strpos($mt, 'TYPE_ACTIVITY') === 0)  $kind = 'sys';
+                        elseif ($mt === 'TYPE_CALL')                 $kind = 'call';
+                        elseif (in_array($mt, CLIENT_MSG_TYPES, true)) $kind = 'msg';
+                        else                                         $kind = 'sys';
+                        if ($kind === 'call' && $bd === '') $bd = '(ligação)';
+                        if ($bd === '' && $kind !== 'msg') continue;   // pula atividade vazia
+                        $ts = strtotime((string)($m['dateAdded'] ?? ''));
+                        $thread[] = [
+                            'dir'  => $dir,
+                            'kind' => $kind,
+                            't'    => $ts ? (new DateTime('@'.$ts))->setTimezone($TZ)->format('d/m H:i') : '',
+                            'body' => mb_substr($bd, 0, 600),
+                        ];
+                        // última mensagem de FATO do cliente = resumo da linha
+                        if ($dir === 'in' && $kind === 'msg' && $bd !== '') {
+                            $text = $bd; $realType = $mt;
+                        }
                     }
                 }
-                if ($item) $bodies[$item['id']] = ['text'=>$text, 'type'=>$realType];
+                if ($item) $bodies[$item['id']] = ['text'=>$text, 'type'=>$realType, 'thread'=>$thread];
                 if ($q2) $addB(array_shift($q2));
             }
         } while ($run2 || $st2 || $q2);
@@ -391,12 +409,13 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         $bn = []; foreach ($brokersRows as $b) $bn[$b['id']] = $b['nome'];
         $aguardando = [];
         foreach ($waitList as $it) {
-            $bi = $bodies[$it['id']] ?? ['text'=>'','type'=>''];
+            $bi = $bodies[$it['id']] ?? ['text'=>'','type'=>'','thread'=>[]];
             $aguardando[] = ['name'=>$it['name'], 'phone'=>$it['phone'], 'broker_id'=>$it['ass'],
                 'broker'=>($bn[$it['ass']] ?? $it['ass']), 'since'=>$it['since'],
                 'type'=>($bi['type'] !== '' ? $bi['type'] : $it['type']),
                 'conv'=>$it['id'],
-                'text'=>trim(mb_substr(trim((string)($bi['text'] ?? '')), 0, 400))];
+                'text'=>trim(mb_substr(trim((string)($bi['text'] ?? '')), 0, 400)),
+                'thread'=>($bi['thread'] ?? [])];
         }
         @file_put_contents($dir.'/aguardando.json', json_encode(
             ['generated'=>$now->format('d/m/Y H:i'), 'gen_ms'=>$now->getTimestamp()*1000, 'items'=>$aguardando],
