@@ -186,7 +186,7 @@ tr.off td{color:#6f7684}
 <div class="wrap">
 <h1>Presença dos Corretores <span class="tag" style="font-weight:400">· aproximada</span></h1>
 <div class="sub" id="periodlbl"></div>
-<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença = rastro no CRM: <b>mensagens manuais</b> + <b>notas/ligações</b>, por autor, excluindo automação. <b>Tempo de resposta</b> = do 1º recado do cliente até a 1ª resposta manual, só em horário comercial (8h–20h). <b>Aguardando</b> = retrato do momento das conversas em que a <b>última mensagem é do cliente</b> (ele realmente espera resposta); separado do <b>follow-up</b> (não lidas que a automação/pós-ligação criou, sem recado novo do cliente).</div>
+<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença = rastro no CRM: <b>mensagens manuais</b> + <b>notas/ligações</b>, por autor, excluindo automação. <b>Tempo de resposta</b> = do 1º recado do cliente até a 1ª resposta manual, só em horário comercial (8h–20h, horário de Brasília). <b>Aguardando</b> = retrato do momento das conversas em que a <b>última mensagem é do cliente</b> (ele realmente espera resposta); separado do <b>follow-up</b> (não lidas que a automação/pós-ligação criou, sem recado novo do cliente).</div>
 
 <?php if ($rodando): ?>
   <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> começou às <?= h($st['started'] ?? '') ?>. Esta página se atualiza sozinha quando terminar.</div>
@@ -364,6 +364,18 @@ function setSort(k){
   render();
 }
 
+/* Tooltips (title) — explicam o que cada número significa ao passar o mouse. */
+const TT={
+  nome:'Corretor. Clique na linha para abrir o detalhe diário dele.',
+  unread:'CLIENTES AGUARDANDO: conversas cuja última mensagem é do cliente — ou seja, ele está de fato esperando resposta agora. É um retrato do momento (não do período) e o principal ponto de atenção.',
+  fup:'FOLLOW-UPS PENDENTES: conversas não lidas que a automação ou o pós-ligação deixou na caixa, SEM um recado novo do cliente esperando. Precisam de ação (ex.: retornar a ligação), mas ninguém está parado esperando resposta.',
+  msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa). Exclui automação; notas internas e ligações não contam aqui.',
+  resp:'RESP. MED.: tempo típico (mediana) entre o 1º recado do cliente e a 1ª resposta manual do corretor. Conta só recados recebidos em horário comercial — 8h às 20h, horário de Brasília. Laranja = acima de 30 min.',
+  dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
+  ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
+  aten:'ATENÇÃO: sinais de alerta do corretor. Passe o mouse em cada selo para ver o detalhe.',
+};
+
 function renderOverview(days){
   const rows=ACT.map(b=>{const s=stats(b,days);
     // alertas só para quem tem atividade no período (não polui com dormentes)
@@ -379,17 +391,17 @@ function renderOverview(days){
   const cliTot=LIVE?ACT.reduce((s,b)=>s+(unreadClient(b)||0),0):null;
   const fupTot=LIVE?ACT.reduce((s,b)=>s+unreadFup(b),0):null;
   let h=`<div class="kpis">
-    <div class="kpi"><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
-    <div class="kpi"><div class="v">${comAtiv}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
-    <div class="kpi"><div class="v" style="color:${comAlerta?'#e06a5b':'inherit'}">${comAlerta}</div><div class="l">precisam de atenção</div></div>
-    <div class="kpi"><div class="v" style="color:${cliTot?'#ff2d2d':'inherit'};${cliTot?'font-weight:800':''}">${cliTot==null?'—':cliTot}</div><div class="l">${EH_MES_CORRENTE?'clientes aguardando agora':'aguardando (só mês corrente)'}</div></div>
-    <div class="kpi"><div class="v" style="color:${fupTot?'#e0a13a':'inherit'}">${fupTot==null?'—':fupTot}</div><div class="l">follow-ups pendentes</div></div>
+    <div class="kpi" title="Total de mensagens manuais enviadas aos clientes no período (exclui automação; notas e ligações não contam)."><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
+    <div class="kpi" title="Quantos corretores ativos deixaram algum rastro no CRM no período, sobre o total de corretores ativos."><div class="v">${comAtiv}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
+    <div class="kpi" title="Quantos corretores têm ao menos um sinal de alerta no período (veja a coluna Atenção)."><div class="v" style="color:${comAlerta?'#e06a5b':'inherit'}">${comAlerta}</div><div class="l">precisam de atenção</div></div>
+    <div class="kpi" title="${TT.unread}"><div class="v" style="color:${cliTot?'#ff2d2d':'inherit'};${cliTot?'font-weight:800':''}">${cliTot==null?'—':cliTot}</div><div class="l">${EH_MES_CORRENTE?'clientes aguardando agora':'aguardando (só mês corrente)'}</div></div>
+    <div class="kpi" title="${TT.fup}"><div class="v" style="color:${fupTot?'#e0a13a':'inherit'}">${fupTot==null?'—':fupTot}</div><div class="l">follow-ups pendentes</div></div>
   </div>
   <div class="sortbar"><span class="tag">Ordenar por:</span>`+
     SORTS.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-k="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
   `</div>
   <div class="card"><table><thead><tr>
-  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable wait-col" data-k="unread">Aguardando</th><th class="n sortable" data-k="fup">Follow-ups pend.</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
+  <th data-k="nome" class="sortable" title="${TT.nome}">Corretor</th><th class="n sortable wait-col" data-k="unread" title="${TT.unread}">Aguardando</th><th class="n sortable" data-k="fup" title="${TT.fup}">Follow-ups pend.</th><th class="n sortable" data-k="msgs" title="${TT.msgs}">Msgs</th><th class="n sortable" data-k="resp" title="${TT.resp}">Resp. med.</th><th class="n sortable" data-k="dias" title="${TT.dias}">Dias ativos</th><th title="${TT.ativ}">Atividade</th><th class="sortable" data-k="aten" title="${TT.aten}">Atenção</th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{const s=r.s;
     const cli=unreadClient(r.b), fup=unreadFup(r.b);
@@ -398,14 +410,14 @@ function renderOverview(days){
     const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
     const aten=r.al.length?r.al.map(a=>`<span class="chip mini ${a.c}" title="${a.t}">${a.s}</span>`).join('')
       :((s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>');
-    h+=`<tr class="clk" data-id="${r.b.id}"><td>${r.b.name}</td>
-      <td class="n wait-col">${waitCell}</td>
-      <td class="n">${fupCell}</td>
-      <td class="n">${s.n||'<span class=zero>0</span>'}</td>
-      <td class="n">${rtCell}</td>
-      <td class="n">${s.activeP}/${wdays}</td>
-      <td>${spark(s.series)}</td>
-      <td class="aten">${aten}</td></tr>`;});
+    h+=`<tr class="clk" data-id="${r.b.id}"><td title="${TT.nome}">${r.b.name}</td>
+      <td class="n wait-col" title="${TT.unread}">${waitCell}</td>
+      <td class="n" title="${TT.fup}">${fupCell}</td>
+      <td class="n" title="${TT.msgs}">${s.n||'<span class=zero>0</span>'}</td>
+      <td class="n" title="${TT.resp}">${rtCell}</td>
+      <td class="n" title="${TT.dias}">${s.activeP}/${wdays}</td>
+      <td title="${TT.ativ}">${spark(s.series)}</td>
+      <td class="aten" title="${TT.aten}">${aten}</td></tr>`;});
   h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
@@ -480,7 +492,7 @@ function renderFila(){
     SF.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-fk="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
     `<span class="tag" style="margin-left:auto">${A.length} aguardando · retrato de ${AGUARDANDO?AGUARDANDO.generated:'—'}</span></div>`;
   if(!A.length){h+=`<div class="card">Nenhum cliente aguardando resposta agora. 👍</div>`;document.getElementById('view').innerHTML=h;bindFila();return;}
-  h+=`<div class="card"><table class="fila"><thead><tr><th></th><th class="sortable" data-fk="cliente">Cliente</th><th>Telefone</th><th class="sortable" data-fk="broker">Responsável</th><th class="n sortable" data-fk="wait">Espera</th><th>Canal</th><th>Última mensagem do cliente</th><th>Conversa</th></tr></thead><tbody>`;
+  h+=`<div class="card"><table class="fila"><thead><tr><th title="Clique na linha para ver as últimas mensagens da conversa."></th><th class="sortable" data-fk="cliente" title="Nome do cliente que está aguardando resposta.">Cliente</th><th title="Telefone do cliente. Clique para abrir o WhatsApp.">Telefone</th><th class="sortable" data-fk="broker" title="Corretor responsável pela conversa no CRM.">Responsável</th><th class="n sortable" data-fk="wait" title="Há quanto tempo o cliente está esperando (desde a última mensagem dele). Laranja = +4h, vermelho = +24h.">Espera</th><th title="Canal por onde o cliente falou (WhatsApp, Instagram, SMS etc.).">Canal</th><th title="Última mensagem de fato do cliente (ignora atividades do sistema, comentários internos e ligações).">Última mensagem do cliente</th><th title="Abre a ficha do cliente no WeSales, com a conversa dele ao lado.">Conversa</th></tr></thead><tbody>`;
   A.forEach((it,i)=>{const wcls=it._wait>=864e5?'zero':(it._wait>=144e5?'rt-hi':'');const wa=waPhone(it.phone);
     const fone=it.phone?(wa?`<a href="${wa}" target="_blank" rel="noopener">${it.phone}</a>`:it.phone):'—';
     const txt=(it.text||'').replace(/\s+/g,' ').trim();const short=txt.length>90?txt.slice(0,90)+'…':(txt||'—');
