@@ -39,7 +39,7 @@ if (is_array($agg) && isset($agg['brokers'])) {
         $agg['brokers'] = array_values(array_filter($agg['brokers'], fn($b) => isset($permit[$b['id']])));
         // filtra também o live (não lidas) pelo escopo
         if (!empty($agg['live'])) {
-            foreach (['unread_now','wait24'] as $k) {
+            foreach (['unread_client','unread_followup','wait24'] as $k) {
                 if (!empty($agg['live'][$k])) $agg['live'][$k] = array_intersect_key($agg['live'][$k], $permit);
             }
         }
@@ -149,7 +149,7 @@ tr.off td{color:#6f7684}
 <div class="wrap">
 <h1>Presença dos Corretores <span class="tag" style="font-weight:400">· aproximada</span></h1>
 <div class="sub" id="periodlbl"></div>
-<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença = rastro no CRM: <b>mensagens manuais</b> + <b>notas/ligações</b>, por autor, excluindo automação. <b>Tempo de resposta</b> = do 1º recado do cliente até a 1ª resposta manual, só em horário comercial (8h–20h). <b>Não lidas</b> = retrato do momento (conversas do cliente esperando na caixa do corretor responsável).</div>
+<div class="disc"><b>⚠️ Aproximação, não ponto.</b> A API do GHL não expõe login/tempo online. Presença = rastro no CRM: <b>mensagens manuais</b> + <b>notas/ligações</b>, por autor, excluindo automação. <b>Tempo de resposta</b> = do 1º recado do cliente até a 1ª resposta manual, só em horário comercial (8h–20h). <b>Aguardando</b> = retrato do momento das conversas em que a <b>última mensagem é do cliente</b> (ele realmente espera resposta); separado do <b>follow-up</b> (não lidas que a automação/pós-ligação criou, sem recado novo do cliente).</div>
 
 <?php if ($rodando): ?>
   <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> começou às <?= h($st['started'] ?? '') ?>. Esta página se atualiza sozinha quando terminar.</div>
@@ -266,8 +266,9 @@ function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
     else {cls='z';h=2;}
     return `<i class="${cls}" style="height:${h}px" title="${s.label} ${s.wd}: ${s.n} msg${s.ic?', '+s.ic+' nota(s)':''}${s.cl?', '+s.cl+' lig':''}"></i>`;
   }).join('')+'</span>';}
-const unreadNow=b=>LIVE?(LIVE.unread_now[b.id]||0):null;
-const wait24=b=>LIVE?(LIVE.wait24[b.id]||0):0;
+const unreadClient=b=>(LIVE&&LIVE.unread_client)?(LIVE.unread_client[b.id]||0):null;   // clientes aguardando (última msg do cliente)
+const unreadFup=b=>(LIVE&&LIVE.unread_followup)?(LIVE.unread_followup[b.id]||0):0;      // follow-up (automação/pós-ligação)
+const wait24=b=>(LIVE&&LIVE.wait24)?(LIVE.wait24[b.id]||0):0;
 
 /* -------- Alertas de atenção -------- */
 function lastBizDay(days){for(let i=days.length-1;i>=0;i--)if(!days[i].weekend)return days[i];return null;}
@@ -278,8 +279,8 @@ function alertsFor(b,days){
     if(!act)out.push({w:3,c:'red',s:`sem ${lb.label}`,t:`sem atividade em ${lb.label} (último dia útil)`});}
   if(s.gaps.length)out.push({w:2,c:'orange',s:`${s.gaps.length}d zerados`,t:`${s.gaps.length} dia(s) útil sem nenhuma atividade: ${s.gaps.join(', ')}`});
   if(s.rtMed!=null&&s.rtMed>1800)out.push({w:2,c:'orange',s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta mediano ${fmtDur(s.rtMed)} (acima de 30 min)`});
-  if(LIVE){const un=unreadNow(b);if(un>10)out.push({w:3,c:'red',s:`${un} não lidas`,t:`${un} conversas não lidas agora na caixa dele`});}
-  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',s:`${wq}×+24h`,t:`${wq} cliente(s) esperando resposta há mais de 24h`});}
+  if(LIVE){const un=unreadClient(b);if(un>5)out.push({w:3,c:'red',s:`${un} aguardando`,t:`${un} clientes aguardando resposta agora (última mensagem é do cliente)`});}
+  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',s:`${wq}×+24h`,t:`${wq} cliente(s) aguardando resposta há mais de 24h`});}
   const autoDays=[];days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
     if(r){const ah=r.ah.reduce((a,b)=>a+b,0);const man=r.n+r.ic+r.cl;if(ah>0&&man===0)autoDays.push(d.label);}});
   if(autoDays.length)out.push({w:1,c:'yellow',s:`só auto ${autoDays.length}d`,t:`dias só com automação (nenhuma ação manual): ${autoDays.join(', ')}`});
@@ -291,14 +292,14 @@ const SORTS=[
   {k:'aten', l:'Atenção'},
   {k:'msgs', l:'Mensagens'},
   {k:'resp', l:'Tempo de resposta'},
-  {k:'unread', l:'Não lidas'},
+  {k:'unread', l:'Aguardando'},
   {k:'dias', l:'Dias ativos'},
   {k:'nome', l:'Nome'},
 ];
 function sortVal(r,k){
   if(k==='msgs')return r.s.n;
   if(k==='resp')return r.s.rtMed==null?-1:r.s.rtMed;
-  if(k==='unread')return unreadNow(r.b)||0;
+  if(k==='unread')return unreadClient(r.b)||0;
   if(k==='dias')return r.s.activeP;
   if(k==='aten')return r.al.reduce((a,x)=>a+x.w,0)*1000 + (r.s.n>0?0:0);
   if(k==='nome')return r.b.name.toLowerCase();
@@ -322,21 +323,23 @@ function renderOverview(days){
   const wdays=days.filter(d=>!d.weekend).length;
   const comAtiv=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length;
   const comAlerta=rows.filter(r=>r.al.length>0).length;
-  const unTot=LIVE?ACT.reduce((s,b)=>s+(unreadNow(b)||0),0):null;
+  const cliTot=LIVE?ACT.reduce((s,b)=>s+(unreadClient(b)||0),0):null;
+  const fupTot=LIVE?ACT.reduce((s,b)=>s+unreadFup(b),0):null;
   let h=`<div class="kpis">
     <div class="kpi"><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
     <div class="kpi"><div class="v">${comAtiv}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
     <div class="kpi"><div class="v" style="color:${comAlerta?'#e06a5b':'inherit'}">${comAlerta}</div><div class="l">precisam de atenção</div></div>
-    <div class="kpi"><div class="v" style="color:${unTot?'#f0a020':'inherit'}">${unTot==null?'—':unTot}</div><div class="l">${EH_MES_CORRENTE?'não lidas agora (total)':'não lidas (só mês corrente)'}</div></div>
+    <div class="kpi"><div class="v" style="color:${cliTot?'#e06a5b':'inherit'}">${cliTot==null?'—':cliTot}</div><div class="l">${EH_MES_CORRENTE?'clientes aguardando agora':'aguardando (só mês corrente)'}${fupTot!=null?` <span class="mut" style="font-size:11px">· ${fupTot} follow-up</span>`:''}</div></div>
   </div>
   <div class="sortbar"><span class="tag">Ordenar por:</span>`+
     SORTS.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-k="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
   `</div>
   <div class="card"><table><thead><tr>
-  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="unread">Não lidas</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
+  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="unread">Aguardando</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{const s=r.s;
-    const un=unreadNow(r.b); const unCell=un==null?'—':(un>10?`<span class=zero>${un}</span>`:(un||'—'));
+    const cli=unreadClient(r.b), fup=unreadFup(r.b);
+    const unCell=cli==null?'—':((cli>5?`<span class=zero>${cli}</span>`:(cli||'0'))+(fup?` <span class="mut" style="font-size:11px" title="não lidas de follow-up (automação/pós-ligação), sem recado novo do cliente">+${fup}</span>`:''));
     const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
     const aten=r.al.length?r.al.map(a=>`<span class="chip mini ${a.c}" title="${a.t}">${a.s}</span>`).join('')
       :((s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>');
@@ -347,7 +350,7 @@ function renderOverview(days){
       <td class="n">${s.activeP}/${wdays}</td>
       <td>${spark(s.series)}</td>
       <td class="aten">${aten}</td></tr>`;});
-  h+=`</tbody></table><div class="foot">Passe o mouse nos selos de <b>Atenção</b> para o detalhe. "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "Não lidas" = clientes esperando agora${EH_MES_CORRENTE?'':' (só no mês corrente)'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  h+=`</tbody></table><div class="foot">Passe o mouse nos selos de <b>Atenção</b> para o detalhe. "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "<b>Aguardando</b>" = clientes com a última mensagem sem resposta (cliente de fato esperando); o "<span class="mut">+N</span>" ao lado são não lidas de <b>follow-up</b> (viraram não lida por automação/pós-ligação, sem recado novo do cliente)${EH_MES_CORRENTE?'':' — só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
@@ -371,7 +374,7 @@ function renderBroker(b,days){
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
     <div class="kpi"><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
-    <div class="kpi"><div class="v" style="color:${(LIVE&&unreadNow(b)>10)?'#e06a5b':'inherit'}">${LIVE?unreadNow(b):'—'}</div><div class="l">não lidas agora${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}</div></div>
+    <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>
   </div>`;
   if(s.gaps.length)h+=`<div class="disc" style="border-color:#f0a020;background:#211a12;color:#ffcf8f;margin-top:0">Sem <b>nenhuma</b> atividade em dia útil: <b>${s.gaps.join(', ')}</b>.</div>`;
   /* série horária de não lidas (mês corrente) */
@@ -379,7 +382,7 @@ function renderBroker(b,days){
     const pts=LIVE.series.map(p=>({t:p.t,v:(p.u&&p.u[b.id])||0}));
     const mx=Math.max(1,...pts.map(p=>p.v));
     const bars=pts.slice(-72).map(p=>`<i style="height:${Math.max(1,Math.round(p.v/mx*20))}px" title="${p.t}: ${p.v} não lidas"></i>`).join('');
-    h+=`<h2>Não lidas ao longo do tempo</h2><div class="card"><div class="uspark">${bars}</div><div class="foot">Um retrato por hora (últimos dias). Cada barra = nº de conversas do cliente esperando resposta na caixa dele naquele momento.</div></div>`;
+    h+=`<h2>Clientes aguardando ao longo do tempo</h2><div class="card"><div class="uspark">${bars}</div><div class="foot">Um retrato por hora (últimos dias). Cada barra = nº de clientes com a última mensagem sem resposta na caixa dele naquele momento (não conta os de follow-up).</div></div>`;
   }
   h+='<h2>Presença diária</h2><div class="card"><table><thead><tr><th>Dia</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. med · n</th><th>1ª ação</th><th>Última</th><th>Janela ativa</th></tr></thead><tbody>';
   s.series.forEach(d=>{

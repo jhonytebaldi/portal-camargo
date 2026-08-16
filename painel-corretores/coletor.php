@@ -172,7 +172,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $stopMs = min($winStartMs, $unreadLookMs);   // pagina conversas até o mais antigo dos dois
     $base = "https://services.leadconnectorhq.com/conversations/search?locationId={$LOC}&limit=100&sortBy=last_message_date&sort=desc";
     $cursor = null; $convIds = []; $pages = 0;
-    $unreadNow = []; $wait24 = [];
+    $unread_client = []; $unread_followup = []; $wait24 = [];
     $nowMs = $now->getTimestamp()*1000; $dia1Ms = $nowMs - 86400*1000;
     while ($pages < 500) {
         $url = $cursor === null ? $base : $base . '&startAfterDate=' . urlencode((string)$cursor);
@@ -190,13 +190,18 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 if ($ok) $convIds[] = $c['id'];
             }
             if ($lmd >= $stopMs) $algumRecente = true;
-            /* retrato de não-lidas (só mês corrente): por corretor responsável */
+            /* retrato de não-lidas (só mês corrente): por corretor responsável.
+               Separa CLIENTE AGUARDANDO (última msg é do cliente = inbound) de
+               FOLLOW-UP (última é saída/automação/pós-ligação — virou "não lida"
+               sem um recado novo do cliente esperando). Conta por CONVERSA. */
             if ($ehMesCorrente) {
                 $ass = $c['assignedTo'] ?? null; $uc = (int)($c['unreadCount'] ?? 0);
                 if ($ass && isset($ATIVO[$ass]) && $ATIVO[$ass] && $uc > 0) {
-                    $unreadNow[$ass] = ($unreadNow[$ass] ?? 0) + $uc;
-                    if (($c['lastMessageDirection'] ?? '') === 'inbound' && $lmd < $dia1Ms) {
-                        $wait24[$ass] = ($wait24[$ass] ?? 0) + 1;
+                    if (($c['lastMessageDirection'] ?? '') === 'inbound') {
+                        $unread_client[$ass] = ($unread_client[$ass] ?? 0) + 1;
+                        if ($lmd < $dia1Ms) $wait24[$ass] = ($wait24[$ass] ?? 0) + 1;
+                    } else {
+                        $unread_followup[$ass] = ($unread_followup[$ass] ?? 0) + 1;
                     }
                 }
             }
@@ -206,7 +211,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         if ($nc === null || $nc === $cursor) break; $cursor = $nc;
     }
     $convIds = array_values(array_unique($convIds));
-    painel_log('conversas na janela: ' . count($convIds) . ' · não-lidas retratadas: ' . array_sum($unreadNow));
+    painel_log('conversas na janela: ' . count($convIds) . ' · clientes aguardando: ' . array_sum($unread_client) . ' · follow-up: ' . array_sum($unread_followup));
 
     /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa ===== */
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia
@@ -368,12 +373,13 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         $liveFile = $dir . '/painel_live.json';
         $prev = is_readable($liveFile) ? (json_decode((string)file_get_contents($liveFile), true) ?: []) : [];
         $series = $prev['series'] ?? [];
-        $series[] = ['t'=>$now->format('Y-m-d H:i'), 'u'=>$unreadNow];
+        $series[] = ['t'=>$now->format('Y-m-d H:i'), 'u'=>$unread_client];   // série = clientes aguardando
         $corte = ($now->getTimestamp() - 14*86400);   // mantém ~14 dias de pontos
         $series = array_values(array_filter($series, function($p) use ($corte,$TZ){
             $t=DateTime::createFromFormat('Y-m-d H:i',$p['t'],$TZ); return $t && $t->getTimestamp()>=$corte;
         }));
-        $live = ['generated'=>$now->format('d/m/Y H:i'),'unread_now'=>$unreadNow,'wait24'=>$wait24,'series'=>$series];
+        $live = ['generated'=>$now->format('d/m/Y H:i'),'unread_client'=>$unread_client,
+                 'unread_followup'=>$unread_followup,'wait24'=>$wait24,'series'=>$series];
         @file_put_contents($liveFile, json_encode($live, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
