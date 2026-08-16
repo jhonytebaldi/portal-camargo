@@ -393,7 +393,7 @@ function attention(b,days,s){
   if(LIVE&&w24>0)chips.push({c:'red',s:`${w24}×+24h`,t:`${w24} cliente(s) esperando há mais de 24h — peso extra no bloco Fila`});
   if(b2>0)chips.push({c:b2>=3?'red':(b2>=2?'orange':'yellow'),s:`${s.sl15}% em 15m`,t:`só ${s.sl15}% dos clientes respondidos em até 15 min (${s.sl30}% em até 30 min · ${s.rtN} respostas) — bloco Resposta = ${b2} pts`});
   if(ab.cnt>0)chips.push({c:ab.lastAb?'orange':'yellow',s:`${ab.cnt}d sem retorno`,t:`${ab.cnt} dia(s) útil com o cliente falando e nenhuma ação manual: ${ab.labels.join(', ')}${ab.lastAb?' — inclui o último dia útil':''} (bloco Abandono = ${b3} pts)`});
-  const rtTxt=(s.rtN>=5&&s.sl15!=null)?`${s.sl15}% em ≤15min (${s.sl30}% em ≤30min)`:(s.rtN?`poucos dados (${s.rtN} resp.)`:'sem respostas');
+  const rtTxt=(s.rtN>=RT_MINN&&s.sl15!=null)?`${s.sl15}% em ≤15min (${s.sl30}% em ≤30min)`:(s.rtN?`poucos dados (${s.rtN} resp.)`:'sem respostas');
   const tip=`Score de atenção: ${score} pts (blocos competem — quanto maior, mais urgente)`
     +`\n• Fila agora: ${LIVE?`${ag} aguardando`+(w24?` (${w24} há +24h)`:''):'sem dado ao vivo'} = ${b1} pts`
     +`\n• Responsividade: ${rtTxt} = ${b2} pts`
@@ -476,7 +476,7 @@ function renderOverview(days){
     if(s.rtMed==null) rtCell='—';
     else{
       let sla;
-      if(s.rtN>=5&&s.sl15!=null){const bd=s.sl15>=60?'sl-ok':(s.sl15>=40?'sl-y':(s.sl15>=25?'sl-o':'sl-r'));
+      if(s.rtN>=RT_MINN&&s.sl15!=null){const bd=s.sl15>=60?'sl-ok':(s.sl15>=40?'sl-y':(s.sl15>=25?'sl-o':'sl-r'));
         sla=`<div class="sla"><span class="${bd}" title="${s.sl15}% dos clientes respondidos em até 15 min (${s.rtN} respostas)">${s.sl15}% ≤15m</span> · <span title="${s.sl30}% respondidos em até 30 min">${s.sl30}% ≤30m</span></div>`;}
       else sla=`<div class="sla mut">poucos dados (${s.rtN} resp.)</div>`;
       rtCell=`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>${sla}`;
@@ -516,7 +516,7 @@ function renderBroker(b,days){
   <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}${off?' · <span style="color:#f0a020">desligado</span>':''}</span></h2>
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
-    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤15m/≤30m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=5&&s.sl15!=null)?` · ${s.sl15}% ≤15m · ${s.sl30}% ≤30m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
+    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤15m/≤30m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=RT_MINN&&s.sl15!=null)?` · ${s.sl15}% ≤15m · ${s.sl30}% ≤30m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
     <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>
   </div>`;
