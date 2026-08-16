@@ -44,6 +44,13 @@ if (is_array($agg) && isset($agg['brokers'])) {
             }
         }
     }
+    // Status ativo/desligado AO VIVO: reflete o painel de admin na hora
+    // (desligar/religar), em vez do que ficou congelado na coleta.
+    $liveAtivo = broker_ativo_map();
+    foreach ($agg['brokers'] as &$b) {
+        if (isset($liveAtivo[$b['id']])) $b['ativo'] = $liveAtivo[$b['id']];
+    }
+    unset($b);
     if (!$agg['brokers']) $semDados = true;
 } else {
     $semDados = true;
@@ -122,6 +129,12 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 .chip.red{background:#3a1c1c;color:#ef8a7d;border-color:#5a2a2a}
 .chip.orange{background:#211a12;color:#f0b552;border-color:#5a4520}
 .chip.yellow{background:#23231a;color:#c9a253;border-color:#44401f}
+.chip.mini{padding:1px 7px;font-size:10.5px;margin:1px 3px 1px 0;border-radius:5px;cursor:default;white-space:nowrap}
+td.aten{white-space:normal;max-width:340px;line-height:1.9}
+.sortbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:14px 0 2px}
+.sortb{padding:4px 10px;font-size:12px;border-radius:16px}
+.sortb.on{background:#26406e;border-color:var(--acc);color:#dbe6ff}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--acc)}
 .rt-hi{color:#f0a020;font-weight:600}
 details.desl summary{cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0;list-style:none}
 details.desl summary::-webkit-details-marker{display:none}
@@ -196,7 +209,7 @@ const fsel=document.getElementById('from'), tsel=document.getElementById('to');
 AD.forEach(d=>{const t=d.label+" "+d.wd;
   let o1=document.createElement('option');o1.value=d.key;o1.textContent=t;fsel.appendChild(o1);
   let o2=document.createElement('option');o2.value=d.key;o2.textContent=t;tsel.appendChild(o2);});
-let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key};
+let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1};
 
 const RT_BOUNDS=[0,60,180,300,600,1200,1800,3600,7200,21600,43200];
 function rtMedian(hist){const n=hist.reduce((a,b)=>a+b,0);if(!n)return null;const half=n/2;let cum=0;
@@ -262,75 +275,90 @@ function alertsFor(b,days){
   const s=stats(b,days); const out=[];
   const lb=lastBizDay(days);
   if(lb){const r=b.days[lb.key];const act=r&&(r.n>0||r.ic>0||r.cl>0);
-    if(!act)out.push({w:3,c:'red',t:`sem atividade em ${lb.label} (último dia útil)`});}
-  if(s.gaps.length)out.push({w:2,c:'orange',t:`${s.gaps.length} dia(s) útil sem atividade`});
-  if(s.rtMed!=null&&s.rtMed>1800)out.push({w:2,c:'orange',t:`resposta mediana ${fmtDur(s.rtMed)}`});
-  if(LIVE){const un=unreadNow(b);if(un>10)out.push({w:3,c:'red',t:`${un} não lidas agora`});}
-  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',t:`${wq} cliente(s) parado(s) +24h`});}
+    if(!act)out.push({w:3,c:'red',s:`sem ${lb.label}`,t:`sem atividade em ${lb.label} (último dia útil)`});}
+  if(s.gaps.length)out.push({w:2,c:'orange',s:`${s.gaps.length}d zerados`,t:`${s.gaps.length} dia(s) útil sem nenhuma atividade: ${s.gaps.join(', ')}`});
+  if(s.rtMed!=null&&s.rtMed>1800)out.push({w:2,c:'orange',s:`resp ${fmtDur(s.rtMed)}`,t:`tempo de resposta mediano ${fmtDur(s.rtMed)} (acima de 30 min)`});
+  if(LIVE){const un=unreadNow(b);if(un>10)out.push({w:3,c:'red',s:`${un} não lidas`,t:`${un} conversas não lidas agora na caixa dele`});}
+  if(LIVE){const wq=wait24(b);if(wq>0)out.push({w:2,c:'orange',s:`${wq}×+24h`,t:`${wq} cliente(s) esperando resposta há mais de 24h`});}
   const autoDays=[];days.forEach(d=>{if(d.weekend)return;const r=b.days[d.key];
     if(r){const ah=r.ah.reduce((a,b)=>a+b,0);const man=r.n+r.ic+r.cl;if(ah>0&&man===0)autoDays.push(d.label);}});
-  if(autoDays.length)out.push({w:1,c:'yellow',t:`só automação em ${autoDays.slice(0,3).join(', ')}${autoDays.length>3?'…':''}`});
+  if(autoDays.length)out.push({w:1,c:'yellow',s:`só auto ${autoDays.length}d`,t:`dias só com automação (nenhuma ação manual): ${autoDays.join(', ')}`});
   return out;
 }
-function renderAlerts(days){
-  // Só alerta quem está TRABALHANDO e escorregando em algo: exclui contas sem
-  // nenhuma atividade no período (contas de sistema / não-corretores / quem
-  // deveria estar como desligado) — senão a lista vira ruído.
-  const rows=ACT.filter(b=>{const s=stats(b,days);return (s.n+s.ic+s.cl)>0;})
-    .map(b=>({b,a:alertsFor(b,days)})).filter(x=>x.a.length)
-    .sort((x,y)=>y.a.reduce((s,z)=>s+z.w,0)-x.a.reduce((s,z)=>s+z.w,0));
-  if(!rows.length) return `<h2>Alertas de atenção</h2><div class="card">Nenhum alerta no período selecionado. 👍</div>`;
-  let h=`<h2>Alertas de atenção — ${rows.length} corretor(es)</h2><div class="card alertcard">`;
-  rows.forEach(r=>{h+=`<div class="al-row"><span class="al-nm" data-id="${r.b.id}">${r.b.name}</span>`+
-    r.a.map(a=>`<span class="chip ${a.c}">${a.t}</span>`).join('')+`</div>`;});
-  h+=`<div class="foot">Critérios: sem atividade no último dia útil · dias úteis zerados · tempo de resposta mediano acima de 30 min · +10 não lidas agora · cliente parado há +24h · dias só com automação. Clique no nome para abrir o corretor.</div></div>`;
-  return h;
+
+/* ordenação da visão geral */
+const SORTS=[
+  {k:'aten', l:'Atenção'},
+  {k:'msgs', l:'Mensagens'},
+  {k:'resp', l:'Tempo de resposta'},
+  {k:'unread', l:'Não lidas'},
+  {k:'dias', l:'Dias ativos'},
+  {k:'nome', l:'Nome'},
+];
+function sortVal(r,k){
+  if(k==='msgs')return r.s.n;
+  if(k==='resp')return r.s.rtMed==null?-1:r.s.rtMed;
+  if(k==='unread')return unreadNow(r.b)||0;
+  if(k==='dias')return r.s.activeP;
+  if(k==='aten')return r.al.reduce((a,x)=>a+x.w,0)*1000 + (r.s.n>0?0:0);
+  if(k==='nome')return r.b.name.toLowerCase();
+  return r.s.n;
+}
+function setSort(k){
+  if(state.sortKey===k) state.sortDir=-state.sortDir;
+  else { state.sortKey=k; state.sortDir=(k==='nome')?1:-1; }
+  render();
 }
 
 function renderOverview(days){
-  const rows=ACT.map(b=>({b,s:stats(b,days)})).sort((a,b)=>b.s.n-a.s.n);
+  const rows=ACT.map(b=>{const s=stats(b,days);
+    // alertas só para quem tem atividade no período (não polui com dormentes)
+    const al=(s.n+s.ic+s.cl)>0?alertsFor(b,days):[];
+    return {b,s,al};});
+  const k=state.sortKey||'aten', dir=state.sortDir||-1;
+  rows.sort((a,b)=>{const va=sortVal(a,k),vb=sortVal(b,k);
+    if(va<vb)return -dir; if(va>vb)return dir; return a.s.n<b.s.n?1:-1;});
   const totMsg=rows.reduce((s,r)=>s+r.s.n,0);
   const wdays=days.filter(d=>!d.weekend).length;
-  const withGap=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0 && r.s.gaps.length>0).length;
-  const silent=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)===0).length;
+  const comAtiv=rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length;
+  const comAlerta=rows.filter(r=>r.al.length>0).length;
   const unTot=LIVE?ACT.reduce((s,b)=>s+(unreadNow(b)||0),0):null;
-  let h=renderAlerts(days);
-  h+=`<div class="kpis">
+  let h=`<div class="kpis">
     <div class="kpi"><div class="v">${totMsg}</div><div class="l">mensagens manuais no período</div></div>
-    <div class="kpi"><div class="v">${rows.filter(r=>(r.s.n+r.s.ic+r.s.cl)>0).length}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
-    <div class="kpi"><div class="v" style="color:${withGap?'#f0a020':'inherit'}">${withGap}</div><div class="l">com falhas em dia útil</div></div>
+    <div class="kpi"><div class="v">${comAtiv}/${ACT.length}</div><div class="l">corretores com atividade</div></div>
+    <div class="kpi"><div class="v" style="color:${comAlerta?'#e06a5b':'inherit'}">${comAlerta}</div><div class="l">precisam de atenção</div></div>
     <div class="kpi"><div class="v" style="color:${unTot?'#f0a020':'inherit'}">${unTot==null?'—':unTot}</div><div class="l">${EH_MES_CORRENTE?'não lidas agora (total)':'não lidas (só mês corrente)'}</div></div>
   </div>
-  <h2>Visão geral — clique num corretor para o detalhe</h2>
+  <div class="sortbar"><span class="tag">Ordenar por:</span>`+
+    SORTS.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-k="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
+  `</div>
   <div class="card"><table><thead><tr>
-  <th>Corretor</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. mediana</th><th class="n">Não lidas</th><th class="n">Dias ativos</th><th>1ª típ.</th><th>Últ. típ.</th><th>Atividade diária</th><th>Falhas (dia útil)</th>
+  <th data-k="nome" class="sortable">Corretor</th><th class="n sortable" data-k="msgs">Msgs</th><th class="n sortable" data-k="resp">Resp. med.</th><th class="n sortable" data-k="unread">Não lidas</th><th class="n sortable" data-k="dias">Dias ativos</th><th>Atividade</th><th class="sortable" data-k="aten">Atenção</th>
   </tr></thead><tbody>`;
-  rows.forEach(r=>{const s=r.s;const any=s.n+s.ic+s.cl;
-    const stat=any===0?'<span class="pill no">sem atividade</span>'
-      :s.gaps.length?`<span class="pill wk">${s.gaps.length} dia(s): ${s.gaps.slice(0,4).join(', ')}${s.gaps.length>4?'…':''}</span>`
-      :'<span class="pill ok">ok</span>';
+  rows.forEach(r=>{const s=r.s;
     const un=unreadNow(r.b); const unCell=un==null?'—':(un>10?`<span class=zero>${un}</span>`:(un||'—'));
     const rtCell=s.rtMed==null?'—':`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>`;
+    const aten=r.al.length?r.al.map(a=>`<span class="chip mini ${a.c}" title="${a.t}">${a.s}</span>`).join('')
+      :((s.n+s.ic+s.cl)>0?'<span class="pill ok">ok</span>':'<span class="pill no">sem atividade</span>');
     h+=`<tr class="clk" data-id="${r.b.id}"><td>${r.b.name}</td>
       <td class="n">${s.n||'<span class=zero>0</span>'}</td>
-      <td class="n mut">${(s.ic+s.cl)||'—'}</td>
       <td class="n">${rtCell}</td>
       <td class="n">${unCell}</td>
       <td class="n">${s.activeP}/${wdays}</td>
-      <td>${s.pfirst!=null?fmtHM(s.pfirst):'—'}</td>
-      <td>${s.plast!=null?fmtHM(s.plast):'—'}</td>
-      <td>${spark(s.series)}</td><td>${stat}</td></tr>`;});
-  h+=`</tbody></table><div class="foot">"Resp. mediana" = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "Não lidas" = clientes esperando agora na caixa dele${EH_MES_CORRENTE?'':' (só no mês corrente)'}. "Falhas" = dias úteis sem <b>nenhuma</b> atividade.</div></div>`;
-  /* Desligados (recolhível) */
+      <td>${spark(s.series)}</td>
+      <td class="aten">${aten}</td></tr>`;});
+  h+=`</tbody></table><div class="foot">Passe o mouse nos selos de <b>Atenção</b> para o detalhe. "Resp. med." = tempo típico até a 1ª resposta manual (horário comercial); <span class="rt-hi">laranja</span> acima de 30 min. "Não lidas" = clientes esperando agora${EH_MES_CORRENTE?'':' (só no mês corrente)'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
     h+=`<details class="desl"><summary>Desligados (${OFF.length}) — dados congelados, sem coleta nova</summary><div class="card"><table><thead><tr><th>Corretor</th><th class="n">Msgs no período</th><th class="n">Último dia ativo</th></tr></thead><tbody>`;
     orows.forEach(r=>{const la=[...r.s.series].reverse().find(x=>x.present);
       h+=`<tr class="off clk" data-id="${r.b.id}"><td>${r.b.name}</td><td class="n">${r.s.n||'—'}</td><td class="n">${la?la.label:'—'}</td></tr>`;});
-    h+=`</tbody></table><div class="foot">Marcados como desligados no controle de equipes. O coletor congela os dados na data do desligamento e não busca atividade nova deles.</div></div></details>`;
+    h+=`</tbody></table><div class="foot">Marcados como desligados no <b>controle de equipes do admin</b> (reflete na hora). O coletor congela os dados na data do desligamento e não busca atividade nova deles.</div></div></details>`;
   }
   document.getElementById('view').innerHTML=h;
-  document.querySelectorAll('tr.clk,[data-id].al-nm').forEach(el=>el.onclick=()=>{state.broker=el.dataset.id;bsel.value=byId[el.dataset.id]&&el.dataset.id;render();});
+  document.querySelectorAll('tr.clk').forEach(el=>el.onclick=()=>{state.broker=el.dataset.id;bsel.value=el.dataset.id;render();});
+  document.querySelectorAll('.sortb,th.sortable').forEach(el=>el.onclick=()=>setSort(el.dataset.k));
 }
 
 function renderBroker(b,days){

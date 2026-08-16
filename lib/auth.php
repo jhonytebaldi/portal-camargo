@@ -126,6 +126,20 @@ function allowed_broker_ids(?array $u = null): array {
     return array_values(array_unique($ids));
 }
 
+/**
+ * Estado AO VIVO dos corretores (ativo/desligado), direto do banco.
+ * Serve para qualquer ferramenta refletir na hora as mudanças feitas no
+ * painel de admin (desligar/religar, equipes), sem depender do que ficou
+ * "congelado" num arquivo de coleta. Retorna [broker_id => 0|1].
+ */
+function broker_ativo_map(): array {
+    $m = [];
+    foreach (db()->query('SELECT id, ativo FROM brokers')->fetchAll() as $r) {
+        $m[(string)$r['id']] = (int)$r['ativo'];
+    }
+    return $m;
+}
+
 /** Escapa texto para HTML. */
 function h(?string $s): string {
     return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8');
