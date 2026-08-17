@@ -37,6 +37,15 @@ try {
         $pdo->exec("ALTER TABLE brokers ADD COLUMN desligado_em DATETIME NULL");
         $feitos[] = 'brokers.desligado_em';
     }
+    // Garante a ferramenta 'busca' registrada (login único da Busca de Imóveis
+    // rodando como subpasta /busca do portal). require_tool('busca') depende dela.
+    $existeBusca = (int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='busca'")->fetchColumn();
+    if (!$existeBusca) {
+        $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem)
+            VALUES ('busca','Busca de Imóveis','Busca e auditoria do acervo (Robust CRM)','🏠','/busca/',1,10)")
+            ->execute();
+        $feitos[] = 'tool:busca';
+    }
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 
