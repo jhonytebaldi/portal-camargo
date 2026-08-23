@@ -25,6 +25,12 @@ define('GHL_LOCATION', '9o1WOaGvZNxhcdSgqAaG');
 // GoHighLevel. Sem barra no final.
 define('GHL_APP_URL',  'https://app.wesalescrm.com');
 
+// --- Módulo Plano de Ação Diário ---
+// Token de serviço que a tarefa agendada (Claude) usa para importar o plano
+// (plano-acao/api-importar.php) e ler o estado (api-estado.php).
+// Gere um valor longo e aleatório, ex.: bin2hex(random_bytes(32)).
+define('PLANO_ACAO_TOKEN', 'COLE_UM_TOKEN_LONGO_ALEATORIO');
+
 // --- Caminhos de dados (fora da área pública) ---
 // Onde o coletor do painel grava o agregado diário.
 define('PAINEL_DATA_DIR', dirname(__DIR__) . '/painel-dados');
