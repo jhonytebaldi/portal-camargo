@@ -46,6 +46,100 @@ try {
             ->execute();
         $feitos[] = 'tool:busca';
     }
+    // ---- Módulo Plano de Ação Diário ----------------------------------
+    // De-para com o Robust: cada corretor (GHL) ganha o id de usuário dele
+    // no Robust — é o que traduz o escopo do portal para o funil.
+    if (!col_existe($pdo, 'brokers', 'robust_user_id')) {
+        $pdo->exec("ALTER TABLE brokers ADD COLUMN robust_user_id INT UNSIGNED NULL");
+        $pdo->exec("ALTER TABLE brokers ADD INDEX ix_brokers_robust (robust_user_id)");
+        $feitos[] = 'brokers.robust_user_id';
+    }
+    $existePA = (int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='plano-acao'")->fetchColumn();
+    if (!$existePA) {
+        $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem)
+            VALUES ('plano-acao','Plano de Ação Diário','O que fazer hoje com cada cliente ativo do funil','🎯','/plano-acao/',1,15)")
+            ->execute();
+        $feitos[] = 'tool:plano-acao';
+    }
+    // Tabelas do módulo (idempotente). Estado do módulo mora aqui: o
+    // gerador (tarefa agendada) zera o ambiente entre execuções e lê/grava
+    // tudo via api-estado.php / api-importar.php.
+    $temPA = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pa_planos'")->fetchColumn();
+    if (!$temPA) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS pa_clientes (
+            atendimento_id INT UNSIGNED NOT NULL,
+            cliente_id     INT UNSIGNED NOT NULL DEFAULT 0,
+            nome           VARCHAR(160) NOT NULL DEFAULT '',
+            telefones      VARCHAR(120) NOT NULL DEFAULT '',
+            robust_atendente INT UNSIGNED NOT NULL DEFAULT 0,
+            broker_id      VARCHAR(40) NULL,
+            stage          TINYINT NOT NULL DEFAULT 0,
+            ghl_contact_id VARCHAR(40) NULL,
+            ghl_conv_id    VARCHAR(40) NULL,
+            last_msg_at    BIGINT NULL,
+            last_analise_at VARCHAR(40) NULL,
+            resumo         TEXT NULL,
+            atualizado_em  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (atendimento_id),
+            KEY ix_pac_atendente (robust_atendente)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS pa_planos (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            data DATE NOT NULL,
+            robust_atendente INT UNSIGNED NOT NULL,
+            broker_id VARCHAR(40) NULL,
+            corretor_nome VARCHAR(160) NOT NULL DEFAULT '',
+            texto_whatsapp MEDIUMTEXT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_pap (data, robust_atendente)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS pa_itens (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            plano_id INT UNSIGNED NOT NULL,
+            atendimento_id INT UNSIGNED NOT NULL,
+            cliente_nome VARCHAR(160) NOT NULL DEFAULT '',
+            telefones VARCHAR(120) NOT NULL DEFAULT '',
+            stage TINYINT NOT NULL DEFAULT 0,
+            acao VARCHAR(40) NOT NULL DEFAULT '',
+            titulo VARCHAR(255) NOT NULL DEFAULT '',
+            justificativa TEXT NULL,
+            msg_sugerida TEXT NULL,
+            score TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            faixa ENUM('vermelho','amarelo','azul','branco') NOT NULL DEFAULT 'branco',
+            origem ENUM('conversa','andamentos') NOT NULL DEFAULT 'conversa',
+            feito TINYINT(1) NOT NULL DEFAULT 0,
+            feito_em DATETIME NULL,
+            feito_por INT UNSIGNED NULL,
+            PRIMARY KEY (id),
+            KEY ix_pai_plano (plano_id),
+            CONSTRAINT fk_pai_plano FOREIGN KEY (plano_id) REFERENCES pa_planos(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabelas pa_clientes/pa_planos/pa_itens';
+    }
+    // Aplica o de-para GHL ↔ Robust conferido (plano-acao/depara-seed.php).
+    // Idempotente e conservador: só preenche robust_user_id quando NULL —
+    // o que o admin ajustar depois na mão nunca é sobrescrito.
+    $seedFile = dirname(__DIR__) . '/plano-acao/depara-seed.php';
+    if (is_readable($seedFile) && col_existe($pdo, 'brokers', 'robust_user_id')) {
+        $seed = require $seedFile;
+        $upd = $pdo->prepare('UPDATE brokers SET robust_user_id = ? WHERE id = ? AND robust_user_id IS NULL');
+        $ins = $pdo->prepare('INSERT IGNORE INTO brokers (id, nome, email, ativo, robust_user_id) VALUES (?,?,?,1,?)');
+        $n = 0;
+        foreach ($seed as $ghlId => $d) {
+            $upd->execute([(int)$d['robust'], (string)$ghlId]);
+            if ($upd->rowCount() > 0) { $n++; continue; }
+            $existe = $pdo->prepare('SELECT COUNT(*) FROM brokers WHERE id = ?');
+            $existe->execute([(string)$ghlId]);
+            if (!(int)$existe->fetchColumn()) {
+                $ins->execute([(string)$ghlId, (string)($d['nome'] ?? ''), (string)($d['email'] ?? ''), (int)$d['robust']]);
+                if ($ins->rowCount() > 0) $n++;
+            }
+        }
+        if ($n) $feitos[] = "de-para robust aplicado ($n corretores)";
+    }
+
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 
