@@ -73,7 +73,7 @@ try {
     $nPlanos = 0; $nItens = 0;
     $selVelho = $pdo->prepare('SELECT id FROM pa_planos WHERE data = ? AND robust_atendente = ?');
     $selFeito = $pdo->prepare(
-        'SELECT i.atendimento_id, i.feito, i.feito_em, i.feito_por
+        'SELECT i.atendimento_id, i.feito, i.feito_em, i.feito_por, i.feito_auto
            FROM pa_itens i WHERE i.plano_id = ? AND i.feito = 1');
     $delVelho = $pdo->prepare('DELETE FROM pa_planos WHERE id = ?');
     $insPlano = $pdo->prepare(
@@ -81,9 +81,9 @@ try {
          VALUES (?,?,?,?,?,NOW())');
     $insItem = $pdo->prepare(
         'INSERT INTO pa_itens (plano_id, atendimento_id, cliente_nome, telefones, stage,
-            acao, titulo, justificativa, msg_sugerida, score, faixa, origem,
-            feito, feito_em, feito_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            acao, titulo, justificativa, msg_sugerida, nome_sugerido, score, faixa, origem,
+            feito, feito_em, feito_por, feito_auto)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
 
     foreach (($body['planos'] ?? []) as $p) {
         if (!isset($p['robust_atendente'])) continue;
@@ -116,17 +116,37 @@ try {
                 (int)($it['stage'] ?? 0), (string)($it['acao'] ?? ''),
                 (string)($it['titulo'] ?? ''), ($it['justificativa'] ?? null) ?: null,
                 ($it['msg_sugerida'] ?? null) ?: null,
+                ($it['nome_sugerido'] ?? null) ?: null,
                 max(0, min(100, (int)($it['score'] ?? 0))), $faixa,
                 (($it['origem'] ?? '') === 'andamentos') ? 'andamentos' : 'conversa',
-                $f ? 1 : 0, $f['feito_em'] ?? null, $f ? (int)$f['feito_por'] : null,
+                $f ? 1 : 0, $f['feito_em'] ?? null,
+                ($f && $f['feito_por'] !== null) ? (int)$f['feito_por'] : null,
+                $f ? (int)($f['feito_auto'] ?? 0) : 0,
             ]);
             $nItens++;
         }
     }
 
+    /* ---- checks automáticos: a varredura detectou que a tarefa de um dia
+       anterior foi cumprida (ex.: corretor respondeu, visita registrada).
+       Marca feito=1/feito_auto=1 sem sobrescrever check manual existente. */
+    $nAuto = 0;
+    if (!empty($body['auto_checks']) && is_array($body['auto_checks'])) {
+        $upAuto = $pdo->prepare(
+            'UPDATE pa_itens i JOIN pa_planos p ON p.id = i.plano_id
+                SET i.feito = 1, i.feito_auto = 1, i.feito_em = COALESCE(i.feito_em, NOW())
+              WHERE p.data = ? AND i.atendimento_id = ? AND i.feito = 0');
+        foreach ($body['auto_checks'] as $ac) {
+            if (empty($ac['data']) || empty($ac['atendimento_id'])) continue;
+            $upAuto->execute([(string)$ac['data'], (int)$ac['atendimento_id']]);
+            $nAuto += $upAuto->rowCount();
+        }
+    }
+
     $pdo->commit();
     echo json_encode(['ok' => true, 'data' => $data,
-        'clientes' => $nCli, 'planos' => $nPlanos, 'itens' => $nItens]);
+        'clientes' => $nCli, 'planos' => $nPlanos, 'itens' => $nItens,
+        'auto_checks' => $nAuto]);
 } catch (Throwable $e) {
     $pdo->rollBack();
     http_response_code(500);
