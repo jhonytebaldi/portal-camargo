@@ -118,6 +118,15 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabelas pa_clientes/pa_planos/pa_itens';
     }
+    // Plano de Ação v2: nome sugerido pela conversa + check automático.
+    if (!col_existe($pdo, 'pa_itens', 'nome_sugerido')) {
+        $pdo->exec("ALTER TABLE pa_itens ADD COLUMN nome_sugerido VARCHAR(120) NULL");
+        $feitos[] = 'pa_itens.nome_sugerido';
+    }
+    if (!col_existe($pdo, 'pa_itens', 'feito_auto')) {
+        $pdo->exec("ALTER TABLE pa_itens ADD COLUMN feito_auto TINYINT(1) NOT NULL DEFAULT 0");
+        $feitos[] = 'pa_itens.feito_auto';
+    }
     // Aplica o de-para GHL ↔ Robust conferido (plano-acao/depara-seed.php).
     // Idempotente e conservador: só preenche robust_user_id quando NULL —
     // o que o admin ajustar depois na mão nunca é sobrescrito.
