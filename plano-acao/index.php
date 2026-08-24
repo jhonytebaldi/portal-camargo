@@ -366,7 +366,7 @@ document.getElementById('b-copiar-cod')?.addEventListener('click', async () => {
   const marcados = [...document.querySelectorAll('.pa-sel:checked')].map(c => c.closest('.pa-item'));
   const alvo = marcados.length ? marcados : itensListados();
   const cods = [...new Set(alvo.map(i => i.dataset.aid))];
-  const texto = cods.join('\n');
+  const texto = cods.join(', ');
   const b = document.getElementById('b-copiar-cod');
   try { await navigator.clipboard.writeText(texto); }
   catch (_) {
