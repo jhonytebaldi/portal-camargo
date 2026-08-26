@@ -44,12 +44,13 @@ try {
         $up = $pdo->prepare(
             'INSERT INTO pa_clientes (atendimento_id, cliente_id, nome, telefones,
                 robust_atendente, broker_id, stage, ghl_contact_id, ghl_conv_id,
-                last_msg_at, last_analise_at, resumo, atualizado_em)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+                ghl_assigned, last_msg_at, last_analise_at, resumo, atualizado_em)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
              ON DUPLICATE KEY UPDATE cliente_id=VALUES(cliente_id), nome=VALUES(nome),
                 telefones=VALUES(telefones), robust_atendente=VALUES(robust_atendente),
                 broker_id=VALUES(broker_id), stage=VALUES(stage),
                 ghl_contact_id=VALUES(ghl_contact_id), ghl_conv_id=VALUES(ghl_conv_id),
+                ghl_assigned=VALUES(ghl_assigned),
                 last_msg_at=VALUES(last_msg_at), last_analise_at=VALUES(last_analise_at),
                 resumo=VALUES(resumo), atualizado_em=NOW()'
         );
@@ -61,6 +62,7 @@ try {
                 (int)($c['robust_atendente'] ?? 0), ($c['broker_id'] ?? null) ?: null,
                 (int)($c['stage'] ?? 0), ($c['ghl_contact_id'] ?? null) ?: null,
                 ($c['ghl_conv_id'] ?? null) ?: null,
+                ($c['ghl_assigned'] ?? null) ?: null,
                 isset($c['last_msg_at']) ? (int)$c['last_msg_at'] : null,
                 ($c['last_analise_at'] ?? null) ?: null,
                 ($c['resumo'] ?? null) ?: null,

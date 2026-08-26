@@ -20,7 +20,8 @@ $brokers = $pdo->query(
 
 $clientes = $pdo->query(
     'SELECT atendimento_id, cliente_id, nome, telefones, robust_atendente, broker_id,
-            stage, ghl_contact_id, ghl_conv_id, last_msg_at, last_analise_at, resumo
+            stage, ghl_contact_id, ghl_conv_id, ghl_assigned, last_msg_at,
+            last_analise_at, resumo
        FROM pa_clientes'
 )->fetchAll();
 
