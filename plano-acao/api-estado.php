@@ -26,9 +26,32 @@ $clientes = $pdo->query(
 
 $ultimo = $pdo->query('SELECT MAX(data) FROM pa_planos')->fetchColumn();
 
+/* Itens do plano mais recente (para carry-forward e auto-check da rotina):
+   a tarefa reaproveita a análise de quem não teve atividade nova e detecta
+   tarefas cumpridas comparando com o que estava pendente. */
+$planosDia = []; $itensDia = [];
+if ($ultimo) {
+    $st = $pdo->prepare('SELECT id, robust_atendente, broker_id, corretor_nome, criado_em
+                           FROM pa_planos WHERE data = ?');
+    $st->execute([$ultimo]);
+    $planosDia = $st->fetchAll();
+    $ids = array_map(fn($p) => (int)$p['id'], $planosDia);
+    if ($ids) {
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $st = $pdo->prepare("SELECT plano_id, atendimento_id, cliente_nome, telefones, stage,
+                                    acao, titulo, justificativa, msg_sugerida, nome_sugerido,
+                                    score, faixa, origem, feito, feito_auto
+                               FROM pa_itens WHERE plano_id IN ($in)");
+        $st->execute($ids);
+        $itensDia = $st->fetchAll();
+    }
+}
+
 echo json_encode([
     'ok' => true,
     'ultimo_plano' => $ultimo ?: null,
+    'planos_dia' => $planosDia,
+    'itens_dia' => $itensDia,
     'brokers' => $brokers,
     'clientes' => $clientes,
 ], JSON_UNESCAPED_UNICODE);

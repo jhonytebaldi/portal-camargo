@@ -117,6 +117,14 @@ if (count($planos) > 1 && $dataSel !== '') {
     }
 }
 
+/* última atualização (importação) do dia selecionado */
+$ultimaAtu = null;
+if ($dataSel !== '') {
+    $st = $pdo->prepare('SELECT MAX(criado_em) FROM pa_planos WHERE data = ?');
+    $st->execute([$dataSel]);
+    $ultimaAtu = $st->fetchColumn() ?: null;
+}
+
 $faixas = pa_faixas();
 $stages = pa_stages();
 function pa_data_label(string $d): string {
@@ -178,7 +186,12 @@ portal_header('Plano de Ação', $u);
 </style>
 
 <h1 class="home-titulo">Plano de Ação Diário</h1>
-<p class="home-sub">Clientes ativos do seu funil no Robust, priorizados pela conversa real — execute na ordem e dê o check.</p>
+<p class="home-sub">Clientes ativos do seu funil no Robust, priorizados pela conversa real — execute na ordem e dê o check.<?php
+if ($ultimaAtu) {
+    $ts = strtotime($ultimaAtu);
+    $dias = ['Sun'=>'dom','Mon'=>'seg','Tue'=>'ter','Wed'=>'qua','Thu'=>'qui','Fri'=>'sex','Sat'=>'sáb'];
+    echo ' <b>Última atualização: ' . ($dias[date('D',$ts)] ?? '') . ' ' . date('d/m', $ts) . ' às ' . date('H\hi', $ts) . '</b>.';
+} ?></p>
 
 <?php if (!$datas): ?>
   <div class="pa-vazio">Nenhum plano importado ainda<?= $permit === [] ? ' — seu usuário não está vinculado a um corretor (fale com o admin)' : '' ?>.</div>
