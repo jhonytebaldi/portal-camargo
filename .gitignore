@@ -11,3 +11,6 @@ dados-imoveis/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Dados de trabalho da rotina do Plano de Ação (contêm dados de clientes)
+automacao/trabalho/
