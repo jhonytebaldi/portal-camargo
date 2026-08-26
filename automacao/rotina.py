@@ -57,7 +57,9 @@ def norm_phone(t):
 
 def parse_iso(x):
     if not x: return None
-    try: return datetime.fromisoformat(x)
+    try:
+        d = datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        return d.replace(tzinfo=TZ) if d.tzinfo is None else d
     except Exception: return None
 
 MSG_ACOES = {"responder cliente", "follow-up", "reativar", "verificar visita",
