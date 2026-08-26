@@ -16,6 +16,7 @@ Estado entre execuções mora no MySQL do portal (api-estado/api-importar).
 Arquivos de trabalho (./trabalho): contexto.json, lotes/, analise/.
 """
 import json, os, re, sys, time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 
 TZ = timezone(timedelta(hours=-3))
@@ -112,9 +113,12 @@ def preparar():
             c["tels"] = [norm_phone(t) for t in cc["telefones"].split(",") if norm_phone(t)]
             c["ghl_contact"] = cc.get("ghl_contact_id"); c["ghl_conv"] = cc.get("ghl_conv_id")
             c["last_analise"] = cc.get("last_analise_at"); c["stage_cache"] = cc.get("stage")
+            c["assigned_cache"] = cc.get("ghl_assigned")
+            c["last_msg_cache"] = int(cc["last_msg_at"]) if cc.get("last_msg_at") else None
         else:
             c["nome"] = None; c["tels"] = []; c["ghl_contact"] = None; c["ghl_conv"] = None
             c["last_analise"] = None; c["stage_cache"] = None
+            c["assigned_cache"] = None; c["last_msg_cache"] = None
             falta_p.append(aid)
     ids_p = sorted({cli[a]["cliente_id"] for a in falta_p if cli[a]["cliente_id"]})
     for i in range(0, len(ids_p), 80):
@@ -140,11 +144,12 @@ def preparar():
         time.sleep(0.8)
     log(f"novos resolvidos: {len(falta_p)}")
 
-    # ---- 3. GHL: contato p/ quem não tem; conversa (dono/lastMsg) p/ todos ----
-    n = 0
-    for aid, c in cli.items():
-        if not c["ghl_contact"]:
-            for tel in c["tels"][:2]:
+    # ---- 3. GHL em duas frentes rápidas ------------------------------------
+    # (a) contato p/ clientes novos — em paralelo (10 workers; burst GHL 100/10s)
+    def acha_contato(aid):
+        c = cli[aid]
+        for tel in c["tels"][:2]:
+            for _ in range(2):
                 try:
                     r = requests.post(f"{GB}/contacts/search", headers=GH, timeout=40,
                         json={"locationId": LOC, "pageLimit": 1,
@@ -152,23 +157,67 @@ def preparar():
                     if r.status_code == 429: time.sleep(11); continue
                     cs = r.json().get("contacts", []) if r.status_code == 200 else []
                 except Exception: cs = []
-                if cs: c["ghl_contact"] = cs[0]["id"]; break
-                time.sleep(0.1)
-        c["assigned"] = None; c["last_msg"] = None; c["unread"] = 0
-        if c["ghl_contact"]:
-            try:
-                r = requests.get(f"{GB}/conversations/search?locationId={LOC}&contactId={c['ghl_contact']}",
-                                 headers=GH, timeout=40)
-                if r.status_code == 429: time.sleep(11); r = requests.get(
-                    f"{GB}/conversations/search?locationId={LOC}&contactId={c['ghl_contact']}", headers=GH, timeout=40)
-                conv = (r.json().get("conversations") or []) if r.status_code == 200 else []
-            except Exception: conv = []
-            if conv:
-                c["ghl_conv"] = conv[0]["id"]; c["assigned"] = conv[0].get("assignedTo")
-                c["last_msg"] = conv[0].get("lastMessageDate"); c["unread"] = conv[0].get("unreadCount", 0)
-        n += 1
-        if n % 100 == 0: log(f"ghl {n}/{len(cli)}")
-        time.sleep(0.1)
+                if cs: c["ghl_contact"] = cs[0]["id"]
+                break
+            if c["ghl_contact"]: break
+    novos_sem_contato = [a for a in cli if not cli[a]["ghl_contact"] and cli[a]["tels"]]
+    with ThreadPoolExecutor(10) as ex: list(ex.map(acha_contato, novos_sem_contato))
+    log(f"contatos resolvidos p/ novos: {len(novos_sem_contato)}")
+
+    # (b) varredura DELTA de conversas: em vez de 1 chamada por cliente, pagina
+    # as conversas da location por last_message_date e para no corte (última
+    # rodada − 24h). Quem não aparece não mudou → usa o cache.
+    corte = None
+    for p in planos_ant.values():
+        d = parse_iso((p.get("criado_em") or "").replace(" ", "T"))
+        if d and (corte is None or d > corte): corte = d
+    corte = (corte or (agora - timedelta(days=4))) - timedelta(hours=24)
+    corte_ms = int(corte.timestamp() * 1000)
+    sweep = {}
+    cursor = None; paginas = 0
+    while paginas < 200:
+        url = f"{GB}/conversations/search?locationId={LOC}&limit=100&sortBy=last_message_date&sort=desc"
+        if cursor is not None: url += f"&startAfterDate={cursor}"
+        try:
+            r = requests.get(url, headers=GH, timeout=40)
+            if r.status_code == 429: time.sleep(11); continue
+            cs = r.json().get("conversations", []) if r.status_code == 200 else []
+        except Exception: cs = []
+        if not cs: break
+        for v in cs:
+            cid = v.get("contactId")
+            if cid and cid not in sweep:
+                sweep[cid] = {"conv": v.get("id"), "assigned": v.get("assignedTo"),
+                              "last_msg": v.get("lastMessageDate"), "unread": v.get("unreadCount", 0)}
+        paginas += 1
+        cursor = cs[-1].get("sort", [None])[0]
+        if all((v.get("lastMessageDate") or 0) < corte_ms for v in cs): break
+        time.sleep(0.15)
+    log(f"varredura delta: {paginas} páginas, {len(sweep)} conversas desde o corte")
+
+    fallback = []
+    for aid, c in cli.items():
+        c["assigned"] = c.get("assigned_cache"); c["last_msg"] = c.get("last_msg_cache"); c["unread"] = 0
+        s = sweep.get(c.get("ghl_contact") or "")
+        if s:
+            c["ghl_conv"] = s["conv"]; c["assigned"] = s["assigned"]
+            c["last_msg"] = s["last_msg"]; c["unread"] = s["unread"]
+        elif c.get("ghl_contact") and not c.get("assigned_cache") :
+            fallback.append(aid)   # sem cache de dono (1ª rodada / contato novo)
+    def consulta_conv(aid):
+        c = cli[aid]
+        try:
+            r = requests.get(f"{GB}/conversations/search?locationId={LOC}&contactId={c['ghl_contact']}",
+                             headers=GH, timeout=40)
+            if r.status_code == 429: time.sleep(11); r = requests.get(
+                f"{GB}/conversations/search?locationId={LOC}&contactId={c['ghl_contact']}", headers=GH, timeout=40)
+            conv = (r.json().get("conversations") or []) if r.status_code == 200 else []
+        except Exception: conv = []
+        if conv:
+            c["ghl_conv"] = conv[0]["id"]; c["assigned"] = conv[0].get("assignedTo")
+            c["last_msg"] = conv[0].get("lastMessageDate"); c["unread"] = conv[0].get("unreadCount", 0)
+    with ThreadPoolExecutor(10) as ex: list(ex.map(consulta_conv, fallback))
+    log(f"fallback conversa individual: {len(fallback)}")
 
     # ---- 4. triagem: quem precisa de re-análise ----
     rean = []
@@ -182,27 +231,33 @@ def preparar():
         if precisa: rean.append(aid)
     log(f"re-análise: {len(rean)} de {len(cli)}")
 
-    # ---- 5. andamentos + mensagens só p/ re-análise ----
-    for k, aid in enumerate(rean):
+    # ---- 5. andamentos + mensagens só p/ re-análise (em paralelo) ----
+    def busca_andamentos(aid):
         c = cli[aid]
         j = rget(f"{RB}/andamentos?atendimento_id={aid}&per_page=100")
         ands = sorted((j or {}).get("data", []), key=lambda a: a.get("created_at") or "")[-6:]
         c["andamentos"] = [{"tipo": a.get("tipo"), "acao": a.get("acao"),
             "descricao": (a.get("descricao") or "")[:400], "stage_current": a.get("stage_current"),
             "date_init": a.get("date_init"), "created_at": a.get("created_at")} for a in ands]
-        c["msgs"] = []
-        if c.get("ghl_conv"):
-            try:
+    def busca_msgs(aid):
+        c = cli[aid]; c["msgs"] = []
+        if not c.get("ghl_conv"): return
+        try:
+            r = requests.get(f"{GB}/conversations/{c['ghl_conv']}/messages?limit=40", headers=GH, timeout=40)
+            if r.status_code == 429:
+                time.sleep(11)
                 r = requests.get(f"{GB}/conversations/{c['ghl_conv']}/messages?limit=40", headers=GH, timeout=40)
-                arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
-            except Exception: arr = []
-            msgs = [{"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
-                     "body": (m.get("body") or "")[:280]}
-                    for m in arr if not (m.get("messageType", "").startswith("TYPE_ACTIVITY")
-                                         or m.get("messageType") == "TYPE_INTERNAL_COMMENT")]
-            c["msgs"] = list(reversed(msgs))[-25:]
-        if k % 50 == 0: log(f"detalhe {k}/{len(rean)}")
-        time.sleep(0.4)
+            arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
+        except Exception: arr = []
+        msgs = [{"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
+                 "body": (m.get("body") or "")[:280]}
+                for m in arr if not (m.get("messageType", "").startswith("TYPE_ACTIVITY")
+                                     or m.get("messageType") == "TYPE_INTERNAL_COMMENT")]
+        c["msgs"] = list(reversed(msgs))[-25:]
+    with ThreadPoolExecutor(4) as ex: list(ex.map(busca_andamentos, rean))   # Robust: servidor instável, ir leve
+    log("andamentos ok")
+    with ThreadPoolExecutor(10) as ex: list(ex.map(busca_msgs, rean))
+    log("mensagens ok")
 
     # ---- 6. pré-score dos re-analisados ----
     BASE = {0: 30, 1: 35, 2: 45, 3: 55, 4: 65}
@@ -398,7 +453,7 @@ def publicar():
             "nome": c.get("nome") or "", "telefones": ", ".join(fone_fmt(t) for t in c.get("tels", [])[:2]),
             "robust_atendente": c["robust_atendente"], "broker_id": rob2broker.get(c["robust_atendente"]),
             "stage": c["stage"], "ghl_contact_id": c.get("ghl_contact"), "ghl_conv_id": c.get("ghl_conv"),
-            "last_msg_at": c.get("last_msg"),
+            "ghl_assigned": c.get("assigned"), "last_msg_at": c.get("last_msg"),
             "last_analise_at": agora if aid in ana else (c.get("last_analise") or agora),
             "resumo": None})
 
