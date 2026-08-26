@@ -127,6 +127,10 @@ try {
         $pdo->exec("ALTER TABLE pa_itens ADD COLUMN feito_auto TINYINT(1) NOT NULL DEFAULT 0");
         $feitos[] = 'pa_itens.feito_auto';
     }
+    if (!col_existe($pdo, 'pa_clientes', 'ghl_assigned')) {
+        $pdo->exec("ALTER TABLE pa_clientes ADD COLUMN ghl_assigned VARCHAR(40) NULL");
+        $feitos[] = 'pa_clientes.ghl_assigned';
+    }
     // Aplica o de-para GHL ↔ Robust conferido (plano-acao/depara-seed.php).
     // Idempotente e conservador: só preenche robust_user_id quando NULL —
     // o que o admin ajustar depois na mão nunca é sobrescrito.
