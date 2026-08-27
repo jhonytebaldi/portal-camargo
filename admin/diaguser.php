@@ -36,3 +36,24 @@ echo "  allowed_broker_ids() = " . count($abi) . " corretor(es): " . implode(', 
 
 echo "\n=== total de corretores ativos (referência) ===\n";
 echo "  brokers ativos = " . (int)$pdo->query('SELECT COUNT(*) FROM brokers WHERE ativo=1')->fetchColumn() . "\n";
+
+echo "\n=== consegue logar? ===\n";
+$sh = (string)$pdo->query('SELECT senha_hash FROM users WHERE id='.$uid)->fetchColumn();
+echo "  senha definida = " . ($sh === '' ? 'NÃO (aguardando 1º acesso — não consegue entrar ainda)' : 'sim') . "\n";
+
+echo "\n=== SIMULAÇÃO: o que o Painel entregaria para este usuário ===\n";
+portal_load_config();
+$ddir = rtrim(defined('PAINEL_DATA_DIR') ? PAINEL_DATA_DIR : (dirname(__DIR__).'/painel-dados'), '/');
+$ms = glob($ddir.'/presenca_20??-??.json') ?: [];
+rsort($ms);
+$f = $ms[0] ?? ($ddir.'/presenca_agg.json');
+$agg = is_readable($f) ? json_decode((string)file_get_contents($f), true) : null;
+if (is_array($agg) && isset($agg['brokers'])) {
+    $permit = array_flip(allowed_broker_ids($row));
+    $vis = array_values(array_filter($agg['brokers'], fn($b)=>isset($permit[$b['id']])));
+    echo "  arquivo: " . basename($f) . " · total no arquivo: " . count($agg['brokers']) . "\n";
+    echo "  corretores que ELE veria: " . count($vis) . "\n";
+    foreach ($vis as $b) echo "     - " . ($b['name'] ?? $b['id']) . "\n";
+} else {
+    echo "  (sem agregado para simular)\n";
+}
