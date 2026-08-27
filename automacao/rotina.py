@@ -196,14 +196,22 @@ def preparar():
     log(f"varredura delta: {paginas} páginas, {len(sweep)} conversas desde o corte")
 
     fallback = []
+    agora_ms = int(agora.timestamp() * 1000)
     for aid, c in cli.items():
         c["assigned"] = c.get("assigned_cache"); c["last_msg"] = c.get("last_msg_cache"); c["unread"] = 0
         s = sweep.get(c.get("ghl_contact") or "")
         if s:
             c["ghl_conv"] = s["conv"]; c["assigned"] = s["assigned"]
             c["last_msg"] = s["last_msg"]; c["unread"] = s["unread"]
-        elif c.get("ghl_contact") and not c.get("assigned_cache") :
-            fallback.append(aid)   # sem cache de dono (1ª rodada / contato novo)
+        elif c.get("ghl_contact"):
+            # Fora da varredura (sem mensagem nova). O cache do dono pode estar
+            # DESATUALIZADO justamente aqui: a automação do WeSales transfere o
+            # dono de quem está parado 10+ dias em Lead/Atendimento — sem gerar
+            # mensagem. Reconfere individualmente quem está na zona de risco.
+            dias_sem_msg = ((agora_ms - int(c["last_msg"])) / 86400000) if c.get("last_msg") else 999
+            if (not c.get("assigned_cache")                      # 1ª rodada / contato novo
+                    or (c["stage"] in (0, 1) and dias_sem_msg >= 6)):  # zona da automação dos 10 dias
+                fallback.append(aid)
     def consulta_conv(aid):
         c = cli[aid]
         try:
