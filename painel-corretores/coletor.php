@@ -28,6 +28,7 @@
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
+require_once __DIR__ . '/../lib/blocklist.php';
 
 const PAINEL_CONCURRENCY = 8;
 // Horário comercial p/ tempo de resposta (horário de Brasília):
@@ -220,11 +221,17 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $cursor = null; $convIds = []; $pages = 0; $CONV_ASS = []; $CONV_CONTACT = [];
     $unread_client = []; $unread_followup = []; $wait24 = []; $waitList = [];
     $nowMs = $now->getTimestamp()*1000; $dia1Ms = $nowMs - 86400*1000;
+    // Lista de Bloqueio: se ligada para o painel, conversas de números bloqueados
+    // são ignoradas por completo (não entram em nada).
+    $BLOCK = blocklist_ativa('painel-corretores') ? blocklist_set() : [];
+    if ($BLOCK) painel_log('lista de bloqueio ativa: '.count($BLOCK).' número(s)');
+    $nBloq = 0;
     while ($pages < 500) {
         $url = $cursor === null ? $base : $base . '&startAfterDate=' . urlencode((string)$cursor);
         $j = ghl_get($url, $HDR); $cs = ($j['conversations'] ?? []);
         if (!$cs) break; $pages++; $algumRecente = false;
         foreach ($cs as $c) {
+            if ($BLOCK && fone_bloqueado((string)($c['phone'] ?? ''), $BLOCK)) { $nBloq++; continue; }
             $lmd = (int)($c['lastMessageDate'] ?? 0);
             if ($lmd >= $winStartMs) {
                 // No backfill de mês passado, só busca mensagens de conversas que
@@ -263,7 +270,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         if ($nc === null || $nc === $cursor) break; $cursor = $nc;
     }
     $convIds = array_values(array_unique($convIds));
-    painel_log('conversas na janela: ' . count($convIds) . ' · clientes aguardando: ' . array_sum($unread_client) . ' · follow-up: ' . array_sum($unread_followup));
+    painel_log('conversas na janela: ' . count($convIds) . ' · clientes aguardando: ' . array_sum($unread_client) . ' · follow-up: ' . array_sum($unread_followup) . ($BLOCK ? " · bloqueadas: $nBloq" : ''));
 
     /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa ===== */
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia

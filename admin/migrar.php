@@ -153,6 +153,30 @@ try {
         if ($n) $feitos[] = "de-para robust aplicado ($n corretores)";
     }
 
+    // ---- Lista de Bloqueio (a nível de portal) ----------------------
+    $temBL = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'blocklist'")->fetchColumn();
+    if (!$temBL) {
+        $pdo->exec("CREATE TABLE blocklist (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            phone_raw   VARCHAR(40)  NOT NULL,
+            phone_canon VARCHAR(20)  NOT NULL,
+            motivo      VARCHAR(160) NOT NULL DEFAULT '',
+            criado_em   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            criado_por  INT UNSIGNED NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_bl_canon (phone_canon)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela blocklist';
+    }
+    // interruptor por ferramenta: respeita a lista de bloqueio?
+    if (!col_existe($pdo, 'tools', 'usa_blocklist')) {
+        $pdo->exec("ALTER TABLE tools ADD COLUMN usa_blocklist TINYINT(1) NOT NULL DEFAULT 0");
+        // já liga para as duas ferramentas de análise pedidas
+        $pdo->exec("UPDATE tools SET usa_blocklist=1 WHERE slug IN ('painel-corretores','plano-acao')");
+        $feitos[] = 'tools.usa_blocklist (on: painel + plano-acao)';
+    }
+
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 

@@ -36,6 +36,18 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data)) {
 }
 
 $pdo = db();
+// Lista de Bloqueio: se ligada p/ o plano de ação, clientes com telefone
+// bloqueado nem entram (não viram cliente nem item do plano).
+require_once __DIR__ . '/../lib/blocklist.php';
+$BLOCK = blocklist_ativa('plano-acao') ? blocklist_set() : [];
+$paBloqueado = function ($telefones) use ($BLOCK): bool {
+    if (!$BLOCK) return false;
+    foreach (explode(',', (string)$telefones) as $t) {
+        if (fone_bloqueado(trim($t), $BLOCK)) return true;
+    }
+    return false;
+};
+$nBloq = 0;
 $pdo->beginTransaction();
 try {
     /* ---- upsert do cache de clientes ---- */
@@ -56,6 +68,7 @@ try {
         );
         foreach ($body['clientes'] as $c) {
             if (empty($c['atendimento_id'])) continue;
+            if ($paBloqueado($c['telefones'] ?? '')) { $nBloq++; continue; }   // número na lista de bloqueio
             $up->execute([
                 (int)$c['atendimento_id'], (int)($c['cliente_id'] ?? 0),
                 (string)($c['nome'] ?? ''), (string)($c['telefones'] ?? ''),
@@ -108,6 +121,7 @@ try {
         $nPlanos++;
 
         foreach (($p['itens'] ?? []) as $it) {
+            if ($paBloqueado($it['telefones'] ?? '')) { $nBloq++; continue; }   // número na lista de bloqueio
             $aid = (int)($it['atendimento_id'] ?? 0);
             $f = $feitos[$aid] ?? null;
             $faixa = in_array(($it['faixa'] ?? ''), ['vermelho','amarelo','azul','branco'], true)
@@ -148,7 +162,7 @@ try {
     $pdo->commit();
     echo json_encode(['ok' => true, 'data' => $data,
         'clientes' => $nCli, 'planos' => $nPlanos, 'itens' => $nItens,
-        'auto_checks' => $nAuto]);
+        'auto_checks' => $nAuto, 'bloqueados' => $nBloq]);
 } catch (Throwable $e) {
     $pdo->rollBack();
     http_response_code(500);

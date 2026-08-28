@@ -75,6 +75,15 @@ if ($corSel && !in_array($corSel, $idsVisiveis, true)) $corSel = 0;
 $planosVer = $corSel ? array_values(array_filter($planos, fn($p) => (int)$p['robust_atendente'] === $corSel)) : $planos;
 
 /* ---- itens dos planos exibidos ---- */
+// Lista de Bloqueio: números bloqueados somem do plano na hora (além de já
+// não entrarem na próxima importação).
+require_once __DIR__ . '/../lib/blocklist.php';
+$BLOCK_PA = blocklist_ativa('plano-acao') ? blocklist_set() : [];
+$paBloq = function ($tels) use ($BLOCK_PA): bool {
+    if (!$BLOCK_PA) return false;
+    foreach (explode(',', (string)$tels) as $t) if (fone_bloqueado(trim($t), $BLOCK_PA)) return true;
+    return false;
+};
 $itensPorPlano = []; $acoesDistintas = [];
 if ($planosVer) {
     $pin = implode(',', array_fill(0, count($planosVer), '?'));
@@ -82,6 +91,7 @@ if ($planosVer) {
                          ORDER BY FIELD(faixa,'vermelho','amarelo','azul','branco'), score DESC, id");
     $st->execute(array_map(fn($p) => (int)$p['id'], $planosVer));
     foreach ($st->fetchAll() as $it) {
+        if ($paBloq($it['telefones'] ?? '')) continue;   // número na lista de bloqueio
         $itensPorPlano[(int)$it['plano_id']][] = $it;
         $acoesDistintas[$it['acao']] = true;
     }

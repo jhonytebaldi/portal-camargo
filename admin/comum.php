@@ -32,6 +32,7 @@ function admin_header(string $ativo, array $u): void {
         'usuarios'    => ['Usuários',   '/admin/usuarios.php'],
         'equipes'     => ['Equipes',    '/admin/equipes.php'],
         'corretores'  => ['Corretores', '/admin/corretores.php'],
+        'bloqueio'    => ['Bloqueio',   '/admin/bloqueio.php'],
     ];
     echo '<div class="admin-tabs">';
     foreach ($abas as $k => $a) {
