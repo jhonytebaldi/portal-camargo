@@ -311,6 +311,7 @@ function fmtSpan(m){return Math.floor(m/60)+"h"+String(m%60).padStart(2,'0');}
 function stats(b,days){
   let n=0,ic=0,cl=0,cfirst=null,clast=null,pfirst=null,plast=null,activeP=0,gaps=[];
   let rt_n=0,rt_sum=0; const rt_hist=new Array(10).fill(0); let rts=[]; let hasList=false;
+  const convSet={};   // contactId -> 0|1 (1 = houve interação do cliente)
   const mh=new Array(24).fill(0),ah=new Array(24).fill(0),series=[];
   days.forEach(d=>{const r=b.days[d.key];
     const cnt=r?r.n:0, ici=r?r.ic:0, cli=r?r.cl:0;
@@ -320,6 +321,7 @@ function stats(b,days){
                  rt:r&&Array.isArray(r.rt)?r.rt:null,rt_hist:r&&r.rt_hist?r.rt_hist:null,rt_n:r?r.rt_n:0,rt_sum:r?r.rt_sum:0});
     if(r){n+=r.n;ic+=r.ic;cl+=r.cl;
       rt_n+=r.rt_n||0; rt_sum+=r.rt_sum||0;
+      if(r.cts)for(const c in r.cts){convSet[c]=Math.max(convSet[c]||0, r.cts[c]||0);}
       if(Array.isArray(r.rt)){hasList=true; if(r.rt.length)rts=rts.concat(r.rt);}
       else if(r.rt_hist)for(let i=0;i<10;i++)rt_hist[i]+=r.rt_hist[i];
       for(let h=0;h<24;h++){mh[h]+=r.mh[h];ah[h]+=r.ah[h];}
@@ -338,7 +340,9 @@ function stats(b,days){
     if(rtN){rts.sort((a,b)=>a-b); rtMed=pct(rts,0.5); rtMean=Math.round(rts.reduce((a,b)=>a+b,0)/rtN);
       sl1=Math.round(rts.filter(x=>x<=SLA1).length/rtN*100); sl2=Math.round(rts.filter(x=>x<=SLA2).length/rtN*100);} }
   else { rtMed=rtMedian(rt_hist); rtN=rt_n; rtMean=rt_n?Math.round(rt_sum/rt_n):null; }  // legado: sem nível de serviço
-  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rtMed,rtMean,sl1,sl2,rtN};
+  const conversas=Object.keys(convSet).length;
+  const conversasI=Object.values(convSet).filter(v=>v>0).length;
+  return {n,ic,cl,cfirst,clast,pfirst,plast,activeP,gaps,mh,ah,series,rt_n,rt_sum,rtMed,rtMean,sl1,sl2,rtN,conversas,conversasI};
 }
 function spark(series){const mx=Math.max(1,...series.map(s=>s.n));
   return '<span class="spark">'+series.map(s=>{
@@ -408,12 +412,14 @@ const SORTS=[
   {k:'fup', l:'Follow-ups pend.'},
   {k:'aten', l:'Atenção'},
   {k:'msgs', l:'Mensagens'},
+  {k:'conversas', l:'Conversas'},
   {k:'resp', l:'Tempo de resposta'},
   {k:'dias', l:'Dias ativos'},
   {k:'nome', l:'Nome'},
 ];
 function sortVal(r,k){
   if(k==='msgs')return r.s.n;
+  if(k==='conversas')return r.s.conversas;
   if(k==='resp')return r.s.rtMed==null?-1:r.s.rtMed;
   if(k==='unread')return unreadClient(r.b)||0;
   if(k==='fup')return unreadFup(r.b)||0;
@@ -433,7 +439,8 @@ const TT={
   nome:'Corretor. Clique na linha para abrir o detalhe diário dele.',
   unread:'CLIENTES AGUARDANDO: conversas cuja última mensagem é do cliente — ou seja, ele está de fato esperando resposta agora. É um retrato do momento (não do período) e o principal ponto de atenção.',
   fup:'FOLLOW-UPS PENDENTES: conversas não lidas que a automação ou o pós-ligação deixou na caixa, SEM um recado novo do cliente esperando. Precisam de ação (ex.: retornar a ligação), mas ninguém está parado esperando resposta.',
-  msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa). Exclui automação; notas internas e ligações não contam aqui.',
+  msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa) — inclui as que o corretor manda do próprio celular (sincronizadas pela integração), atribuídas ao dono do contato. Exclui automação; notas internas e ligações não contam aqui.',
+  conversas:'CONVERSAS: clientes distintos que o corretor atendeu no período (mandou ao menos 1 mensagem). O "· N c/ resposta" ao lado são as conversas em que o cliente também respondeu (interação nos dois sentidos).',
   resp:`RESPOSTA: em cima, o tempo TÍPICO (mediana) até a 1ª resposta manual. Embaixo, o NÍVEL DE SERVIÇO — % dos clientes respondidos dentro da meta de ${M1} min (e de ${M2} min). Tudo em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; Brasília — noites/domingos não são cobrados). Conta só recados que chegaram no expediente; não inclui quem ainda não foi respondido (esses estão em Aguardando). "poucos dados" = respostas de menos pra medir bem.`,
   dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
   ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
@@ -467,7 +474,7 @@ function renderOverview(days){
     SORTS.map(o=>`<button class="sortb ${k===o.k?'on':''}" data-k="${o.k}">${o.l}${k===o.k?(dir<0?' ▼':' ▲'):''}</button>`).join('')+
   `</div>
   <div class="card"><table><thead><tr>
-  <th data-k="nome" class="sortable" title="${TT.nome}">Corretor</th><th class="n sortable wait-col" data-k="unread" title="${TT.unread}">Aguardando</th><th class="n sortable" data-k="fup" title="${TT.fup}">Follow-ups pend.</th><th class="n sortable" data-k="msgs" title="${TT.msgs}">Msgs</th><th class="n sortable" data-k="resp" title="${TT.resp}">Resposta</th><th class="n sortable" data-k="dias" title="${TT.dias}">Dias ativos</th><th title="${TT.ativ}">Atividade</th><th class="sortable" data-k="aten" title="${TT.aten}">Atenção</th>
+  <th data-k="nome" class="sortable" title="${TT.nome}">Corretor</th><th class="n sortable wait-col" data-k="unread" title="${TT.unread}">Aguardando</th><th class="n sortable" data-k="fup" title="${TT.fup}">Follow-ups pend.</th><th class="n sortable" data-k="msgs" title="${TT.msgs}">Msgs</th><th class="n sortable" data-k="conversas" title="${TT.conversas}">Conversas</th><th class="n sortable" data-k="resp" title="${TT.resp}">Resposta</th><th class="n sortable" data-k="dias" title="${TT.dias}">Dias ativos</th><th title="${TT.ativ}">Atividade</th><th class="sortable" data-k="aten" title="${TT.aten}">Atenção</th>
   </tr></thead><tbody>`;
   rows.forEach(r=>{const s=r.s;
     const cli=unreadClient(r.b), fup=unreadFup(r.b);
@@ -491,6 +498,7 @@ function renderOverview(days){
       <td class="n wait-col" title="${TT.unread}">${waitCell}</td>
       <td class="n" title="${TT.fup}">${fupCell}</td>
       <td class="n" title="${TT.msgs}">${s.n||'<span class=zero>0</span>'}</td>
+      <td class="n" title="${TT.conversas}">${s.conversas||'<span class=zero>0</span>'}${s.conversasI?`<span class="sla"> · ${s.conversasI} c/ resp</span>`:''}</td>
       <td class="n" title="${TT.resp}">${rtCell}</td>
       <td class="n" title="${TT.dias}">${s.activeP}/${wdays}</td>
       <td title="${TT.ativ}">${spark(s.series)}</td>
@@ -517,6 +525,7 @@ function renderBroker(b,days){
   <h2 style="margin-top:12px">${b.name} <span class="tag" style="text-transform:none">· ${b.email}${off?' · <span style="color:#f0a020">desligado</span>':''}</span></h2>
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
+    <div class="kpi" title="Clientes distintos atendidos no período (o corretor mandou ao menos 1 mensagem). O 'c/ resposta' são os que também responderam."><div class="v">${s.conversas}</div><div class="l">conversas${s.conversasI?` · ${s.conversasI} c/ resposta`:''}</div></div>
     <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤${M1}m/≤${M2}m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=RT_MINN&&s.sl1!=null)?` · ${s.sl1}% ≤${M1}m · ${s.sl2}% ≤${M2}m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
     <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>

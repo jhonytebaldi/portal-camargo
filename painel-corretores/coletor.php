@@ -217,7 +217,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $unreadLookMs = $ehMesCorrente ? ($now->getTimestamp() - UNREAD_LOOKBACK_DAYS*86400) * 1000 : PHP_INT_MAX;
     $stopMs = min($winStartMs, $unreadLookMs);   // pagina conversas até o mais antigo dos dois
     $base = "https://services.leadconnectorhq.com/conversations/search?locationId={$LOC}&limit=100&sortBy=last_message_date&sort=desc";
-    $cursor = null; $convIds = []; $pages = 0; $CONV_ASS = [];
+    $cursor = null; $convIds = []; $pages = 0; $CONV_ASS = []; $CONV_CONTACT = [];
     $unread_client = []; $unread_followup = []; $wait24 = []; $waitList = [];
     $nowMs = $now->getTimestamp()*1000; $dia1Ms = $nowMs - 86400*1000;
     while ($pages < 500) {
@@ -233,7 +233,8 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 // no mês e só encareceriam a coleta.
                 $ok = $ehMesCorrente;
                 if (!$ok) { $da = parse_ms((string)($c['dateAdded'] ?? '')); $ok = ($da === 0 || $da <= $END); }
-                if ($ok) { $convIds[] = $c['id']; $CONV_ASS[$c['id']] = $c['assignedTo'] ?? null; }
+                if ($ok) { $convIds[] = $c['id']; $CONV_ASS[$c['id']] = $c['assignedTo'] ?? null;
+                           $CONV_CONTACT[$c['id']] = (string)($c['contactId'] ?? ''); }
             }
             if ($lmd >= $stopMs) $algumRecente = true;
             /* retrato de não-lidas (só mês corrente): por corretor responsável.
@@ -268,17 +269,36 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia
     // 'rt' = lista de tempos de resposta do dia (segundos comerciais decorridos);
     // guardar a lista crua permite mediana E percentil (P85) exatos no painel.
+    // 'cts' = contatos distintos que o corretor atendeu no dia → {contactId: 0|1},
+    // 1 = houve interação (o cliente também respondeu). Permite contar Conversas
+    // e Conversas-com-interação distintas no período (união dos dias no painel).
     $novoDia = fn() => ['n'=>0,'app'=>0,'api'=>0,'ic'=>0,'cl'=>0,'in'=>0,'first'=>null,'last'=>null,
                         'pfirst'=>null,'plast'=>null,'mh'=>array_fill(0,24,0),'ah'=>array_fill(0,24,0),
-                        'rt_n'=>0,'rt_sum'=>0,'rt'=>[]];
+                        'rt_n'=>0,'rt_sum'=>0,'rt'=>[], 'cts'=>[]];
 
     // $assBroker = corretor responsável pela conversa (assignedTo). Serve para
     // atribuir as mensagens RECEBIDAS do cliente (inbound) ao dia dele — isso
     // mede "demanda" (houve cliente falando) e gatilha o bloco de abandono só
     // quando de fato havia o que atender.
-    $processConversa = function (array $msgs, ?string $assBroker) use (&$acc, $BIDS, $CUT, $CLIENT, $winStartMs, $END, $TZ, $novoDia) {
+    $processConversa = function (array $msgs, ?string $assBroker, string $contactId = '') use (&$acc, $BIDS, $CUT, $CLIENT, $winStartMs, $END, $TZ, $novoDia) {
         /* ordena crescente por tempo */
         usort($msgs, fn($a,$b)=>$a['e'] <=> $b['e']);
+        // a conversa teve recado do cliente na janela? (p/ "conversa com interação")
+        $temInbound = false;
+        foreach ($msgs as $m) {
+            if (($m['dir'] ?? '')==='inbound' && isset($CLIENT[$m['mt']])
+                && $winStartMs <= $m['e'] && $m['e'] < $END) { $temInbound = true; break; }
+        }
+        // Quem "fez" a mensagem outbound, para creditar por corretor:
+        //  - autor conhecido (userId de corretor) → ele mesmo;
+        //  - celular do corretor (STEVO, sem autor, assinatura "Source:") → dono
+        //    do contato (assignedTo) no momento da coleta.
+        $ator = function(array $m) use ($BIDS, $assBroker) {
+            $uid = $m['uid'] ?? null;
+            if ($uid !== null && isset($BIDS[$uid])) return $uid;
+            if ($uid === null && !empty($m['stevo']) && $assBroker !== null && isset($BIDS[$assBroker])) return $assBroker;
+            return null;
+        };
         /* --- presença (contagem por autor) + demanda (inbound do cliente) --- */
         foreach ($msgs as $m) {
             $e = $m['e']; if (!($winStartMs <= $e && $e < $END)) continue;
@@ -295,7 +315,8 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 continue;
             }
             if ($m['dir'] !== 'outbound') continue;
-            $uid = $m['uid']; if ($uid === null || !isset($BIDS[$uid])) continue;
+            $uid = $ator($m);                         // corretor a quem creditar (ou null)
+            if ($uid === null) continue;
             if (isset($CUT[$uid]) && $e > $CUT[$uid]) continue;   // após desligamento, não conta
             $src = $m['src']; $mt = $m['mt'];
             $dloc = (new DateTime('@'.intdiv($e,1000)))->setTimezone($TZ);
@@ -309,6 +330,8 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 if ($src === 'app') $d['app']++; else $d['api']++;
                 if ($d['first']===null || $e<$d['first']) $d['first']=$e;
                 if ($d['last'] ===null || $e>$d['last'])  $d['last'] =$e;
+                // conversa: registra o contato atendido (1 se houve interação)
+                if ($contactId !== '') $d['cts'][$contactId] = max($d['cts'][$contactId] ?? 0, $temInbound ? 1 : 0);
             } elseif ($mt === 'TYPE_INTERNAL_COMMENT') { $d['ic']++; $human=true; }
             elseif ($mt === 'TYPE_CALL') { $d['cl']++; $human=true; }
             if ($human) {
@@ -326,11 +349,12 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 continue;
             }
             // outbound
-            $uid = $m['uid']; $src = $m['src']; $mt = $m['mt'];
+            $src = $m['src']; $mt = $m['mt'];
             $manual = ($src === 'app' || $src === 'api') && isset($CLIENT[$mt]);
             if (!$manual) continue;                       // automação não "responde"
             if ($pend === null) continue;                 // resposta sem inbound pendente
-            if ($uid === null || !isset($BIDS[$uid])) { $pend = null; continue; }
+            $uid = $ator($m);                             // resposta do celular conta p/ o dono
+            if ($uid === null) { $pend = null; continue; }
             if (isset($CUT[$uid]) && $e > $CUT[$uid]) { $pend = null; continue; }
             // Só conta recados que CHEGARAM em horário comercial (o cliente falou
             // durante o expediente). O tempo é medido em segundos COMERCIAIS
@@ -384,8 +408,15 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                         foreach ($msgs as $m) {
                             $da=$m['dateAdded']??null; if(!$da) continue; $e=parse_ms($da);
                             if ($e<$oldest) $oldest=$e;
+                            // STEVO = mensagem que o corretor mandou do celular: outbound,
+                            // source api, SEM userId, e com a assinatura "Source: <handle>"
+                            // no corpo (as notificações de sistema da integração NÃO têm).
+                            $stevo = (($m['source']??'')==='api') && empty($m['userId'])
+                                  && ($m['direction']??'')==='outbound'
+                                  && preg_match('/\n\s*Source:\s*\S+\s*$/', (string)($m['body']??''));
                             $buf[$cid][]=['e'=>$e,'dir'=>($m['direction']??''),'src'=>($m['source']??''),
-                                          'mt'=>($m['messageType']??''),'uid'=>($m['userId']??null)];
+                                          'mt'=>($m['messageType']??''),'uid'=>($m['userId']??null),
+                                          'stevo'=>$stevo?1:0];
                         }
                         $lastId=$data['lastMessageId']??null; $hasNext=!empty($data['nextPage']);
                         $moreOld = ($oldest===PHP_INT_MAX) || ($oldest>=$winStartMs);
@@ -394,7 +425,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 }
             }
             if ($advance) {
-                if ($st) { $cid=$st['cid']; if(!empty($buf[$cid])) $processConversa($buf[$cid], $CONV_ASS[$cid] ?? null); unset($buf[$cid]); }
+                if ($st) { $cid=$st['cid']; if(!empty($buf[$cid])) $processConversa($buf[$cid], $CONV_ASS[$cid] ?? null, $CONV_CONTACT[$cid] ?? ''); unset($buf[$cid]); }
                 $done++; if ($done%300===0) painel_log("proc {$done}/{$total}");
                 if ($queue) { $ncid=array_shift($queue); $buf[$ncid]=[]; $addHandle($ncid,null,0); }
             }
@@ -505,7 +536,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         foreach ($days as $k=>$d) {
             $winDays[$bid][$k] = ['n'=>$d['n'],'app'=>$d['app'],'api'=>$d['api'],'ic'=>$d['ic'],'cl'=>$d['cl'],'in'=>$d['in'],
                 'first'=>$hm($d['first']),'last'=>$hm($d['last']),'pfirst'=>$hm($d['pfirst']),'plast'=>$hm($d['plast']),
-                'mh'=>$d['mh'],'ah'=>$d['ah'],'rt_n'=>$d['rt_n'],'rt_sum'=>$d['rt_sum'],'rt'=>$d['rt']];
+                'mh'=>$d['mh'],'ah'=>$d['ah'],'rt_n'=>$d['rt_n'],'rt_sum'=>$d['rt_sum'],'rt'=>$d['rt'],'cts'=>$d['cts']];
         }
     }
     $final = [];
