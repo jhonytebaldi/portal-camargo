@@ -12,7 +12,7 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 ## Ações permitidas (campo "acao" — use EXATAMENTE um destes rótulos)
 "responder cliente" · "follow-up" · "enviar opções de imóvel" ·
 "propor agendamento" · "confirmar visita" · "verificar visita" · "pós-visita" ·
-"avançar proposta" · "reativar" · "encerrar"
+"avançar proposta" · "reativar" · "aguardar retorno" · "encerrar"
 
 ## Como decidir
 - Última mensagem é do cliente sem resposta manual → "responder cliente".
@@ -31,6 +31,9 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 - Visita/agendamento com data já passada e SEM confirmação de comparecimento →
   "verificar visita": perguntar se conseguiu ir e, se não foi, reagendar.
 - Stage 4 → "avançar proposta" (documentação, contraproposta, prazo).
+- O corretor JÁ agiu (última mensagem manual é dele, há menos de 3 dias) e a
+  bola está com o cliente → "aguardar retorno": nada a fazer hoje; o título diz
+  o que esperar e quando cobrar (ex.: "Aguardar resposta; cobrar sexta se calar").
 - 15–45 dias parado com histórico de interesse → "reativar" (nova oferta, novo ângulo).
 - 3+ tentativas sem retorno E 30+ dias parado, ou desinteresse explícito
   ("já comprei", "não quero mais", número errado) → "encerrar".

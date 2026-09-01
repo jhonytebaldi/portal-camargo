@@ -43,11 +43,10 @@ LOC = os.environ.get("GHL_LOCATION", "9o1WOaGvZNxhcdSgqAaG")
 def rget(url, tries=5):
     for a in range(tries):
         try:
-            r = requests.get(url, headers=RH, timeout=40)
+            r = requests.get(url, headers=RH, timeout=60)
             if r.status_code == 200: return r.json()
-            if r.status_code == 429: time.sleep(min(8, 2 * (a + 1))); continue
         except Exception: pass
-        if a < tries - 1: time.sleep(min(6, 1.5 * (a + 1)))
+        time.sleep(2 * (a + 1))
     return None
 
 def norm_phone(t):
@@ -89,15 +88,12 @@ def preparar():
     for u in (ru or {}).get("data", []): nomes_rob[u["id"]] = u.get("nome") or f"id {u['id']}"
 
     # ---- 1. atendimentos ativos (stage 0-4) por corretor ----
-    # Cada atendente é independente → em paralelo (4 workers; Robust tolera esse
-    # nível, mesmo usado nos andamentos). setitem de dict é atômico sob o GIL.
     cli = {}
-    erro_atend = []
-    def busca_atend(rid):
+    for rid in escopo:
         page, pages = 1, None
         while pages is None or page <= pages:
             j = rget(f"{RB}/atendimentos?ativo=true&atendente={rid}&per_page=500&page={page}")
-            if j is None: erro_atend.append(rid); return
+            if j is None: sys.exit(f"ERRO Robust atendimentos ({rid})")
             for r in j["data"]:
                 if r.get("stage") in (0, 1, 2, 3, 4):
                     cli[r["id"]] = {"atendimento_id": r["id"], "cliente_id": r.get("cliente"),
@@ -105,10 +101,7 @@ def preparar():
                         "obs": (r.get("obs") or "")[:600], "criado": r.get("created_at"),
                         "last_update": r.get("last_update"), "robust_atendente": rid,
                         "corretor": nomes_rob.get(rid, str(rid))}
-            pages = j["meta"]["pages"]; page += 1
-            if pages and page <= pages: time.sleep(0.2)
-    with ThreadPoolExecutor(4) as ex: list(ex.map(busca_atend, escopo))
-    if erro_atend: sys.exit(f"ERRO Robust atendimentos ({erro_atend})")
+            pages = j["meta"]["pages"]; page += 1; time.sleep(0.8)
     log(f"ativos 0-4 no escopo: {len(cli)}")
 
     # ---- 2. nome/telefones: cache primeiro, Robust p/ novos ----
@@ -137,7 +130,7 @@ def preparar():
                 cli[aid]["nome"] = cli[aid]["nome"] or p.get("nome")
                 tels = sorted({t for t in (norm_phone(p.get(f"tel_{k}")) for k in (1,2,3)) if t})
                 if tels: cli[aid]["tels"] = tels
-        if i + 80 < len(ids_p): time.sleep(0.2)
+        time.sleep(0.8)
     lids = sorted({cli[a]["lead"] for a in falta_p if not cli[a]["tels"] and cli[a].get("lead")})
     for i in range(0, len(lids), 80):
         j = rget(f"{RB}/leads?per_page=100&ids=" + ",".join(map(str, lids[i:i+80])))
@@ -148,7 +141,7 @@ def preparar():
                 if not cli[aid]["nome"]: cli[aid]["nome"] = l.get("name")
                 t = norm_phone(l.get("phone"))
                 if t and not cli[aid]["tels"]: cli[aid]["tels"] = [t]
-        if i + 80 < len(lids): time.sleep(0.2)
+        time.sleep(0.8)
     log(f"novos resolvidos: {len(falta_p)}")
 
     # ---- 3. GHL em duas frentes rápidas ------------------------------------
@@ -242,7 +235,9 @@ def preparar():
         lu = parse_iso(c.get("last_update"))
         precisa = (la is None or aid not in itens_ant
                    or (lm and lm > la) or (lu and lu > la)
-                   or (c.get("stage_cache") is not None and int(c["stage_cache"]) != c["stage"]))
+                   or (c.get("stage_cache") is not None and int(c["stage_cache"]) != c["stage"])
+                   or (agora - la).days >= 5           # ninguém fica sem nova análise por mais de 5 dias
+                   or int(itens_ant[aid].get("feito") or 0) == 1)  # tarefa concluída → decidir o próximo passo
         if precisa: rean.append(aid)
     log(f"re-análise: {len(rean)} de {len(cli)}")
 
@@ -363,7 +358,7 @@ def publicar():
 
     ACOES = {"responder cliente","follow-up","enviar opções de imóvel","propor agendamento",
              "confirmar visita","verificar visita","pós-visita","avançar proposta",
-             "reativar","encerrar","alinhar titularidade"}
+             "reativar","encerrar","alinhar titularidade","aguardar retorno"}
     ana = {}
     ldir = os.path.join(DIR, "analise")
     for f in sorted(os.listdir(ldir)):
@@ -375,7 +370,7 @@ def publicar():
     if faltam: print(f"AVISO: {len(faltam)} re-análises não entregues — usarão carry-forward")
 
     def faixa(score, acao):
-        if acao == "encerrar": return "branco"
+        if acao in ("encerrar", "aguardar retorno"): return "branco"
         if score >= 75: return "vermelho"
         if score >= 55: return "amarelo"
         if score >= 40: return "azul"
@@ -399,9 +394,9 @@ def publicar():
                     "nome_sugerido": a.get("nome_detectado") or None, "score": score}
             if a["acao"] == "encerrar" and a.get("encerrar_motivo"):
                 item["justificativa"] = ((item["justificativa"] or "") + " Motivo: " + a["encerrar_motivo"]).strip()
-        else:  # carry-forward do plano anterior
+        else:  # carry-forward do plano anterior (só tarefas ainda pendentes)
             ant = itens_ant.get(aid)
-            if not ant: continue
+            if not ant or int(ant.get("feito") or 0) == 1: continue
             n_carry += 1
             item = {"acao": ant["acao"], "titulo": ant["titulo"],
                     "justificativa": ant.get("justificativa"), "msg_sugerida": ant.get("msg_sugerida"),
