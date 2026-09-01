@@ -43,10 +43,11 @@ LOC = os.environ.get("GHL_LOCATION", "9o1WOaGvZNxhcdSgqAaG")
 def rget(url, tries=5):
     for a in range(tries):
         try:
-            r = requests.get(url, headers=RH, timeout=60)
+            r = requests.get(url, headers=RH, timeout=40)
             if r.status_code == 200: return r.json()
+            if r.status_code == 429: time.sleep(min(8, 2 * (a + 1))); continue
         except Exception: pass
-        time.sleep(2 * (a + 1))
+        if a < tries - 1: time.sleep(min(6, 1.5 * (a + 1)))
     return None
 
 def norm_phone(t):
@@ -88,12 +89,15 @@ def preparar():
     for u in (ru or {}).get("data", []): nomes_rob[u["id"]] = u.get("nome") or f"id {u['id']}"
 
     # ---- 1. atendimentos ativos (stage 0-4) por corretor ----
+    # Cada atendente é independente → em paralelo (4 workers; Robust tolera esse
+    # nível, mesmo usado nos andamentos). setitem de dict é atômico sob o GIL.
     cli = {}
-    for rid in escopo:
+    erro_atend = []
+    def busca_atend(rid):
         page, pages = 1, None
         while pages is None or page <= pages:
             j = rget(f"{RB}/atendimentos?ativo=true&atendente={rid}&per_page=500&page={page}")
-            if j is None: sys.exit(f"ERRO Robust atendimentos ({rid})")
+            if j is None: erro_atend.append(rid); return
             for r in j["data"]:
                 if r.get("stage") in (0, 1, 2, 3, 4):
                     cli[r["id"]] = {"atendimento_id": r["id"], "cliente_id": r.get("cliente"),
@@ -101,7 +105,10 @@ def preparar():
                         "obs": (r.get("obs") or "")[:600], "criado": r.get("created_at"),
                         "last_update": r.get("last_update"), "robust_atendente": rid,
                         "corretor": nomes_rob.get(rid, str(rid))}
-            pages = j["meta"]["pages"]; page += 1; time.sleep(0.8)
+            pages = j["meta"]["pages"]; page += 1
+            if pages and page <= pages: time.sleep(0.2)
+    with ThreadPoolExecutor(4) as ex: list(ex.map(busca_atend, escopo))
+    if erro_atend: sys.exit(f"ERRO Robust atendimentos ({erro_atend})")
     log(f"ativos 0-4 no escopo: {len(cli)}")
 
     # ---- 2. nome/telefones: cache primeiro, Robust p/ novos ----
@@ -130,7 +137,7 @@ def preparar():
                 cli[aid]["nome"] = cli[aid]["nome"] or p.get("nome")
                 tels = sorted({t for t in (norm_phone(p.get(f"tel_{k}")) for k in (1,2,3)) if t})
                 if tels: cli[aid]["tels"] = tels
-        time.sleep(0.8)
+        if i + 80 < len(ids_p): time.sleep(0.2)
     lids = sorted({cli[a]["lead"] for a in falta_p if not cli[a]["tels"] and cli[a].get("lead")})
     for i in range(0, len(lids), 80):
         j = rget(f"{RB}/leads?per_page=100&ids=" + ",".join(map(str, lids[i:i+80])))
@@ -141,7 +148,7 @@ def preparar():
                 if not cli[aid]["nome"]: cli[aid]["nome"] = l.get("name")
                 t = norm_phone(l.get("phone"))
                 if t and not cli[aid]["tels"]: cli[aid]["tels"] = [t]
-        time.sleep(0.8)
+        if i + 80 < len(lids): time.sleep(0.2)
     log(f"novos resolvidos: {len(falta_p)}")
 
     # ---- 3. GHL em duas frentes rápidas ------------------------------------
