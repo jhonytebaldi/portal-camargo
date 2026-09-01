@@ -75,15 +75,6 @@ if ($corSel && !in_array($corSel, $idsVisiveis, true)) $corSel = 0;
 $planosVer = $corSel ? array_values(array_filter($planos, fn($p) => (int)$p['robust_atendente'] === $corSel)) : $planos;
 
 /* ---- itens dos planos exibidos ---- */
-// Lista de Bloqueio: números bloqueados somem do plano na hora (além de já
-// não entrarem na próxima importação).
-require_once __DIR__ . '/../lib/blocklist.php';
-$BLOCK_PA = blocklist_ativa('plano-acao') ? blocklist_set() : [];
-$paBloq = function ($tels) use ($BLOCK_PA): bool {
-    if (!$BLOCK_PA) return false;
-    foreach (explode(',', (string)$tels) as $t) if (fone_bloqueado(trim($t), $BLOCK_PA)) return true;
-    return false;
-};
 $itensPorPlano = []; $acoesDistintas = [];
 if ($planosVer) {
     $pin = implode(',', array_fill(0, count($planosVer), '?'));
@@ -91,40 +82,98 @@ if ($planosVer) {
                          ORDER BY FIELD(faixa,'vermelho','amarelo','azul','branco'), score DESC, id");
     $st->execute(array_map(fn($p) => (int)$p['id'], $planosVer));
     foreach ($st->fetchAll() as $it) {
-        if ($paBloq($it['telefones'] ?? '')) continue;   // número na lista de bloqueio
         $itensPorPlano[(int)$it['plano_id']][] = $it;
         $acoesDistintas[$it['acao']] = true;
     }
 }
 ksort($acoesDistintas);
 
-/* ---- resumo por corretor (gestor/admin, quando vê mais de um) ---- */
-$resumo = [];
-if (count($planos) > 1 && $dataSel !== '') {
+/* =====================================================================
+   Dashboard de desempenho por corretor — dia selecionado ou período.
+   KPIs por corretor (todos derivados de pa_planos/pa_itens):
+     execucao   = média diária de (feitas / total)             — disciplina
+     prio       = média diária de (🔴🟡 feitas / 🔴🟡 total)    — foco no que importa
+     concluidas = atendimentos com check no período (manual | auto)
+     resp_pend  = clientes esperando resposta ainda pendentes (último dia) — risco
+     enc_feitos = encerramentos executados (limpeza de carteira)
+     carteira / frio% = tamanho e % ⚪ no último dia do período   — saúde
+     horas_check = mediana de horas entre o plano e o check manual — agilidade
+     dias_ativos = dias com ≥1 check manual                       — uso do sistema
+   ===================================================================== */
+$periodoSel = (string)($_GET['periodo'] ?? 'dia');
+if (!in_array($periodoSel, ['dia','7','30','mes'], true)) $periodoSel = 'dia';
+$dash = []; $dashDias = []; $dashIni = $dataSel; $dashFim = $dataSel;
+if ($dataSel !== '' && $idsVisiveis) {
+    if ($periodoSel === '7')   $dashIni = date('Y-m-d', strtotime($dataSel . ' -6 days'));
+    if ($periodoSel === '30')  $dashIni = date('Y-m-d', strtotime($dataSel . ' -29 days'));
+    if ($periodoSel === 'mes') $dashIni = substr($dataSel, 0, 8) . '01';
     $rin = implode(',', array_fill(0, count($idsVisiveis), '?'));
-    // dia selecionado
-    $rq = $pdo->prepare("SELECT p.robust_atendente, p.corretor_nome,
-              COUNT(*) tot, SUM(i.feito) feitas, SUM(i.feito_auto) autos,
-              SUM(i.faixa='vermelho' AND i.feito=0) verm_pend,
-              SUM(i.faixa='amarelo' AND i.feito=0) ama_pend,
-              SUM(i.acao='encerrar' AND i.feito=0) enc_pend
-         FROM pa_planos p JOIN pa_itens i ON i.plano_id = p.id
-        WHERE p.data = ? AND p.robust_atendente IN ($rin)
-        GROUP BY p.robust_atendente, p.corretor_nome");
-    $rq->execute(array_merge([$dataSel], $idsVisiveis));
-    foreach ($rq->fetchAll() as $r) $resumo[(int)$r['robust_atendente']] = $r + ['media7' => null];
-    // média de conclusão dos últimos 7 dias (até a data selecionada)
-    $rq7 = $pdo->prepare("SELECT p.robust_atendente,
-              SUM(i.feito)/COUNT(*) pct
-         FROM pa_planos p JOIN pa_itens i ON i.plano_id = p.id
-        WHERE p.data BETWEEN DATE_SUB(?, INTERVAL 6 DAY) AND ?
-          AND p.robust_atendente IN ($rin)
-        GROUP BY p.robust_atendente");
-    $rq7->execute(array_merge([$dataSel, $dataSel], $idsVisiveis));
-    foreach ($rq7->fetchAll() as $r) {
-        $rid = (int)$r['robust_atendente'];
-        if (isset($resumo[$rid])) $resumo[$rid]['media7'] = (float)$r['pct'];
+    $st = $pdo->prepare("SELECT p.data, p.criado_em, p.robust_atendente, p.corretor_nome,
+                                i.atendimento_id, i.faixa, i.acao, i.feito, i.feito_auto, i.feito_em
+                           FROM pa_planos p JOIN pa_itens i ON i.plano_id = p.id
+                          WHERE p.data BETWEEN ? AND ? AND p.robust_atendente IN ($rin)");
+    $st->execute(array_merge([$dashIni, $dashFim], $idsVisiveis));
+    $porDia = [];   // [rid][data] => agregados do dia
+    $conc = [];     // [rid] => atendimento_id => auto?
+    $encf = [];     // [rid] => set de atendimentos encerrados
+    $horas = [];    // [rid] => lista de horas até check manual
+    $diasAtivos = [];
+    $nomes = [];
+    foreach ($st->fetchAll() as $r) {
+        $rid = (int)$r['robust_atendente']; $d = $r['data'];
+        $nomes[$rid] = $r['corretor_nome'];
+        $dashDias[$d] = true;
+        $a = &$porDia[$rid][$d];
+        if (!$a) $a = ['tot'=>0,'feitas'=>0,'ptot'=>0,'pfeitas'=>0,'resp_pend'=>0,'branco'=>0,'criado'=>$r['criado_em']];
+        $a['tot']++; if ((int)$r['feito']) $a['feitas']++;
+        if (in_array($r['faixa'], ['vermelho','amarelo'], true)) { $a['ptot']++; if ((int)$r['feito']) $a['pfeitas']++; }
+        if ($r['acao'] === 'responder cliente' && !(int)$r['feito']) $a['resp_pend']++;
+        if ($r['faixa'] === 'branco') $a['branco']++;
+        unset($a);
+        if ((int)$r['feito']) {
+            $aid = (int)$r['atendimento_id'];
+            if (!isset($conc[$rid][$aid]) || !(int)$r['feito_auto']) $conc[$rid][$aid] = (int)$r['feito_auto'];
+            if ($r['acao'] === 'encerrar') $encf[$rid][$aid] = true;
+            if (!(int)$r['feito_auto'] && $r['feito_em'] && $r['criado_em']) {
+                $h = (strtotime($r['feito_em']) - strtotime($r['criado_em'])) / 3600;
+                if ($h >= 0 && $h < 24*14) { $horas[$rid][] = $h; $diasAtivos[$rid][substr($r['feito_em'],0,10)] = true; }
+            }
+        }
     }
+    foreach ($porDia as $rid => $dias) {
+        ksort($dias);
+        $ex = []; $pr = []; $ult = end($dias);
+        foreach ($dias as $a) {
+            if ($a['tot']) $ex[] = $a['feitas'] / $a['tot'];
+            if ($a['ptot']) $pr[] = $a['pfeitas'] / $a['ptot'];
+        }
+        $manual = 0; $auto = 0;
+        foreach ($conc[$rid] ?? [] as $isAuto) { if ($isAuto) $auto++; else $manual++; }
+        $hs = $horas[$rid] ?? []; sort($hs);
+        $dash[$rid] = [
+            'nome' => $nomes[$rid], 'dias' => count($dias),
+            'execucao' => $ex ? array_sum($ex)/count($ex) : null,
+            'prio' => $pr ? array_sum($pr)/count($pr) : null,
+            'manual' => $manual, 'auto' => $auto,
+            'resp_pend' => $ult['resp_pend'], 'enc_feitos' => count($encf[$rid] ?? []),
+            'carteira' => $ult['tot'], 'frio' => $ult['tot'] ? $ult['branco']/$ult['tot'] : 0,
+            'horas_check' => $hs ? $hs[intdiv(count($hs), 2)] : null,
+            'dias_ativos' => count($diasAtivos[$rid] ?? []),
+        ];
+    }
+    uasort($dash, fn($a, $b) => ($b['execucao'] ?? -1) <=> ($a['execucao'] ?? -1));
+}
+$dashAtivos = array_filter($dash, fn($k) => ($k['manual'] + $k['auto']) > 0);
+$dashInativos = array_filter($dash, fn($k) => ($k['manual'] + $k['auto']) === 0);
+$eqEx = []; $eqPr = []; $eqConc = 0; $eqResp = 0;
+foreach ($dash as $k) {
+    if ($k['execucao'] !== null) $eqEx[] = $k['execucao'];
+    if ($k['prio'] !== null) $eqPr[] = $k['prio'];
+    $eqConc += $k['manual'] + $k['auto']; $eqResp += $k['resp_pend'];
+}
+function pa_periodo_label(string $p, string $ini, string $fim): string {
+    $f = fn($d) => date('d/m', strtotime($d));
+    return $p === 'dia' ? pa_data_label($fim) : $f($ini) . ' a ' . $f($fim);
 }
 
 /* última atualização (importação) do dia selecionado */
@@ -153,13 +202,33 @@ portal_header('Plano de Ação', $u);
 .btn2{background:#fff;color:var(--moss);border:2px solid var(--moss);border-radius:6px;padding:7px 12px;font:inherit;font-weight:600;font-size:13.5px;cursor:pointer}
 .btn2:hover{background:rgba(47,93,79,.08)}
 .pa-selinfo{font-size:13px;color:var(--mute)}
-.pa-resumo{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:0 0 20px;overflow-x:auto}
-.pa-resumo h2{margin:0 0 10px;font-size:16px}
-.pa-resumo table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px}
-.pa-resumo th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);border-bottom:2px solid var(--line);padding:6px 10px 6px 0}
-.pa-resumo td{border-bottom:1px solid var(--line);padding:7px 10px 7px 0;white-space:nowrap}
-.pa-resumo tr.clicavel{cursor:pointer}
-.pa-resumo tr.clicavel:hover td{background:rgba(47,93,79,.05)}
+.pa-dash{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:0 0 20px}
+.pa-dash-cab{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-bottom:12px}
+.pa-dash h2{margin:0;font-size:17px}
+.pa-dash-sub{font-size:13px;color:var(--mute);margin:8px 0 0}
+.pa-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.pa-tile{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.pa-tile.alerta{border-left:4px solid var(--clay)}
+.pa-tile-l{font-size:12px;color:var(--mute)}
+.pa-tile b{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.pa-tile b.pa-hero{font-size:34px;color:var(--moss)}
+.pa-tile-s{font-size:11.5px;color:var(--mute)}
+.pa-legenda{display:flex;gap:16px;font-size:12.5px;color:var(--mute);margin:4px 0 4px}
+.pa-legenda i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px}
+.pa-chart-wrap{overflow-x:auto}
+.pa-chart{width:100%;max-width:760px;height:auto;display:block;font-family:inherit}
+.pa-chart .pa-ax{font-size:10.5px;fill:var(--mute)}
+.pa-chart .pa-lbl{font-size:12px;fill:var(--ink)}
+.pa-chart .pa-val{font-size:11px;fill:var(--ink);font-variant-numeric:tabular-nums}
+.pa-chart .pa-row{cursor:pointer}
+.pa-chart .pa-row:hover rect{opacity:.8}
+.pa-dash-tbl-wrap{overflow-x:auto;margin-top:12px}
+.pa-dash-tbl{border-collapse:collapse;width:100%;font-size:13.5px;min-width:820px}
+.pa-dash-tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);border-bottom:2px solid var(--line);padding:6px 10px 6px 0;white-space:nowrap}
+.pa-dash-tbl td{border-bottom:1px solid var(--line);padding:7px 10px 7px 0;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pa-dash-tbl tr.clicavel{cursor:pointer}
+.pa-dash-tbl tr.clicavel:hover td{background:rgba(47,93,79,.05)}
+.pa-dash-tbl tr.sem-atividade td{color:var(--mute)}
 .pa-mini-barra{display:inline-block;width:90px;height:7px;background:var(--line);border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:6px}
 .pa-mini-barra i{display:block;height:100%;background:var(--moss)}
 .pa-plano{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:0 0 22px}
@@ -235,6 +304,12 @@ if ($ultimaAtu) {
       <option value="<?= h($ac) ?>"><?= h($ac) ?></option>
     <?php endforeach; ?>
   </select>
+  <select name="periodo" onchange="this.form.submit()">
+    <option value="dia" <?= $periodoSel==='dia'?'selected':'' ?>>Desempenho: dia</option>
+    <option value="7" <?= $periodoSel==='7'?'selected':'' ?>>Desempenho: 7 dias</option>
+    <option value="30" <?= $periodoSel==='30'?'selected':'' ?>>Desempenho: 30 dias</option>
+    <option value="mes" <?= $periodoSel==='mes'?'selected':'' ?>>Desempenho: mês</option>
+  </select>
   <select id="f-status">
     <option value="">Feitas e pendentes</option>
     <option value="pend">Só pendentes</option>
@@ -249,24 +324,66 @@ if ($ultimaAtu) {
   <span class="pa-selinfo" id="sel-info"></span>
 </div>
 
-<?php if ($resumo && !$corSel): ?>
-<section class="pa-resumo">
-  <h2>Resumo da equipe — <?= h(pa_data_label($dataSel)) ?></h2>
-  <table>
-    <tr><th>Corretor</th><th>Progresso</th><th>Feitas</th><th>🔴 pend.</th><th>🟡 pend.</th><th>Encerrar sug.</th><th>Média 7 dias</th></tr>
-    <?php foreach ($planos as $p): $r = $resumo[(int)$p['robust_atendente']] ?? null; if (!$r) continue;
-        $tot=(int)$r['tot']; $ft=(int)$r['feitas']; $pct=$tot?round(100*$ft/$tot):0; ?>
-    <tr class="clicavel" data-corretor="<?= (int)$p['robust_atendente'] ?>">
-      <td><?= h($r['corretor_nome']) ?></td>
-      <td><span class="pa-mini-barra"><i style="width:<?= $pct ?>%"></i></span><?= $pct ?>%</td>
-      <td><?= $ft ?>/<?= $tot ?><?= (int)$r['autos'] ? ' <span class="pa-badge auto">' . (int)$r['autos'] . ' auto</span>' : '' ?></td>
-      <td><?= (int)$r['verm_pend'] ?: '—' ?></td>
-      <td><?= (int)$r['ama_pend'] ?: '—' ?></td>
-      <td><?= (int)$r['enc_pend'] ?: '—' ?></td>
-      <td><?= $r['media7'] !== null ? round(100*(float)$r['media7']) . '%' : '—' ?></td>
+<?php if ($dash): ?>
+<section class="pa-dash">
+  <div class="pa-dash-cab">
+    <h2>Desempenho — <?= h(pa_periodo_label($periodoSel, $dashIni, $dashFim)) ?></h2>
+    <span class="pa-dash-sub"><?= count($dashDias) ?> dia(s) com plano · <?= count($dashAtivos) ?> corretor(es) com atividade</span>
+  </div>
+  <div class="pa-tiles">
+    <div class="pa-tile"><span class="pa-tile-l">Execução média da equipe</span><b class="pa-hero"><?= $eqEx ? round(100*array_sum($eqEx)/count($eqEx)) : 0 ?>%</b><span class="pa-tile-s">tarefas do plano concluídas</span></div>
+    <div class="pa-tile"><span class="pa-tile-l">Prioridades atendidas</span><b><?= $eqPr ? round(100*array_sum($eqPr)/count($eqPr)) : 0 ?>%</b><span class="pa-tile-s">🔴🟡 concluídas</span></div>
+    <div class="pa-tile"><span class="pa-tile-l">Tarefas concluídas</span><b><?= $eqConc ?></b><span class="pa-tile-s">clientes trabalhados no período</span></div>
+    <div class="pa-tile <?= $eqResp ? 'alerta' : '' ?>"><span class="pa-tile-l">Esperando resposta</span><b><?= $eqResp ?></b><span class="pa-tile-s">clientes ainda sem retorno</span></div>
+  </div>
+
+  <?php if ($dashAtivos):
+    $n = count($dashAtivos); $rowH = 34; $left = 170; $w = 760; $plotW = $w - $left - 70; $hgt = 30 + $n * $rowH + 8; ?>
+  <div class="pa-legenda"><span><i style="background:#159463"></i>Execução geral</span><span><i style="background:#c86a2c"></i>Prioridades 🔴🟡</span></div>
+  <div class="pa-chart-wrap">
+  <svg class="pa-chart" viewBox="0 0 <?= $w ?> <?= $hgt ?>" role="img" aria-label="Execução por corretor">
+    <?php for ($g = 0; $g <= 100; $g += 25): $x = $left + $plotW * $g / 100; ?>
+      <line x1="<?= $x ?>" y1="22" x2="<?= $x ?>" y2="<?= $hgt - 8 ?>" stroke="var(--line)" stroke-width="1"/>
+      <text x="<?= $x ?>" y="14" text-anchor="middle" class="pa-ax"><?= $g ?>%</text>
+    <?php endfor; ?>
+    <?php $y = 30; foreach ($dashAtivos as $rid => $k):
+        $ex = round(100 * ($k['execucao'] ?? 0)); $pr = $k['prio'] === null ? null : round(100 * $k['prio']);
+        $bx = max(4, $plotW * $ex / 100); $bp = $pr === null ? 0 : max(4, $plotW * $pr / 100);
+        $nome = mb_strimwidth($k['nome'], 0, 22, '…'); ?>
+      <g class="pa-row" data-corretor="<?= (int)$rid ?>">
+        <title><?= h($k['nome']) ?> — execução <?= $ex ?>% · prioridades <?= $pr === null ? '—' : $pr . '%' ?> · <?= $k['manual'] + $k['auto'] ?> concluídas</title>
+        <text x="<?= $left - 10 ?>" y="<?= $y + 15 ?>" text-anchor="end" class="pa-lbl"><?= h($nome) ?></text>
+        <rect x="<?= $left ?>" y="<?= $y ?>" width="<?= $bx ?>" height="12" rx="0" fill="#159463"/>
+        <rect x="<?= $left + $bx - 4 ?>" y="<?= $y ?>" width="4" height="12" rx="3" fill="#159463"/>
+        <text x="<?= $left + $bx + 6 ?>" y="<?= $y + 10 ?>" class="pa-val"><?= $ex ?>%</text>
+        <?php if ($pr !== null): ?>
+        <rect x="<?= $left ?>" y="<?= $y + 14 ?>" width="<?= $bp ?>" height="12" fill="#c86a2c"/>
+        <rect x="<?= $left + $bp - 4 ?>" y="<?= $y + 14 ?>" width="4" height="12" rx="3" fill="#c86a2c"/>
+        <?php endif; ?>
+      </g>
+    <?php $y += $rowH; endforeach; ?>
+  </svg>
+  </div>
+  <?php endif; ?>
+
+  <div class="pa-dash-tbl-wrap"><table class="pa-dash-tbl">
+    <tr><th>Corretor</th><th>Execução</th><th>Prioridades</th><th>Concluídas</th><th>Esperando resp.</th><th>Encerrados</th><th>Carteira</th><th>% frio</th><th>Horas até o check</th><th>Dias ativos</th></tr>
+    <?php foreach ($dash as $rid => $k): ?>
+    <tr class="clicavel <?= ($k['manual']+$k['auto']) ? '' : 'sem-atividade' ?>" data-corretor="<?= (int)$rid ?>">
+      <td><?= h($k['nome']) ?></td>
+      <td><?= $k['execucao'] === null ? '—' : round(100*$k['execucao']) . '%' ?></td>
+      <td><?= $k['prio'] === null ? '—' : round(100*$k['prio']) . '%' ?></td>
+      <td><?= $k['manual'] + $k['auto'] ?><?= $k['auto'] ? ' <span class="pa-badge auto">' . $k['auto'] . ' auto</span>' : '' ?></td>
+      <td><?= $k['resp_pend'] ?: '—' ?></td>
+      <td><?= $k['enc_feitos'] ?: '—' ?></td>
+      <td><?= $k['carteira'] ?></td>
+      <td><?= round(100*$k['frio']) ?>%</td>
+      <td><?= $k['horas_check'] === null ? '—' : ($k['horas_check'] < 1 ? '<1h' : round($k['horas_check']) . 'h') ?></td>
+      <td><?= $k['dias_ativos'] ?>/<?= $k['dias'] ?></td>
     </tr>
     <?php endforeach; ?>
-  </table>
+  </table></div>
+  <?php if ($dashInativos): ?><p class="pa-dash-sub">Sem atividade no período: <?= h(implode(', ', array_map(fn($k) => explode(' ', $k['nome'])[0], $dashInativos))) ?>.</p><?php endif; ?>
 </section>
 <?php endif; ?>
 
@@ -402,7 +519,7 @@ document.getElementById('b-copiar-cod')?.addEventListener('click', async () => {
 });
 
 /* ---------- resumo: clique filtra o corretor ---------- */
-document.querySelectorAll('.pa-resumo tr.clicavel').forEach(tr => {
+document.querySelectorAll('.pa-dash-tbl tr.clicavel, .pa-chart .pa-row').forEach(tr => {
   tr.addEventListener('click', () => {
     const f = document.getElementById('pa-form');
     const sel = f.querySelector('select[name=corretor]');
