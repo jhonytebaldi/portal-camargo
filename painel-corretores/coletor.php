@@ -154,16 +154,14 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $isBackfill = ($mode === 'month' && $monthArg && $monthArg !== $now->format('Y-m'));
     // 'fila' compartilha a trava do mês corrente com a coleta pesada para não
     // gravarem os mesmos arquivos ao mesmo tempo.
+    // Não-bloqueante: se já há uma coleta rodando (pesada OU fila), esta sai e
+    // deixa a outra terminar — quem estiver rodando já produz dados frescos.
+    // Assim nenhuma coleta espera nem sobrescreve a outra (a fila roda espaçada,
+    // colisão é rara; a gravação dos arquivos é atômica de qualquer forma).
     $lockF = fopen($dir . '/' . ($isBackfill ? 'coletor_backfill.lock' : 'coletor.lock'), 'c');
-    if ($lockF) {
-        if ($mode === 'fila') {
-            // Se a coleta pesada está rodando, ela já produz fila fresca → só pula.
-            if (!flock($lockF, LOCK_EX | LOCK_NB)) { painel_log('fila: coleta principal em andamento, pulando.'); fclose($lockF); return; }
-        } else {
-            // Coleta pesada: BLOQUEANTE, para nunca ser "pulada" por um tick da
-            // fila (espera o tick de ~15-20s terminar antes de assumir a trava).
-            if (!flock($lockF, LOCK_EX)) { painel_log('não obteve a trava. Saindo.'); fclose($lockF); return; }
-        }
+    if ($lockF && !flock($lockF, LOCK_EX | LOCK_NB)) {
+        painel_log(($mode === 'fila' ? 'fila: ' : '') . 'outra coleta em andamento. Saindo.');
+        fclose($lockF); return;
     }
 
     /* ---- Período (mês) ---- */
@@ -209,8 +207,13 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $winStartD  = $winStart->format('Y-m-d');
     $winStartMs = $winStart->getTimestamp() * 1000;
 
-    status_write(['state' => 'running', 'mode' => ($incremental ? 'incremental' : 'full') . ($mode==='month'?" · {$monthKey}":''),
-        'started' => $now->format('d/m H:i'), 'since_win' => $winStartD]);
+    // O modo 'fila' NÃO mexe no status.json: a "última coleta" mostrada no painel
+    // deve continuar sendo a da coleta pesada (senão o delta deixa o status preso
+    // em "running", já que ele não escreve o 'done' do fim).
+    if ($mode !== 'fila') {
+        status_write(['state' => 'running', 'mode' => ($incremental ? 'incremental' : 'full') . ($mode==='month'?" · {$monthKey}":''),
+            'started' => $now->format('d/m H:i'), 'since_win' => $winStartD]);
+    }
     painel_log(sprintf('mês=%s modo=%s janela=%s..%s', $monthKey, $incremental ? 'incremental' : 'full', $winStartD, $todayD));
 
     /* ---- Corretores (com desligamento) ---- */
