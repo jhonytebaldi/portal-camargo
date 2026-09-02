@@ -731,16 +731,23 @@ window.addEventListener('beforeunload',saveState);
    com um campo em foco ou lendo uma conversa expandida — e reinicia a contagem
    a cada clique/tecla/rolagem, então nunca recarrega no meio de uma ação. */
 (function(){
-  const MS=60000; let tmr;
+  const MS=60000; let tmr; const loadedAt=Date.now();
   function busy(){
     const a=document.activeElement;
     if(a&&(a.id==='filaSearch'||a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA'))return true;
     if(document.querySelector('tr.filarow.on'))return true;   // conversa expandida
     return false;
   }
-  function go(){ if(document.hidden||busy()){arm();return;} saveState(); location.reload(); }
+  function reload(){ saveState(); location.reload(); }
+  function go(){ if(document.hidden||busy()){arm();return;} reload(); }   // não recarrega aba oculta
   function arm(){ clearTimeout(tmr); tmr=setTimeout(go,MS); }
   arm();
+  // Ao trazer a aba de volta ao primeiro plano, se já passou do intervalo,
+  // atualiza NA HORA — assim, quando você olha o painel, ele já está fresco
+  // (em vez de esperar o próximo ciclo de 60s).
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden && !busy() && Date.now()-loadedAt>=MS) reload();
+  });
   ['mousedown','keydown','touchstart','wheel'].forEach(ev=>
     document.addEventListener(ev,arm,{capture:true,passive:true}));
 })();
