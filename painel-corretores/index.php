@@ -228,7 +228,10 @@ tr.off td{color:#6f7684}
 <?php if ($rodando): ?>
   <div class="updbar run">🔄 <b>Atualizando os dados agora…</b> começou às <?= h($st['started'] ?? '') ?>. Esta página se atualiza sozinha quando terminar.</div>
 <?php elseif (is_array($st) && ($st['state'] ?? '') === 'done'): ?>
-  <div class="updbar"><span>Dados atualizados <?= isset($st['finished']) ? 'às ' . h($st['finished']) : '' ?>.<?php if($isAdmin): ?> <a href="/painel-corretores/coletor.php">Atualizar agora</a>.<?php endif; ?></span></div>
+  <div class="updbar"><span>Dados gerais atualizados <?= isset($st['finished']) ? 'às ' . h($st['finished']) : '' ?> <span class="mut">(a cada hora)</span><?php
+      $lg = ($ehMesCorrente && !empty($agg['live']['generated'])) ? (string)$agg['live']['generated'] : '';
+      if ($lg) echo ' · <b>fila e aguardando</b> às ' . h(substr($lg, -5)) . ' <span class="mut">(a cada 5 min)</span>';
+  ?>.<?php if($isAdmin): ?> <a href="/painel-corretores/coletor.php">Atualizar agora</a>.<?php endif; ?></span></div>
 <?php endif; ?>
 
 <?php if ($semDados): ?>
@@ -692,6 +695,53 @@ bsel.onchange=()=>{state.broker=bsel.value;render();};
 fsel.onchange=()=>{state.from=fsel.value;render();};
 tsel.onchange=()=>{state.to=tsel.value;render();};
 document.querySelectorAll('#presets button').forEach(bt=>bt.onclick=()=>setPreset(bt.dataset.p));
+/* ===== estado persistido + auto-atualização (sem precisar de F5) ===== */
+const SS_KEY='painelCorretores:'+<?= json_encode($selMonth) ?>;
+function saveState(){try{sessionStorage.setItem(SS_KEY,JSON.stringify({
+  broker:state.broker,from:state.from,to:state.to,sortKey:state.sortKey,sortDir:state.sortDir,
+  tab:state.tab,filaSort:state.filaSort,filaDir:state.filaDir,filaQ:state.filaQ||'',filaResp:state.filaResp||'',
+  y:Math.round(window.scrollY)}));}catch(e){}}
+function loadState(){try{const s=JSON.parse(sessionStorage.getItem(SS_KEY)||'null');if(!s)return null;
+  const keys=new Set(AD.map(d=>d.key));
+  if(!keys.has(s.from))s.from=AD[0].key;
+  if(!keys.has(s.to))s.to=AD[AD.length-1].key;
+  if(s.broker!=='__all__'&&!byId[s.broker])s.broker='__all__';
+  if(s.tab==='fila'&&!(EH_MES_CORRENTE&&AGUARDANDO))s.tab='geral';
+  return s;}catch(e){return null;}}
+
+const _s=loadState();
+if(_s)Object.assign(state,_s);
 buildTabs();
-setPreset('all');
+if(_s){
+  bsel.value=state.broker; fsel.value=state.from; tsel.value=state.to;
+  const full=(state.from===AD[0].key&&state.to===AD[AD.length-1].key);
+  [...document.querySelectorAll('#presets button')].forEach(x=>x.classList.toggle('on',full&&x.dataset.p==='all'));
+  render();
+  window.scrollTo(0,_s.y||0);
+}else{
+  setPreset('all');
+}
+
+/* salva o estado periodicamente e antes de sair (cobre qualquer interação) */
+setInterval(saveState,2000);
+window.addEventListener('beforeunload',saveState);
+
+/* auto-reload: recarrega sozinho pra puxar a coleta nova (fila a cada 5 min,
+   geral a cada hora). Adia enquanto você está mexendo — digitando no filtro,
+   com um campo em foco ou lendo uma conversa expandida — e reinicia a contagem
+   a cada clique/tecla/rolagem, então nunca recarrega no meio de uma ação. */
+(function(){
+  const MS=60000; let tmr;
+  function busy(){
+    const a=document.activeElement;
+    if(a&&(a.id==='filaSearch'||a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA'))return true;
+    if(document.querySelector('tr.filarow.on'))return true;   // conversa expandida
+    return false;
+  }
+  function go(){ if(document.hidden||busy()){arm();return;} saveState(); location.reload(); }
+  function arm(){ clearTimeout(tmr); tmr=setTimeout(go,MS); }
+  arm();
+  ['mousedown','keydown','touchstart','wheel'].forEach(ev=>
+    document.addEventListener(ev,arm,{capture:true,passive:true}));
+})();
 </script></body></html>
