@@ -31,6 +31,25 @@ $file = $months[$selMonth] ?? ($dir . '/presenca_agg.json');
 $agg  = is_readable($file) ? json_decode((string)file_get_contents($file), true) : null;
 $ehMesCorrente = ($selMonth === $curMonthKey);
 
+/* No mês corrente, o retrato de "aguardando" vem do painel_live.json, que o
+   delta leve da fila atualiza a cada poucos minutos (bem mais fresco que a
+   coleta pesada horária embutida no agregado). Cai no agg['live'] se faltar. */
+if ($ehMesCorrente && is_array($agg)) {
+    $lf = $dir . '/painel_live.json';
+    if (is_readable($lf)) {
+        $lv = json_decode((string)file_get_contents($lf), true);
+        if (is_array($lv) && isset($lv['unread_client'])) {
+            $agg['live'] = [
+                'generated'       => $lv['generated'] ?? ($agg['live']['generated'] ?? ''),
+                'unread_client'   => $lv['unread_client'] ?? [],
+                'unread_followup' => $lv['unread_followup'] ?? [],
+                'wait24'          => $lv['wait24'] ?? [],
+                'series'          => $lv['series'] ?? ($agg['live']['series'] ?? []),
+            ];
+        }
+    }
+}
+
 /* Filtra corretores pelo escopo do usuário. */
 $semDados = false;
 if (is_array($agg) && isset($agg['brokers'])) {

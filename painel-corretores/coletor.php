@@ -129,8 +129,19 @@ function ghl_get(string $url, array $hdr, int $tries = 4): ?array {
 }
 function parse_ms(string $s): int { $t = strtotime($s); return $t ? $t * 1000 : 0; }
 
+/* Escrita atômica (temp + rename): o modo 'fila' (a cada poucos min) e a coleta
+   pesada podem gravar os mesmos arquivos de fila; rename evita arquivo pela metade. */
+function atomic_put(string $path, string $data): bool {
+    $tmp = $path . '.tmp.' . getmypid();
+    if (@file_put_contents($tmp, $data) === false) return false;
+    if (!@rename($tmp, $path)) { @unlink($tmp); return false; }
+    return true;
+}
+
 /* =====================================================================
-   Coleta principal. $mode: 'incremental' | 'full' | 'month'
+   Coleta principal. $mode: 'incremental' | 'full' | 'month' | 'fila'
+   'fila' = delta leve: só a busca de conversas + a fila de quem aguarda
+   (painel_live.json + aguardando.json), sem reprocessar o agregado pesado.
    ===================================================================== */
 function run_collection(string $mode, ?string $monthArg = null): void {
     portal_load_config();
@@ -141,8 +152,19 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     // Backfill de mês passado usa uma trava PRÓPRIA, para não bloquear a coleta
     // do mês corrente (cron de hora em hora) enquanto roda.
     $isBackfill = ($mode === 'month' && $monthArg && $monthArg !== $now->format('Y-m'));
+    // 'fila' compartilha a trava do mês corrente com a coleta pesada para não
+    // gravarem os mesmos arquivos ao mesmo tempo.
     $lockF = fopen($dir . '/' . ($isBackfill ? 'coletor_backfill.lock' : 'coletor.lock'), 'c');
-    if ($lockF && !flock($lockF, LOCK_EX | LOCK_NB)) { painel_log('Outra coleta em andamento. Saindo.'); return; }
+    if ($lockF) {
+        if ($mode === 'fila') {
+            // Se a coleta pesada está rodando, ela já produz fila fresca → só pula.
+            if (!flock($lockF, LOCK_EX | LOCK_NB)) { painel_log('fila: coleta principal em andamento, pulando.'); fclose($lockF); return; }
+        } else {
+            // Coleta pesada: BLOQUEANTE, para nunca ser "pulada" por um tick da
+            // fila (espera o tick de ~15-20s terminar antes de assumir a trava).
+            if (!flock($lockF, LOCK_EX)) { painel_log('não obteve a trava. Saindo.'); fclose($lockF); return; }
+        }
+    }
 
     /* ---- Período (mês) ---- */
     if ($mode === 'month' && $monthArg && preg_match('/^\d{4}-\d{2}$/', $monthArg)) {
@@ -272,7 +294,10 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     $convIds = array_values(array_unique($convIds));
     painel_log('conversas na janela: ' . count($convIds) . ' · clientes aguardando: ' . array_sum($unread_client) . ' · follow-up: ' . array_sum($unread_followup) . ($BLOCK ? " · bloqueadas: $nBloq" : ''));
 
-    /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa ===== */
+    /* ===== 2) Mensagens por conversa (pool) — acumula e processa a conversa =====
+       Parte PESADA (reprocessa ~todas as conversas ativas da janela). Pulada no
+       modo 'fila' — que só precisa do retrato de quem aguarda (passo 1 + 2.5). */
+    if ($mode !== 'fila') {
     $acc = [];   // acc[uid][YYYY-MM-DD] = registro-dia
     // 'rt' = lista de tempos de resposta do dia (segundos comerciais decorridos);
     // guardar a lista crua permite mediana E percentil (P85) exatos no painel.
@@ -440,6 +465,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     } while ($running || $state || $queue);
     curl_multi_close($mh);
     painel_log("conversas processadas: {$total}");
+    } // fim do bloco pesado (pulado no modo 'fila')
 
     /* ===== 2.5) Fila de atendimento: conteúdo da última msg de quem aguarda ===== */
     if ($ehMesCorrente && $waitList) {
@@ -532,8 +558,29 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         $agJson = json_encode(
             ['generated'=>$now->format('d/m/Y H:i'), 'gen_ms'=>$now->getTimestamp()*1000, 'items'=>$aguardando],
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
-        @file_put_contents($dir.'/aguardando.json', (string)$agJson);
+        atomic_put($dir.'/aguardando.json', (string)$agJson);
         painel_log('fila de atendimento: '.count($aguardando).' clientes aguardando');
+    }
+
+    /* ===== fila (delta leve): grava retrato ao vivo + fila e retorna, sem tocar
+       no agregado pesado. Se ninguém aguarda, grava fila vazia (para "limpar"). */
+    if ($mode === 'fila') {
+        if (!$waitList) {
+            atomic_put($dir.'/aguardando.json', (string)json_encode(
+                ['generated'=>$now->format('d/m/Y H:i'),'gen_ms'=>$now->getTimestamp()*1000,'items'=>[]],
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        }
+        $liveFile = $dir . '/painel_live.json';
+        $prev = is_readable($liveFile) ? (json_decode((string)file_get_contents($liveFile), true) ?: []) : [];
+        $live = ['generated'=>$now->format('d/m/Y H:i'),'unread_client'=>$unread_client,
+                 'unread_followup'=>$unread_followup,'wait24'=>$wait24,'series'=>($prev['series'] ?? [])];
+        atomic_put($liveFile, (string)json_encode($live,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
+        // NÃO escreve status.json: a "última coleta" continua sendo a pesada.
+        painel_log('fila (delta) OK — '.count($unread_client).' corretor(es) com aguardando · '
+                   .array_sum($unread_client).' cliente(s) · '.$pages.' págs de busca');
+        if ($lockF) { flock($lockF, LOCK_UN); fclose($lockF); }
+        return;
     }
 
     /* ===== 3) Converte janela + funde com dias congelados ===== */
@@ -585,7 +632,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
         }));
         $live = ['generated'=>$now->format('d/m/Y H:i'),'unread_client'=>$unread_client,
                  'unread_followup'=>$unread_followup,'wait24'=>$wait24,'series'=>$series];
-        @file_put_contents($liveFile, json_encode($live, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
+        atomic_put($liveFile, (string)json_encode($live, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
     }
 
     $agg = ['period'=>['start'=>$mStart->getTimestamp()*1000,'end'=>$END,
@@ -642,6 +689,7 @@ if (PHP_SAPI === 'cli') {
     foreach ($args as $a) {
         if ($a === '--full') $mode='full';
         elseif ($a === '--incr') $mode='incremental';
+        elseif ($a === '--fila') $mode='fila';   // delta leve da fila (cron a cada 2 min)
         elseif (preg_match('/^\d{4}-\d{2}$/', $a)) { $mode='month'; $monthArg=$a; }
     }
     run_collection($mode, $monthArg);
@@ -658,6 +706,20 @@ $log = painel_data_dir() . '/coletor.log';
 // Recoleta COMPLETA do mês corrente (recomputa todos os dias, ignorando o
 // cache) — usar quando muda o formato dos dados coletados (ex.: passou a
 // contar mensagens recebidas por dia). ?full=1
+// Delta leve da fila (só o retrato de quem aguarda) — ?fila=1. Não mexe no
+// agregado pesado. Serve para testar manualmente; o cron usa a CLI (--fila).
+if (($_GET['fila'] ?? '') === '1') {
+    $spawned = spawn_background($log, '--fila');
+    if (!$spawned) {
+        if (function_exists('litespeed_finish_request')) litespeed_finish_request();
+        elseif (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+        @set_time_limit(0); @ignore_user_abort(true);
+        run_collection('fila');
+    }
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'fila: delta disparado' . ($spawned ? ' (segundo plano)' : ' (inline)');
+    exit;
+}
 if (($_GET['full'] ?? '') === '1') {
     status_write(['state'=>'running','mode'=>'full','started'=>(new DateTime('now',new DateTimeZone('-03:00')))->format('d/m H:i')]);
     $spawned = spawn_background($log, '--full');
