@@ -732,12 +732,17 @@ if(_s)Object.assign(state,_s);
 buildTabs();
 if(_s){
   bsel.value=state.broker; fsel.value=state.from; tsel.value=state.to;
-  const full=(state.from===AD[0].key&&state.to===AD[AD.length-1].key);
-  [...document.querySelectorAll('#presets button')].forEach(x=>x.classList.toggle('on',full&&x.dataset.p==='all'));
+  // destaca o preset que corresponde ao período restaurado (mês todo / hoje / ontem)
+  const first=AD[0].key, last=AD[AD.length-1].key, yk=AD.length>=2?AD[AD.length-2].key:null;
+  let p=null;
+  if(state.from===first&&state.to===last)p='all';
+  else if(state.from===last&&state.to===last)p='today';
+  else if(yk&&state.from===yk&&state.to===yk)p='yest';
+  [...document.querySelectorAll('#presets button')].forEach(x=>x.classList.toggle('on',x.dataset.p===p));
   render();
   window.scrollTo(0,_s.y||0);
 }else{
-  setPreset('all');
+  setPreset('today');   // padrão ao abrir: HOJE
 }
 
 /* salva o estado periodicamente e antes de sair (cobre qualquer interação) */
