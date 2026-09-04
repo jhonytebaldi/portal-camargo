@@ -272,6 +272,24 @@ tr.off td{color:#6f7684}
 <div class="foot" id="genlbl"></div>
 </div>
 <script>
+/* Watchdog: se a inicialização não terminar (resposta cortada durante uma
+   coleta, erro de JS, etc.), a tela ficaria só com os controles e sem dados.
+   Este script — separado e entregue ANTES dos dados — recarrega sozinho se em
+   5s a página não sinalizar que renderizou. Limite de 3 tentativas evita loop
+   (uma carga boa zera o contador). */
+(function(){try{
+  var K='painelInitRetry';
+  window.__painelReady=function(){window.__painelOK=1;try{sessionStorage.removeItem(K);}catch(e){}};
+  setTimeout(function(){
+    if(window.__painelOK)return;
+    var n=0;try{n=parseInt(sessionStorage.getItem(K)||'0',10)||0;}catch(e){}
+    if(n>=3)return;
+    try{sessionStorage.setItem(K,String(n+1));}catch(e){}
+    location.reload();
+  },5000);
+}catch(e){}})();
+</script>
+<script>
 const D=<?= json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const EH_MES_CORRENTE=<?= $ehMesCorrente ? 'true':'false' ?>;
 const AGUARDANDO=<?= json_encode($aguardando ?: null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
@@ -751,4 +769,5 @@ window.addEventListener('beforeunload',saveState);
   ['mousedown','keydown','touchstart','wheel'].forEach(ev=>
     document.addEventListener(ev,arm,{capture:true,passive:true}));
 })();
+if(window.__painelReady)window.__painelReady();   // inicialização completa → desarma o watchdog
 </script></body></html>

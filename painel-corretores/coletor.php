@@ -605,7 +605,7 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     }
     foreach ($winDays as $bid=>$days) foreach ($days as $day=>$rec) $final[$bid][$day]=$rec;
 
-    @file_put_contents($cacheFile, json_encode(
+    atomic_put($cacheFile, (string)json_encode(
         ['month'=>$monthKey,'last_run_date'=>$todayD,'days'=>$final],
         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
@@ -643,12 +643,15 @@ function run_collection(string $mode, ?string $monthArg = null): void {
                 'month'=>$monthKey,'generated'=>$now->format('d/m/Y H:i')],
             'brokers'=>$out,'alldays'=>$alldays,'live'=>$live];
     $json = json_encode($agg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (@file_put_contents($aggFile, $json) === false) {
+    // Escrita ATÔMICA (temp+rename): o painel lê este arquivo a cada carregamento
+    // (inclusive na auto-atualização); sem rename, um load no meio da gravação
+    // pegava o arquivo pela metade e a tela vinha sem dados.
+    if (!atomic_put($aggFile, (string)$json)) {
         painel_log('ERRO ao gravar '.$aggFile); status_write(['state'=>'error','msg'=>'falha ao gravar']);
         if($lockF){flock($lockF,LOCK_UN);fclose($lockF);} return;
     }
-    /* compat: mantém presenca_agg.json apontando para o mês corrente */
-    if ($ehMesCorrente) @copy($aggFile, $dir.'/presenca_agg.json');
+    /* compat: mantém presenca_agg.json apontando para o mês corrente (atômico) */
+    if ($ehMesCorrente) atomic_put($dir.'/presenca_agg.json', (string)$json);
 
     $fim = new DateTime('now', $TZ);
     status_write(['state'=>'done','mode'=>($incremental?'incremental':'full').($mode==='month'?" · {$monthKey}":''),
