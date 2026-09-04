@@ -729,10 +729,12 @@ function loadState(){try{const s=JSON.parse(sessionStorage.getItem(SS_KEY)||'nul
 
 const _s=loadState();
 if(_s)Object.assign(state,_s);
+// ABRIR (navegação nova) → período padrão HOJE. RECARREGAR (auto-atualização
+// de 60s, watchdog ou F5) → preserva o período/rolagem que estava na tela.
+const _isReload=((performance.getEntriesByType('navigation')[0]||{}).type)==='reload';
 buildTabs();
-if(_s){
+if(_s && _isReload){
   bsel.value=state.broker; fsel.value=state.from; tsel.value=state.to;
-  // destaca o preset que corresponde ao período restaurado (mês todo / hoje / ontem)
   const first=AD[0].key, last=AD[AD.length-1].key, yk=AD.length>=2?AD[AD.length-2].key:null;
   let p=null;
   if(state.from===first&&state.to===last)p='all';
@@ -742,7 +744,8 @@ if(_s){
   render();
   window.scrollTo(0,_s.y||0);
 }else{
-  setPreset('today');   // padrão ao abrir: HOJE
+  if(_s)bsel.value=state.broker;   // mantém corretor/aba restaurados, mas...
+  setPreset('today');              // ...período padrão ao abrir = HOJE
 }
 
 /* salva o estado periodicamente e antes de sair (cobre qualquer interação) */
