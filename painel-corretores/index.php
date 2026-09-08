@@ -278,6 +278,10 @@ tr.off td{color:#6f7684}
    5s a página não sinalizar que renderizou. Limite de 3 tentativas evita loop
    (uma carga boa zera o contador). */
 (function(){try{
+  // Nós mesmos restauramos a rolagem no reload; sem 'manual', o navegador
+  // restaura sozinho para o topo (o conteúdo é montado por JS depois) e briga
+  // com o nosso scrollTo.
+  try{history.scrollRestoration='manual';}catch(e){}
   var K='painelInitRetry';
   window.__painelReady=function(){window.__painelOK=1;try{sessionStorage.removeItem(K);}catch(e){}};
   setTimeout(function(){
@@ -742,7 +746,12 @@ if(_s && _isReload){
   else if(yk&&state.from===yk&&state.to===yk)p='yest';
   [...document.querySelectorAll('#presets button')].forEach(x=>x.classList.toggle('on',x.dataset.p===p));
   render();
-  window.scrollTo(0,_s.y||0);
+  // Restaura a rolagem — repete em alguns frames/ms porque a altura do
+  // conteúdo (tabela) só assenta após o layout, e um scrollTo cedo demais
+  // seria "cortado" pela altura ainda menor.
+  const _ty=_s.y||0;
+  if(_ty>0){ const _sc=()=>window.scrollTo(0,_ty); _sc();
+    requestAnimationFrame(()=>{_sc();requestAnimationFrame(_sc);}); setTimeout(_sc,120); setTimeout(_sc,350); }
 }else{
   if(_s)bsel.value=state.broker;   // mantém corretor/aba restaurados, mas...
   setPreset('today');              // ...período padrão ao abrir = HOJE
