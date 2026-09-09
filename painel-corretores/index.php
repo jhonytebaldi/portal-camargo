@@ -266,6 +266,11 @@ tr.off td{color:#6f7684}
   </span>
   <label class="tag">De</label><select id="from"></select>
   <label class="tag">até</label><select id="to"></select>
+  <label class="tag" title="Como calcular o tempo de resposta exibido: média simples de todas as respostas, ou mediana (valor típico, menos afetado por casos extremos).">Resposta</label>
+  <span class="presets" id="rtmode">
+    <button data-m="mean" title="Média simples de todos os tempos de resposta.">Média</button>
+    <button data-m="med" title="Mediana: o valor do meio — menos puxado por respostas muito lentas.">Mediana</button>
+  </span>
 </div>
 
 <div id="view"></div>
@@ -322,7 +327,11 @@ AD.forEach(d=>{const t=d.label+" "+d.wd;
   let o1=document.createElement('option');o1.value=d.key;o1.textContent=t;fsel.appendChild(o1);
   let o2=document.createElement('option');o2.value=d.key;o2.textContent=t;tsel.appendChild(o2);});
 let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1,
-           tab:'geral',filaSort:'wait',filaDir:-1};
+           tab:'geral',filaSort:'wait',filaDir:-1,rtMode:'mean'};   // rtMode: 'mean' (padrão) | 'med'
+// Valor de "tempo de resposta" conforme o seletor: média simples ou mediana.
+const rtVal=s=>state.rtMode==='mean'?s.rtMean:s.rtMed;
+const rtWord=()=>state.rtMode==='mean'?'média':'mediana';
+function markRtMode(){[...document.querySelectorAll('#rtmode button')].forEach(x=>x.classList.toggle('on',x.dataset.m===state.rtMode));}
 
 // Metas de tempo de resposta (nível de serviço), em segundos comerciais.
 const SLA1=600, SLA2=1800;   // metas: 10 min e 30 min (em segundos comerciais)
@@ -464,7 +473,7 @@ const SORTS=[
 function sortVal(r,k){
   if(k==='msgs')return r.s.n;
   if(k==='conversas')return r.s.conversas;
-  if(k==='resp')return r.s.rtMed==null?-1:r.s.rtMed;
+  if(k==='resp'){const v=rtVal(r.s);return v==null?-1:v;}
   if(k==='unread')return unreadClient(r.b)||0;
   if(k==='fup')return unreadFup(r.b)||0;
   if(k==='dias')return r.s.activeP;
@@ -485,7 +494,7 @@ const TT={
   fup:'FOLLOW-UPS PENDENTES: conversas não lidas que a automação ou o pós-ligação deixou na caixa, SEM um recado novo do cliente esperando. Precisam de ação (ex.: retornar a ligação), mas ninguém está parado esperando resposta.',
   msgs:'MENSAGENS MANUAIS enviadas ao cliente no período selecionado (WhatsApp, SMS, Instagram etc., feitas por pessoa) — inclui as que o corretor manda do próprio celular (sincronizadas pela integração), atribuídas ao dono do contato. Exclui automação; notas internas e ligações não contam aqui.',
   conversas:'CONVERSAS: clientes distintos que o corretor atendeu no período (mandou ao menos 1 mensagem). O "· N c/ resposta" ao lado são as conversas em que o cliente também respondeu (interação nos dois sentidos).',
-  resp:`RESPOSTA: em cima, o tempo TÍPICO (mediana) até a 1ª resposta manual. Embaixo, o NÍVEL DE SERVIÇO — % dos clientes respondidos dentro da meta de ${M1} min (e de ${M2} min). Tudo em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; Brasília — noites/domingos não são cobrados). Conta só recados que chegaram no expediente; não inclui quem ainda não foi respondido (esses estão em Aguardando). "poucos dados" = respostas de menos pra medir bem.`,
+  resp:`RESPOSTA: em cima, o tempo até a 1ª resposta manual — por padrão a MÉDIA simples; dá pra alternar para MEDIANA (valor típico, menos afetado por casos extremos) no seletor "Resposta" no topo. Embaixo, o NÍVEL DE SERVIÇO — % dos clientes respondidos dentro da meta de ${M1} min (e de ${M2} min). Tudo em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30, domingo não conta; Brasília — noites/domingos não são cobrados). Conta só recados que chegaram no expediente; não inclui quem ainda não foi respondido (esses estão em Aguardando). "poucos dados" = respostas de menos pra medir bem.`,
   dias:'DIAS ATIVOS: dias úteis do período em que o corretor deixou algum rastro no CRM (mensagem manual, nota ou ligação), sobre o total de dias úteis do período.',
   ativ:'ATIVIDADE: mensagens manuais por dia ao longo do período (mini-gráfico da tendência).',
   aten:'ATENÇÃO: score de urgência do corretor (quanto maior, mais precisa de atenção). Soma três blocos que competem — fila de clientes esperando agora (dominante), tempo de resposta e dias em que o cliente falou e ninguém agiu. Passe o mouse no número para ver a conta por bloco.',
@@ -524,14 +533,14 @@ function renderOverview(days){
     const cli=unreadClient(r.b), fup=unreadFup(r.b);
     const waitCell=cli==null?'<span class="mut">—</span>':(cli>0?`<span class="wait-big">${cli}</span>`:'<span class="wait-zero">0</span>');
     const fupCell=cli==null?'<span class="mut">—</span>':(fup>0?`<span class="fup-num" title="não lidas de follow-up: automação/pós-ligação, sem recado novo do cliente">${fup}</span>`:'<span class="mut">0</span>');
-    let rtCell;
-    if(s.rtMed==null) rtCell='—';
+    let rtCell; const rv=rtVal(s);
+    if(rv==null) rtCell='—';
     else{
       let sla;
       if(s.rtN>=RT_MINN&&s.sl1!=null){const bd=s.sl1>=50?'sl-ok':(s.sl1>=35?'sl-y':(s.sl1>=22?'sl-o':'sl-r'));
         sla=`<div class="sla"><span class="${bd}" title="${s.sl1}% dos clientes respondidos em até ${M1} min (${s.rtN} respostas)">${s.sl1}% ≤${M1}m</span> · <span title="${s.sl2}% respondidos em até ${M2} min">${s.sl2}% ≤${M2}m</span></div>`;}
       else sla=`<div class="sla mut">poucos dados (${s.rtN} resp.)</div>`;
-      rtCell=`<span class="${s.rtMed>1800?'rt-hi':''}">${fmtDur(s.rtMed)}</span>${sla}`;
+      rtCell=`<span class="${rv>1800?'rt-hi':''}" title="${rtWord()} de ${s.rtN} resposta(s)">${fmtDur(rv)}</span>${sla}`;
     }
     let aten;
     if(r.at){
@@ -547,7 +556,7 @@ function renderOverview(days){
       <td class="n" title="${TT.dias}">${s.activeP}/${wdays}</td>
       <td title="${TT.ativ}">${spark(s.series)}</td>
       <td class="aten" title="${TT.aten}">${aten}</td></tr>`;});
-  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resposta" = tempo <b>típico</b> (mediana) em cima e o <b>nível de serviço</b> embaixo (% dos clientes respondidos em até <b>${M1} min</b> e <b>${M2} min</b>, metas), tudo em <b>horas comerciais</b> (noites/domingos não contam). Não inclui quem ainda não foi respondido. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
+  h+=`</tbody></table><div class="foot"><b style="color:#ff2d2d">Aguardando</b> = clientes com a última mensagem sem resposta (o cliente está de fato esperando) — é o principal ponto de atenção. <b style="color:#e0a13a">Follow-ups pendentes</b> = não lidas de automação/pós-ligação, sem recado novo do cliente (precisam de ação, mas ninguém está esperando resposta). "Resposta" = tempo até a 1ª resposta (<b>${rtWord()}</b> — alterne média/mediana no topo) em cima e o <b>nível de serviço</b> embaixo (% dos clientes respondidos em até <b>${M1} min</b> e <b>${M2} min</b>, metas), tudo em <b>horas comerciais</b> (noites/domingos não contam). Não inclui quem ainda não foi respondido. Passe o mouse nos selos de <b>Atenção</b> para o detalhe${EH_MES_CORRENTE?'':' · Aguardando/Follow-up só no mês corrente'}. Clique num corretor para abrir o detalhe.</div></div>`;
   /* Desligados (recolhível) — status vem do painel de admin, ao vivo */
   if(OFF.length){
     const orows=OFF.map(b=>({b,s:stats(b,days)}));
@@ -570,7 +579,7 @@ function renderBroker(b,days){
   <div class="kpis">
     <div class="kpi"><div class="v">${s.n}</div><div class="l">mensagens manuais</div></div>
     <div class="kpi" title="Clientes distintos atendidos no período (o corretor mandou ao menos 1 mensagem). O 'c/ resposta' são os que também responderam."><div class="v">${s.conversas}</div><div class="l">conversas${s.conversasI?` · ${s.conversasI} c/ resposta`:''}</div></div>
-    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Mediana = típico; % ≤${M1}m/≤${M2}m = nível de serviço nas metas; média sofre da cauda. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(s.rtMed)}</div><div class="l">resposta mediana${(s.rtN>=RT_MINN&&s.sl1!=null)?` · ${s.sl1}% ≤${M1}m · ${s.sl2}% ≤${M2}m`:(s.rtN?` · poucos dados`:'')}${s.rtMean!=null?` · média ${fmtDur(s.rtMean)}`:''}</div></div>
+    <div class="kpi" title="Tempo até a 1ª resposta manual em horas comerciais (seg–sex 8h–20h, sáb 8h30–11h30; noites/domingos não contam). Média = todos os tempos somados/nº; mediana = valor típico, menos afetado por respostas muito lentas. Alterne no seletor 'Resposta' no topo. Não inclui quem ainda não foi respondido."><div class="v">${fmtDur(rtVal(s))}</div><div class="l">resposta ${rtWord()}${(s.rtN>=RT_MINN&&s.sl1!=null)?` · ${s.sl1}% ≤${M1}m · ${s.sl2}% ≤${M2}m`:(s.rtN?` · poucos dados`:'')}${(state.rtMode==='mean'?s.rtMed:s.rtMean)!=null?` · ${state.rtMode==='mean'?'mediana':'média'} ${fmtDur(state.rtMode==='mean'?s.rtMed:s.rtMean)}`:''}</div></div>
     <div class="kpi"><div class="v">${s.activeP}/${wdays}</div><div class="l">dias úteis ativos</div></div>
     <div class="kpi"><div class="v" style="color:${(LIVE&&unreadClient(b)>5)?'#e06a5b':'inherit'}">${LIVE?unreadClient(b):'—'}</div><div class="l">clientes aguardando${LIVE&&wait24(b)?` · ${wait24(b)} há +24h`:''}${LIVE&&unreadFup(b)?` · ${unreadFup(b)} follow-up`:''}</div></div>
   </div>`;
@@ -582,7 +591,7 @@ function renderBroker(b,days){
     const bars=pts.slice(-72).map(p=>`<i style="height:${Math.max(1,Math.round(p.v/mx*20))}px" title="${p.t}: ${p.v} não lidas"></i>`).join('');
     h+=`<h2>Clientes aguardando ao longo do tempo</h2><div class="card"><div class="uspark">${bars}</div><div class="foot">Um retrato por hora (últimos dias). Cada barra = nº de clientes com a última mensagem sem resposta na caixa dele naquele momento (não conta os de follow-up).</div></div>`;
   }
-  h+='<h2>Presença diária</h2><div class="card"><table><thead><tr><th>Dia</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. med · n</th><th>1ª ação</th><th>Última</th><th>Janela ativa</th></tr></thead><tbody>';
+  h+=`<h2>Presença diária</h2><div class="card"><table><thead><tr><th>Dia</th><th class="n">Msgs</th><th class="n">Notas/Lig</th><th class="n">Resp. ${state.rtMode==='mean'?'méd.':'med.'} · n</th><th>1ª ação</th><th>Última</th><th>Janela ativa</th></tr></thead><tbody>`;
   s.series.forEach(d=>{
     let bar='',span='—';const pf=toMin(d.pfirst),pl=toMin(d.plast);
     if(d.present&&pf!=null){const base=7*60;const L=Math.max(0,(pf-base)/720*100),W=Math.max(1.5,(pl-pf)/720*100);
@@ -591,9 +600,11 @@ function renderBroker(b,days){
     const cls=d.weekend?'we':(!d.present?'zero':'');
     const nf=d.n>0?d.n:(d.weekend?'—':(d.present?'<span style="color:#f0a020">0</span>':'<span class=zero>0</span>'));
     const dMed=Array.isArray(d.rt)?(d.rt.length?pct([...d.rt].sort((a,b)=>a-b),0.5):null):(d.rt_hist?rtMedian(d.rt_hist):null);
-    const rtd=dMed==null?'—':`${fmtDur(dMed)} · ${d.rt_n}`;
+    const dMean=Array.isArray(d.rt)?(d.rt.length?Math.round(d.rt.reduce((a,b)=>a+b,0)/d.rt.length):null):(d.rt_n?Math.round(d.rt_sum/d.rt_n):null);
+    const dv=state.rtMode==='mean'?dMean:dMed;
+    const rtd=dv==null?'—':`${fmtDur(dv)} · ${d.rt_n}`;
     h+=`<tr><td class="${cls}">${d.label} <span class="we">${d.wd}</span></td><td class="n">${nf}</td><td class="n mut">${(d.ic+d.cl)||'—'}</td><td class="n mut">${rtd}</td><td>${d.pfirst||'—'}</td><td>${d.plast||'—'}</td><td>${span} ${bar}</td></tr>`;});
-  h+='</tbody></table><div class="foot">Barra <span style="color:#4f8cff">azul</span> = teve mensagem ao cliente · <span style="color:#f0a020">laranja</span> = só nota/ligação. "Resp. med · n" = mediana de resposta no dia e nº de respostas medidas.</div></div>';
+  h+=`</tbody></table><div class="foot">Barra <span style="color:#4f8cff">azul</span> = teve mensagem ao cliente · <span style="color:#f0a020">laranja</span> = só nota/ligação. "Resp. ${state.rtMode==='mean'?'méd.':'med.'} · n" = ${rtWord()} de resposta no dia e nº de respostas medidas (alterne média/mediana no topo).</div></div>`;
   const mx=Math.max(1,...s.mh,...s.ah);let ch='';
   for(let hh=0;hh<24;hh++)ch+=`<div class="hcol"><div class="hbar"><div class="hb-a" style="height:${s.ah[hh]/mx*100}%" title="auto ${s.ah[hh]} às ${hh}h"></div><div class="hb-m" style="height:${s.mh[hh]/mx*100}%" title="manual ${s.mh[hh]} às ${hh}h"></div></div><div class="hlab">${hh}</div></div>`;
   const app=s.series.reduce((a,d)=>a+(b.days[d.key]?b.days[d.key].app:0),0);
@@ -717,18 +728,20 @@ bsel.onchange=()=>{state.broker=bsel.value;render();};
 fsel.onchange=()=>{state.from=fsel.value;render();};
 tsel.onchange=()=>{state.to=tsel.value;render();};
 document.querySelectorAll('#presets button').forEach(bt=>bt.onclick=()=>setPreset(bt.dataset.p));
+document.querySelectorAll('#rtmode button').forEach(bt=>bt.onclick=()=>{state.rtMode=bt.dataset.m;markRtMode();saveState();render();});
 /* ===== estado persistido + auto-atualização (sem precisar de F5) ===== */
 const SS_KEY='painelCorretores:'+<?= json_encode($selMonth) ?>;
 function saveState(){try{sessionStorage.setItem(SS_KEY,JSON.stringify({
   broker:state.broker,from:state.from,to:state.to,sortKey:state.sortKey,sortDir:state.sortDir,
   tab:state.tab,filaSort:state.filaSort,filaDir:state.filaDir,filaQ:state.filaQ||'',filaResp:state.filaResp||'',
-  y:Math.round(window.scrollY)}));}catch(e){}}
+  rtMode:state.rtMode,y:Math.round(window.scrollY)}));}catch(e){}}
 function loadState(){try{const s=JSON.parse(sessionStorage.getItem(SS_KEY)||'null');if(!s)return null;
   const keys=new Set(AD.map(d=>d.key));
   if(!keys.has(s.from))s.from=AD[0].key;
   if(!keys.has(s.to))s.to=AD[AD.length-1].key;
   if(s.broker!=='__all__'&&!byId[s.broker])s.broker='__all__';
   if(s.tab==='fila'&&!(EH_MES_CORRENTE&&AGUARDANDO))s.tab='geral';
+  if(s.rtMode!=='mean'&&s.rtMode!=='med')s.rtMode='mean';   // padrão média
   return s;}catch(e){return null;}}
 
 const _s=loadState();
@@ -737,6 +750,7 @@ if(_s)Object.assign(state,_s);
 // de 60s, watchdog ou F5) → preserva o período/rolagem que estava na tela.
 const _isReload=((performance.getEntriesByType('navigation')[0]||{}).type)==='reload';
 buildTabs();
+markRtMode();   // destaca Média/Mediana conforme o estado (padrão: Média)
 if(_s && _isReload){
   bsel.value=state.broker; fsel.value=state.from; tsel.value=state.to;
   const first=AD[0].key, last=AD[AD.length-1].key, yk=AD.length>=2?AD[AD.length-2].key:null;
