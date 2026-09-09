@@ -152,15 +152,18 @@ function run_collection(string $mode, ?string $monthArg = null): void {
     // Backfill de mês passado usa uma trava PRÓPRIA, para não bloquear a coleta
     // do mês corrente (cron de hora em hora) enquanto roda.
     $isBackfill = ($mode === 'month' && $monthArg && $monthArg !== $now->format('Y-m'));
-    // 'fila' compartilha a trava do mês corrente com a coleta pesada para não
-    // gravarem os mesmos arquivos ao mesmo tempo.
-    // Não-bloqueante: se já há uma coleta rodando (pesada OU fila), esta sai e
-    // deixa a outra terminar — quem estiver rodando já produz dados frescos.
-    // Assim nenhuma coleta espera nem sobrescreve a outra (a fila roda espaçada,
-    // colisão é rara; a gravação dos arquivos é atômica de qualquer forma).
-    $lockF = fopen($dir . '/' . ($isBackfill ? 'coletor_backfill.lock' : 'coletor.lock'), 'c');
+    // Trava SEPARADA por tipo: a pesada (hora em hora) e a fila (5 em 5 min)
+    // disparam ambas no minuto :00 — se compartilhassem a trava, uma venceria a
+    // corrida e a outra seria PULADA (era o motivo da coleta geral parar de
+    // atualizar). Com travas próprias elas nunca se pulam; podem até rodar juntas
+    // sem problema, porque os arquivos só da pesada continuam só dela e os
+    // compartilhados (painel_live/aguardando) são gravados de forma atômica.
+    // Não-bloqueante: impede apenas DUAS do MESMO tipo ao mesmo tempo.
+    $lockName = $isBackfill ? 'coletor_backfill.lock'
+              : ($mode === 'fila' ? 'coletor_fila.lock' : 'coletor.lock');
+    $lockF = fopen($dir . '/' . $lockName, 'c');
     if ($lockF && !flock($lockF, LOCK_EX | LOCK_NB)) {
-        painel_log(($mode === 'fila' ? 'fila: ' : '') . 'outra coleta em andamento. Saindo.');
+        painel_log(($mode === 'fila' ? 'fila: ' : '') . 'outra coleta do mesmo tipo em andamento. Saindo.');
         fclose($lockF); return;
     }
 
