@@ -40,3 +40,9 @@ tarefas cumpridas detectadas viram check automático).
 `escopo.json` → `robust_ids` dos corretores atendidos. Para incluir/remover
 corretor, editar essa lista (o corretor precisa existir em `brokers` com
 `robust_user_id` — Admin → Corretores → Sincronizar + migração do de-para).
+
+Regra do Jhony: corretor que ficou INATIVO no Robust permanece no escopo
+enquanto ainda tiver atendimentos ativos na carteira (o plano segue saindo
+para quem estiver trabalhando esses clientes); quando a carteira zerar,
+remover o id da lista. Se a rotina notar carteira zerada de um id do escopo,
+mencionar no relatório final para o gestor remover.
