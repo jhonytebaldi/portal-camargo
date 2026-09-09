@@ -25,6 +25,14 @@ $clientes = $pdo->query(
        FROM pa_clientes'
 )->fetchAll();
 
+/* Equipes do portal (Admin → Equipes): usadas para conferir cobertura do
+   escopo e para qualquer agrupamento por equipe na rotina/relatórios. */
+$equipes = $pdo->query(
+    'SELECT t.id AS team_id, t.nome, tb.broker_id
+       FROM teams t LEFT JOIN team_brokers tb ON tb.team_id = t.id
+      ORDER BY t.nome'
+)->fetchAll();
+
 $ultimo = $pdo->query('SELECT MAX(data) FROM pa_planos')->fetchColumn();
 
 /* Itens do plano mais recente (para carry-forward e auto-check da rotina):
@@ -54,5 +62,6 @@ echo json_encode([
     'planos_dia' => $planosDia,
     'itens_dia' => $itensDia,
     'brokers' => $brokers,
+    'equipes' => $equipes,
     'clientes' => $clientes,
 ], JSON_UNESCAPED_UNICODE);

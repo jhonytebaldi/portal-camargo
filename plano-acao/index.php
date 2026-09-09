@@ -67,6 +67,14 @@ if ($brokerIds) {
     }
     asort($teamsSel);
 }
+/* equipes por corretor (robust_atendente) — dashboard e filtro de equipe */
+$teamsByRid = []; $teamNomesByRid = [];
+foreach ($planos as $p) {
+    $rid = (int)$p['robust_atendente'];
+    $tids = $teamByBroker[$p['broker_id']] ?? [];
+    $teamsByRid[$rid] = $tids;
+    $teamNomesByRid[$rid] = implode(', ', array_filter(array_map(fn($t) => $teamsSel[$t] ?? '', $tids)));
+}
 
 /* ---- corretor selecionado (server-side) ---- */
 $corSel = (int)($_GET['corretor'] ?? 0);
@@ -239,6 +247,7 @@ portal_header('Plano de Ação', $u);
 .pa-dash-tbl tr.clicavel{cursor:pointer}
 .pa-dash-tbl tr.clicavel:hover td{background:rgba(47,93,79,.05)}
 .pa-dash-tbl tr.sem-atividade td{color:var(--mute)}
+.pa-eq-td{color:var(--mute);font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 .pa-mini-barra{display:inline-block;width:90px;height:7px;background:var(--line);border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:6px}
 .pa-mini-barra i{display:block;height:100%;background:var(--moss)}
 .pa-plano{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:0 0 22px}
@@ -338,13 +347,13 @@ if ($ultimaAtu) {
 <section class="pa-dash">
   <div class="pa-dash-cab">
     <h2>Desempenho — <?= h(pa_periodo_label($periodoSel, $dashIni, $dashFim)) ?></h2>
-    <span class="pa-dash-sub"><?= count($dashDias) ?> dia(s) com plano · <?= count($dashAtivos) ?> corretor(es) com atividade</span>
+    <span class="pa-dash-sub"><?= count($dashDias) ?> dia(s) com plano · <span id="t-atv"><?= count($dashAtivos) ?></span> corretor(es) com atividade</span>
   </div>
   <div class="pa-tiles">
-    <div class="pa-tile"><span class="pa-tile-l">Execução média da equipe</span><b class="pa-hero"><?= $eqEx ? round(100*array_sum($eqEx)/count($eqEx)) : 0 ?>%</b><span class="pa-tile-s">tarefas do plano concluídas</span></div>
-    <div class="pa-tile"><span class="pa-tile-l">Prioridades atendidas</span><b><?= $eqPr ? round(100*array_sum($eqPr)/count($eqPr)) : 0 ?>%</b><span class="pa-tile-s">🔴🟡 concluídas</span></div>
-    <div class="pa-tile"><span class="pa-tile-l">Tarefas concluídas</span><b><?= $eqConc ?></b><span class="pa-tile-s">clientes trabalhados no período</span></div>
-    <div class="pa-tile <?= $eqResp ? 'alerta' : '' ?>"><span class="pa-tile-l">Esperando resposta</span><b><?= $eqResp ?></b><span class="pa-tile-s">clientes ainda sem retorno</span></div>
+    <div class="pa-tile"><span class="pa-tile-l">Execução média da equipe</span><b class="pa-hero" id="t-ex"><?= $eqEx ? round(100*array_sum($eqEx)/count($eqEx)) : 0 ?>%</b><span class="pa-tile-s">tarefas do plano concluídas</span></div>
+    <div class="pa-tile"><span class="pa-tile-l">Prioridades atendidas</span><b id="t-pr"><?= $eqPr ? round(100*array_sum($eqPr)/count($eqPr)) : 0 ?>%</b><span class="pa-tile-s">🔴🟡 concluídas</span></div>
+    <div class="pa-tile"><span class="pa-tile-l">Tarefas concluídas</span><b id="t-conc"><?= $eqConc ?></b><span class="pa-tile-s">clientes trabalhados no período</span></div>
+    <div class="pa-tile <?= $eqResp ? 'alerta' : '' ?>"><span class="pa-tile-l">Esperando resposta</span><b id="t-resp"><?= $eqResp ?></b><span class="pa-tile-s">clientes ainda sem retorno</span></div>
   </div>
 
   <?php if ($dashAtivos):
@@ -360,7 +369,7 @@ if ($ultimaAtu) {
         $ex = round(100 * ($k['execucao'] ?? 0)); $pr = $k['prio'] === null ? null : round(100 * $k['prio']);
         $bx = max(4, $plotW * $ex / 100); $bp = $pr === null ? 0 : max(4, $plotW * $pr / 100);
         $nome = mb_strimwidth($k['nome'], 0, 22, '…'); ?>
-      <g class="pa-row" data-corretor="<?= (int)$rid ?>">
+      <g class="pa-row" data-corretor="<?= (int)$rid ?>" data-teams="<?= h(implode(',', $teamsByRid[$rid] ?? [])) ?>">
         <title><?= h($k['nome']) ?> — execução <?= $ex ?>% · prioridades <?= $pr === null ? '—' : $pr . '%' ?> · <?= $k['manual'] + $k['auto'] ?> concluídas</title>
         <text x="<?= $left - 10 ?>" y="<?= $y + 15 ?>" text-anchor="end" class="pa-lbl"><?= h($nome) ?></text>
         <rect x="<?= $left ?>" y="<?= $y ?>" width="<?= $bx ?>" height="12" rx="0" fill="#159463"/>
@@ -377,10 +386,15 @@ if ($ultimaAtu) {
   <?php endif; ?>
 
   <div class="pa-dash-tbl-wrap"><table class="pa-dash-tbl">
-    <tr><th>Corretor</th><th>Execução</th><th>Prioridades</th><th>Concluídas</th><th>Esperando resp.</th><th>Encerrados</th><th>Carteira</th><th>% frio</th><th>Horas até o check</th><th>Dias ativos</th></tr>
+    <tr><th>Corretor</th><?php if ($teamsSel): ?><th>Equipe</th><?php endif; ?><th>Execução</th><th>Prioridades</th><th>Concluídas</th><th>Esperando resp.</th><th>Encerrados</th><th>Carteira</th><th>% frio</th><th>Horas até o check</th><th>Dias ativos</th></tr>
     <?php foreach ($dash as $rid => $k): ?>
-    <tr class="clicavel <?= ($k['manual']+$k['auto']) ? '' : 'sem-atividade' ?>" data-corretor="<?= (int)$rid ?>">
+    <tr class="clicavel <?= ($k['manual']+$k['auto']) ? '' : 'sem-atividade' ?>" data-corretor="<?= (int)$rid ?>"
+        data-teams="<?= h(implode(',', $teamsByRid[$rid] ?? [])) ?>"
+        data-ex="<?= $k['execucao'] === null ? '' : round(100*$k['execucao']) ?>"
+        data-pr="<?= $k['prio'] === null ? '' : round(100*$k['prio']) ?>"
+        data-conc="<?= $k['manual'] + $k['auto'] ?>" data-resp="<?= (int)$k['resp_pend'] ?>">
       <td><?= h($k['nome']) ?></td>
+      <?php if ($teamsSel): ?><td class="pa-eq-td"><?= h($teamNomesByRid[$rid] ?? '') ?: '—' ?></td><?php endif; ?>
       <td><?= $k['execucao'] === null ? '—' : round(100*$k['execucao']) . '%' ?></td>
       <td><?= $k['prio'] === null ? '—' : round(100*$k['prio']) . '%' ?></td>
       <td><?= $k['manual'] + $k['auto'] ?><?= $k['auto'] ? ' <span class="pa-badge auto">' . $k['auto'] . ' auto</span>' : '' ?></td>
@@ -458,8 +472,45 @@ if ($ultimaAtu) {
 
 <script>
 /* ---------- filtros client-side (equipe, ação, status, busca) ---------- */
+/* dashboard reage ao filtro de equipe: some quem não é da equipe, o gráfico
+   reflui (sem buracos) e os tiles são recalculados só com os visíveis */
+function filtraDashboard(eq){
+  const pertence = el => !eq || (el.dataset.teams || '').split(',').filter(Boolean).includes(eq);
+  const rows = document.querySelectorAll('.pa-dash-tbl tr.clicavel');
+  if (!rows.length) return;
+  let ex = [], pr = [], conc = 0, resp = 0, comAtv = 0;
+  rows.forEach(tr => {
+    const v = pertence(tr);
+    tr.classList.toggle('pa-oculto', !v);
+    if (!v) return;
+    if (tr.dataset.ex !== '') ex.push(+tr.dataset.ex);
+    if (tr.dataset.pr !== '') pr.push(+tr.dataset.pr);
+    conc += +tr.dataset.conc; resp += +tr.dataset.resp;
+    if (+tr.dataset.conc > 0) comAtv++;
+  });
+  const put = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  const med = a => a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0;
+  put('t-ex', med(ex) + '%'); put('t-pr', med(pr) + '%');
+  put('t-conc', conc); put('t-resp', resp); put('t-atv', comAtv);
+  document.getElementById('t-resp')?.closest('.pa-tile')?.classList.toggle('alerta', resp > 0);
+  const svg = document.querySelector('.pa-chart');
+  if (svg) {
+    const ROWH = 34; let vis = 0;
+    [...svg.querySelectorAll('.pa-row')].forEach((g, i) => {
+      const v = pertence(g);
+      g.style.display = v ? '' : 'none';
+      if (v) { g.setAttribute('transform', 'translate(0 ' + ((vis - i) * ROWH) + ')'); vis++; }
+    });
+    const hgt = 30 + vis * ROWH + 8;
+    const vb = svg.getAttribute('viewBox').split(' ');
+    svg.setAttribute('viewBox', '0 0 ' + vb[2] + ' ' + hgt);
+    svg.querySelectorAll('line').forEach(l => l.setAttribute('y2', hgt - 8));
+  }
+}
+
 function aplicaFiltros(){
   const eq = document.getElementById('f-equipe')?.value || '';
+  filtraDashboard(eq);
   const ac = document.getElementById('f-acao')?.value || '';
   const stq = document.getElementById('f-status')?.value || '';
   const q  = (document.getElementById('f-busca')?.value || '').toLowerCase().trim();
