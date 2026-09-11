@@ -220,6 +220,8 @@ portal_header('Plano de Ação', $u);
 .btn2{background:#fff;color:var(--moss);border:2px solid var(--moss);border-radius:6px;padding:7px 12px;font:inherit;font-weight:600;font-size:13.5px;cursor:pointer}
 .btn2:hover{background:rgba(47,93,79,.08)}
 .pa-selinfo{font-size:13px;color:var(--mute)}
+.pa-wa-ctl{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--mute)}
+.pa-wa-ctl select{padding:6px 8px;border:2px solid var(--line);border-radius:6px;font:inherit;font-size:13px;background:#fff}
 .pa-dash{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:0 0 20px}
 .pa-dash-cab{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-bottom:12px}
 .pa-dash h2{margin:0;font-size:17px}
@@ -340,6 +342,20 @@ if ($ultimaAtu) {
   <button type="button" class="btn2" id="b-sel-todos">Selecionar listados</button>
   <button type="button" class="btn2" id="b-sel-nada">Limpar seleção</button>
   <button type="button" class="btn" id="b-copiar-cod">Copiar cód. atendimentos</button>
+  <span class="pa-wa-ctl">WhatsApp:
+    <select id="wa-qtd">
+      <option value="5">5 tarefas</option>
+      <option value="10">10 tarefas</option>
+      <option value="15" selected>15 tarefas</option>
+      <option value="20">20 tarefas</option>
+      <option value="30">30 tarefas</option>
+      <option value="0">todas</option>
+    </select>
+    <select id="wa-fmt">
+      <option value="completo" selected>completo (por quê + msg)</option>
+      <option value="resumido">resumido (só título)</option>
+    </select>
+  </span>
   <span class="pa-selinfo" id="sel-info"></span>
 </div>
 
@@ -416,13 +432,13 @@ if ($ultimaAtu) {
     $tot = count($itens); $ok = count(array_filter($itens, fn($i) => (int)$i['feito'] === 1));
     $teams = implode(',', $teamByBroker[$p['broker_id']] ?? []);
 ?>
-  <section class="pa-plano" data-teams="<?= h($teams) ?>">
+  <section class="pa-plano" data-teams="<?= h($teams) ?>"
+           data-wa-cab="PLANO DE AÇÃO — <?= h(explode(' ', $p['corretor_nome'])[0]) ?> · <?= h(pa_data_label($dataSel)) ?>">
     <div class="pa-cab">
       <h2><?= h($p['corretor_nome']) ?></h2>
       <span class="pa-prog" data-prog="<?= (int)$p['id'] ?>"><?= $ok ?>/<?= $tot ?> feitas</span>
-      <?php if ($p['texto_whatsapp'] !== ''): ?>
+      <?php if ($itens): ?>
         <button class="btn pa-copiar" data-copiar="<?= (int)$p['id'] ?>">Copiar p/ WhatsApp</button>
-        <textarea id="wa-<?= (int)$p['id'] ?>" hidden><?= h($p['texto_whatsapp']) ?></textarea>
       <?php endif; ?>
     </div>
     <div class="pa-barra"><i data-barra="<?= (int)$p['id'] ?>" style="width:<?= $tot ? round(100 * $ok / $tot) : 0 ?>%"></i></div>
@@ -433,7 +449,8 @@ if ($ultimaAtu) {
       <?php endif; ?>
       <div class="pa-item <?= (int)$it['feito'] ? 'ok' : '' ?>"
            data-item="<?= (int)$it['id'] ?>" data-aid="<?= (int)$it['atendimento_id'] ?>"
-           data-acao="<?= h($it['acao']) ?>" data-feito="<?= (int)$it['feito'] ?>">
+           data-acao="<?= h($it['acao']) ?>" data-feito="<?= (int)$it['feito'] ?>"
+           data-faixa="<?= h($it['faixa']) ?>">
         <input type="checkbox" class="pa-sel" title="Selecionar p/ copiar códigos">
         <input type="checkbox" class="pa-check" <?= (int)$it['feito'] ? 'checked' : '' ?>
                data-check="<?= (int)$it['id'] ?>" data-plano="<?= (int)$p['id'] ?>">
@@ -615,14 +632,58 @@ document.addEventListener('change', async (e) => {
   } finally { cb.disabled = false; }
 });
 
-/* ---------- copiar texto WhatsApp ---------- */
+/* ---------- copiar texto WhatsApp (montado na hora, do que está na tela) ----------
+   Respeita os filtros ativos (equipe/ação/status/busca). Se houver itens
+   SELECIONADOS dentro do plano, usa só eles. A quantidade e o formato vêm
+   dos seletores "WhatsApp:" no topo (15 tarefas / completo por padrão). */
+function montaTextoWa(sec){
+  const qtd = parseInt(document.getElementById('wa-qtd')?.value || '15', 10);
+  const fmt = document.getElementById('wa-fmt')?.value || 'completo';
+  let itens = [...sec.querySelectorAll('.pa-item')].filter(i => !i.classList.contains('pa-oculto'));
+  const sel = itens.filter(i => i.querySelector('.pa-sel').checked);
+  if (sel.length) itens = sel;
+  const total = itens.length;
+  if (qtd > 0) itens = itens.slice(0, qtd);
+  const FX = {vermelho:'🔴 *AGORA CEDO*', amarelo:'🟡 *AINDA HOJE*',
+              azul:'🔵 *ESTA SEMANA*', branco:'⚪ *MANTER / AVALIAR ENCERRAR*'};
+  const cont = {vermelho:0, amarelo:0, azul:0, branco:0};
+  itens.forEach(i => { if (cont[i.dataset.faixa] !== undefined) cont[i.dataset.faixa]++; });
+  const txt = (el, s) => { const x = el.querySelector(s); return x ? x.textContent.trim() : ''; };
+  const lin = ['*' + (sec.dataset.waCab || 'PLANO DE AÇÃO') + '*',
+    itens.length + ' tarefa(s)' + (total > itens.length ? ' de ' + total + ' listadas' : '') +
+    ' · 🔴' + cont.vermelho + ' 🟡' + cont.amarelo + ' 🔵' + cont.azul + ' ⚪' + cont.branco, ''];
+  let fx = null, n = 0;
+  itens.forEach(it => {
+    if (it.dataset.faixa !== fx) { fx = it.dataset.faixa; lin.push(FX[fx] || fx); }
+    n++;
+    const nome = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
+          stage = txt(it, '.pa-meta .pa-badge:not(.acao):not(.origem):not(.auto)'),
+          feito = it.querySelector('.pa-check')?.checked;
+    lin.push(n + '. *' + nome + '*' + (feito ? ' ✅' : '') + (tel ? ' · ' + tel : '') +
+             (stage ? ' (' + stage + ')' : '') + ' · cód. ' + it.dataset.aid);
+    lin.push('→ ' + txt(it, '.pa-tit'));
+    if (fmt === 'completo') {
+      const just = txt(it, '.pa-just');
+      if (just) lin.push('_' + just.replace(/_/g, '‗') + '_');
+      const msg = txt(it, '.pa-msg pre');
+      if (msg) lin.push('✉️ Sugestão de mensagem:', '"' + msg + '"');
+      lin.push('');
+    }
+  });
+  if (fmt !== 'completo') lin.push('');
+  if (total > itens.length) lin.push('… +' + (total - itens.length) + ' tarefa(s) na lista completa.');
+  lin.push('Plano completo com telefones e mensagens: portal.imobcamargo.com.br/plano-acao/');
+  return lin.join('\n');
+}
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-copiar]');
   if (!b) return;
-  const ta = document.getElementById('wa-' + b.dataset.copiar);
-  if (!ta) return;
-  try { await navigator.clipboard.writeText(ta.value); }
-  catch (_) { ta.hidden = false; ta.select(); document.execCommand('copy'); ta.hidden = true; }
+  const texto = montaTextoWa(b.closest('.pa-plano'));
+  try { await navigator.clipboard.writeText(texto); }
+  catch (_) {
+    const ta = document.createElement('textarea'); ta.value = texto;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
   const antes = b.textContent; b.textContent = 'Copiado ✓';
   setTimeout(() => { b.textContent = antes; }, 1800);
 });
