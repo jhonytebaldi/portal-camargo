@@ -18,8 +18,8 @@ tarefas cumpridas detectadas viram check automático).
 4. Analisar cada `trabalho/lotes/lote_NN.json` com a `rubrica_analise.md`
    (subagentes em paralelo; a data do plano está em `contexto.json`).
    Gravar cada resultado em `trabalho/analise/out_NN.json` (mesma ordem).
-5. `python3 rotina.py publicar` — merge, regras de titularidade
-   (encerrar-transferido / alinhar), auto-checks e importação no portal.
+5. `python3 rotina.py publicar` — merge, nota/fallback de titularidade,
+   auto-checks e importação no portal.
    Imprime um resumo JSON (também em `trabalho/resumo_publicacao.json`).
 6. Reportar ao Jhony em 3-5 linhas: nº de clientes, re-analisados,
    auto-checks, divergências e qualquer falha de API. Sem perguntas —
@@ -29,9 +29,15 @@ tarefas cumpridas detectadas viram check automático).
 
 - Robust `/pessoas?ids=` e `/leads?ids=` SEMPRE com `per_page=100`
   (o padrão de 30 corta resultados em silêncio).
-- Dono divergente Robust×WeSales: stage 0/1 → "encerrar (transferido)";
-  stage 2+ → "alinhar titularidade" (lista manual do gestor). NUNCA
-  transferir automaticamente.
+- Dono divergente Robust×WeSales: o WeSales passa o contato pra instância
+  que mandou a mensagem mais recente (cada corretor tem a própria), além da
+  automação de inatividade — então o MOTIVO da transferência NÃO é
+  padronizável. Quem julga é a ANÁLISE, pela conversa (regra de titularidade
+  na rubrica): transferência legítima → "encerrar" com a evidência real;
+  troca acidental → "alinhar titularidade" (gestor devolve o contato ao dono
+  do Robust); ambíguo → "alinhar titularidade". O código só recalcula a
+  divergência, dá fallback factual no carry-forward e anexa nota quando a
+  análise não tratou. NUNCA transferir automaticamente nos CRMs.
 - Mensagem de `workflow` não conta como resposta do corretor.
 - Reimportar o mesmo dia preserva checks manuais e automáticos.
 

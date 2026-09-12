@@ -12,7 +12,8 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 ## Ações permitidas (campo "acao" — use EXATAMENTE um destes rótulos)
 "responder cliente" · "follow-up" · "enviar opções de imóvel" ·
 "propor agendamento" · "confirmar visita" · "verificar visita" · "pós-visita" ·
-"avançar proposta" · "reativar" · "aguardar retorno" · "encerrar"
+"avançar proposta" · "reativar" · "aguardar retorno" · "encerrar" ·
+"alinhar titularidade"
 
 ## Como decidir
 - Última mensagem é do cliente sem resposta manual → "responder cliente".
@@ -39,6 +40,34 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   ("já comprei", "não quero mais", número errado) → "encerrar".
 - SEM conversa no GHL (tem_conversa=false): use obs + andamentos como referência.
   Se nem isso der sinal e estiver parado 45+ dias → "encerrar".
+
+## REGRA DE TITULARIDADE (quando titularidade_divergente=true)
+Contexto: no WeSales, cada corretor tem a própria instância de WhatsApp e o
+contato passa AUTOMATICAMENTE pra instância que mandou a mensagem mais recente
+— além da automação antiga, que transfere quem fica 10+ dias parado em
+Lead/Atendimento. Ou seja: dono_wesales ≠ dono_robust pode ser transferência
+legítima OU um acidente (alguém deu um simples "oi" na instância errada).
+Os campos dono_robust e dono_wesales dizem quem é quem; nas mensagens, o campo
+"por" diz qual corretor enviou cada mensagem manual. NUNCA presuma o motivo da
+transferência: julgue pela conversa.
+
+- Transferência que FAZ sentido (cliente frio, sem resposta há muitos dias, sem
+  compromisso marcado, e/ou o dono_wesales está claramente tocando o
+  atendimento agora) → "encerrar": o dono_robust encerra o atendimento dele.
+  Na justificativa, cite a evidência REAL (ex.: "sem resposta desde 28/08 e o
+  atendimento seguiu com a Katlrin"), nunca um motivo padrão.
+- Transferência ACIDENTAL (a conversa e os compromissos são claramente do
+  dono_robust — visita marcada, negociação em andamento, cliente responde a
+  ele — e a troca veio de uma mensagem avulsa de outra instância) →
+  "alinhar titularidade": tarefa para o GESTOR transferir o contato de volta
+  pro dono_robust no WeSales. Título tipo "Gestor: devolver o contato pro
+  [dono_robust] no WeSales"; justificativa com a evidência (ex.: "visita
+  amanhã com o Lucas; a troca veio de um 'oi' da instância da Katlrin").
+- Caso AMBÍGUO (os dois interagindo de verdade, disputa, ou sem conversa pra
+  julgar) → "alinhar titularidade" com o que se sabe; o gestor decide quem fica.
+- msg_sugerida = null em "encerrar" e "alinhar titularidade".
+- Se titularidade_divergente=false, ignore esta seção (não use "alinhar
+  titularidade").
 
 ## Saída — JSON estrito
 Grave no arquivo de saída um array com um objeto POR cliente do lote:

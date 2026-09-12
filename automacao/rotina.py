@@ -237,6 +237,12 @@ def preparar():
     # ---- 4. triagem: quem precisa de re-análise ----
     rean = []
     for aid, c in cli.items():
+        # divergência de titularidade Robust×WeSales (o WeSales passa o contato
+        # pra instância que mandou a mensagem mais recente, além da automação
+        # de inatividade — o MOTIVO só dá pra julgar lendo a conversa)
+        esperado = rob2broker.get(c["robust_atendente"])
+        c["div"] = bool(c.get("assigned") and esperado and c["assigned"] != esperado)
+        div_cache = bool(c.get("assigned_cache") and esperado and c["assigned_cache"] != esperado)
         la = parse_iso(c.get("last_analise"))
         lm = datetime.fromtimestamp(c["last_msg"]/1000, TZ) if c.get("last_msg") else None
         lu = parse_iso(c.get("last_update"))
@@ -244,7 +250,9 @@ def preparar():
                    or (lm and lm > la) or (lu and lu > la)
                    or (c.get("stage_cache") is not None and int(c["stage_cache"]) != c["stage"])
                    or (agora - la).days >= 5           # ninguém fica sem nova análise por mais de 5 dias
-                   or int(itens_ant[aid].get("feito") or 0) == 1)  # tarefa concluída → decidir o próximo passo
+                   or int(itens_ant[aid].get("feito") or 0) == 1   # tarefa concluída → decidir o próximo passo
+                   or c["div"] != div_cache                         # titularidade mudou (divergiu ou voltou)
+                   or (c["div"] and c.get("assigned") != c.get("assigned_cache")))  # trocou de dono de novo
         if precisa: rean.append(aid)
     log(f"re-análise: {len(rean)} de {len(cli)}")
 
@@ -266,10 +274,19 @@ def preparar():
                 r = requests.get(f"{GB}/conversations/{c['ghl_conv']}/messages?limit=40", headers=GH, timeout=40)
             arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
         except Exception: arr = []
-        msgs = [{"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
+        msgs = []
+        for m in arr:
+            if (m.get("messageType", "").startswith("TYPE_ACTIVITY")
+                    or m.get("messageType") == "TYPE_INTERNAL_COMMENT"): continue
+            d = {"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
                  "body": (m.get("body") or "")[:280]}
-                for m in arr if not (m.get("messageType", "").startswith("TYPE_ACTIVITY")
-                                     or m.get("messageType") == "TYPE_INTERNAL_COMMENT")]
+            # autor da mensagem manual (qual corretor/instância enviou) — essencial
+            # p/ julgar a titularidade, já que o WeSales passa o contato pra quem
+            # mandou a mensagem mais recente
+            u = m.get("userId")
+            if u and m.get("direction") == "outbound" and ghl2nome.get(u):
+                d["por"] = ghl2nome[u].split()[0]
+            msgs.append(d)
         c["msgs"] = list(reversed(msgs))[-25:]
     with ThreadPoolExecutor(4) as ex: list(ex.map(busca_andamentos, rean))   # Robust: servidor instável, ir leve
     log("andamentos ok")
@@ -348,6 +365,9 @@ def preparar():
                 "dias_parado": c.get("dias_parado"), "pre_score": c.get("pre_score", 30),
                 "flags": c.get("flags", []), "obs": c.get("obs") or "",
                 "andamentos": c.get("andamentos", []),
+                "dono_robust": c["corretor"],
+                "dono_wesales": ghl2nome.get(c.get("assigned")) if c.get("assigned") else None,
+                "titularidade_divergente": bool(c.get("div")),
                 "tem_conversa": bool(c.get("ghl_conv")), "msgs": c.get("msgs", [])})
         json.dump(lote, open(os.path.join(DIR, "lotes", f"lote_{i//TAM:02d}.json"), "w"), ensure_ascii=False)
     print(json.dumps({"ok": True, "clientes": len(cli), "re_analise": len(rean),
@@ -390,7 +410,7 @@ def publicar():
             return f"({d[2:4]}) {d[4:-4]}-{d[-4:]}"
         return t or ""
 
-    por, n_transf, n_alinhar, n_carry = {}, 0, 0, 0
+    por, n_div, n_alinhar, n_carry = {}, 0, 0, 0
     for aid, c in cli.items():
         a = ana.get(aid)
         if a:  # análise nova
@@ -408,26 +428,31 @@ def publicar():
             item = {"acao": ant["acao"], "titulo": ant["titulo"],
                     "justificativa": ant.get("justificativa"), "msg_sugerida": ant.get("msg_sugerida"),
                     "nome_sugerido": ant.get("nome_sugerido"), "score": int(ant.get("score") or 30)}
-        # divergência de titularidade (sempre recalculada)
+        # titularidade divergente (recalculada a cada rodada): o MOTIVO da
+        # transferência não é padronizável (o WeSales passa o contato pra
+        # instância que mandou a mensagem mais recente, além da automação de
+        # inatividade) — quem julga o caso é a ANÁLISE, lendo a conversa
+        # (regra de titularidade na rubrica). Aqui só o fallback factual pro
+        # carry-forward e uma nota de segurança se a análise não tratou.
         assigned, esperado = c.get("assigned"), rob2broker.get(c["robust_atendente"])
         if assigned and esperado and assigned != esperado:
+            n_div += 1
             outro_full = ghl2nome.get(assigned, "outro corretor")
-            outro = outro_full.split()[0].capitalize()
-            if c["stage"] in (0, 1):
-                item.update(acao="encerrar",
-                    titulo=f"Encerrar o atendimento — transferido para {outro_full} no WeSales",
-                    justificativa=(f"Esse contato foi transferido pro {outro} por estar há mais de "
-                                   f"10 dias sem atividade e sem avançar pro estágio agendamento+."),
-                    msg_sugerida=None)
-                n_transf += 1
-            else:
+            nota = (f"⚠ Titularidade: no WeSales este contato está com {outro_full}; "
+                    f"no Robust, com {c['corretor'].split()[0]}.")
+            if a is None and itens_ant.get(aid, {}).get("acao") not in ("encerrar", "alinhar titularidade"):
+                # carry-forward que ainda não tratava a divergência → fallback
+                # factual, sem inventar motivo
                 item.update(acao="alinhar titularidade",
                     titulo=f"Alinhar titularidade — no WeSales o cliente está com {outro_full}",
-                    justificativa=((item.get("justificativa") or "") +
-                        f" ⚠ Donos divergem: Robust com {c['corretor'].split()[0]}, WeSales com {outro}. "
-                        f"Gestor decide quem fica e ajusta os dois sistemas.").strip(),
+                    justificativa=(nota + " No WeSales o contato passa automaticamente pra quem mandou "
+                        "a mensagem mais recente (ou muda por inatividade), então o motivo precisa ser "
+                        "conferido na conversa: o gestor decide se transfere de volta ou se encerra no Robust."),
                     msg_sugerida=None)
-                n_alinhar += 1
+            elif a is not None and item["acao"] not in ("encerrar", "alinhar titularidade") \
+                    and "Titularidade:" not in (item.get("justificativa") or ""):
+                item["justificativa"] = ((item.get("justificativa") or "") + " " + nota).strip()
+        if item["acao"] == "alinhar titularidade": n_alinhar += 1
         fx = faixa(item["score"], item["acao"])
         it = {"atendimento_id": aid, "cliente_nome": c.get("nome") or "(sem nome)",
               "telefones": ", ".join(fone_fmt(t) for t in c.get("tels", [])[:2]),
@@ -484,7 +509,7 @@ def publicar():
     resumo = {"ok": bool(res.get("ok")), "http": r.status_code, "data": DATA,
               "planos": res.get("planos"), "itens": res.get("itens"),
               "auto_checks": res.get("auto_checks"), "re_analisados": len(ana),
-              "carry_forward": n_carry, "encerrar_transferidos": n_transf,
+              "carry_forward": n_carry, "titularidade_divergente": n_div,
               "alinhar_titularidade": n_alinhar}
     json.dump(resumo, open(os.path.join(DIR, "resumo_publicacao.json"), "w"), ensure_ascii=False)
     print(json.dumps(resumo, ensure_ascii=False))
