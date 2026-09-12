@@ -83,6 +83,12 @@ def preparar():
     planos_ant = {int(p["robust_atendente"]): p for p in estado.get("planos_dia", [])}
 
     escopo = json.load(open(os.path.join(os.path.dirname(DIR), "escopo.json")))["robust_ids"]
+    # instâncias de WhatsApp (celular dos corretores): mensagem enviada pelo
+    # aparelho chega SEM userId — o autor é resolvido pelo "Source: <slug>"
+    # no fim do corpo (instancias.json: slug → corretor; null = institucional)
+    INST = json.load(open(os.path.join(os.path.dirname(DIR), "instancias.json")))
+    RE_SRC = re.compile(r"\s*Source:\s*([A-Za-z0-9\-]+)[^\n]*\s*$")
+    inst_desconhecidas = set()
     escopo = [r for r in escopo if r in rob2broker]
     nomes_rob = {}
     ru = rget(f"{RB}/usuarios?per_page=200")
@@ -278,20 +284,37 @@ def preparar():
         for m in arr:
             if (m.get("messageType", "").startswith("TYPE_ACTIVITY")
                     or m.get("messageType") == "TYPE_INTERNAL_COMMENT"): continue
+            body = m.get("body") or ""
+            # "Source: <slug>" no fim do corpo = instância (aparelho) por onde a
+            # mensagem passou; vem TAMBÉM nas recebidas — nunca é autor de inbound.
+            slug = None
+            ms = RE_SRC.search(body)
+            if ms:
+                slug = ms.group(1)
+                body = body[:ms.start()].rstrip()
+                if slug not in INST: inst_desconhecidas.add(slug)
             d = {"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
-                 "body": (m.get("body") or "")[:280]}
-            # autor da mensagem manual (qual corretor/instância enviou) — essencial
-            # p/ julgar a titularidade, já que o WeSales passa o contato pra quem
-            # mandou a mensagem mais recente
+                 "body": body[:280]}
+            # autor da mensagem manual (qual corretor enviou) — essencial p/ julgar
+            # a titularidade, já que o WeSales passa o contato pra quem mandou a
+            # mensagem mais recente
             u = m.get("userId")
-            if u and m.get("direction") == "outbound" and ghl2nome.get(u):
-                d["por"] = ghl2nome[u].split()[0]
+            if m.get("direction") == "outbound":
+                if u and ghl2nome.get(u):
+                    d["por"] = ghl2nome[u]                      # enviada pelo app/sistema
+                elif slug and INST.get(slug):
+                    d["por"] = INST[slug]                       # enviada pelo celular do corretor
+            elif slug:
+                # inbound: mensagem DO CLIENTE; "via" só diz em que linha chegou
+                d["via"] = INST.get(slug) or "linha institucional"
             msgs.append(d)
         c["msgs"] = list(reversed(msgs))[-25:]
     with ThreadPoolExecutor(4) as ex: list(ex.map(busca_andamentos, rean))   # Robust: servidor instável, ir leve
     log("andamentos ok")
     with ThreadPoolExecutor(10) as ex: list(ex.map(busca_msgs, rean))
     log("mensagens ok")
+    if inst_desconhecidas:
+        log(f"AVISO instâncias fora do instancias.json (adicionar): {sorted(inst_desconhecidas)}")
 
     # ---- 6. pré-score dos re-analisados ----
     BASE = {0: 30, 1: 35, 2: 45, 3: 55, 4: 65}

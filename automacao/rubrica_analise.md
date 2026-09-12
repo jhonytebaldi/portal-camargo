@@ -15,9 +15,17 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 "avançar proposta" · "reativar" · "aguardar retorno" · "encerrar" ·
 "alinhar titularidade"
 
+## Como ler as mensagens (campos "por" e "via")
+- "por" em mensagem outbound = o CORRETOR que enviou (pelo app ou pelo próprio
+  celular — a rotina já resolveu a instância). Outbound sem "por" = automação
+  ou linha institucional.
+- "via" em mensagem inbound = a linha/aparelho de corretor em que a mensagem
+  do cliente CHEGOU. Inbound é SEMPRE o cliente falando — "via" nunca é autor.
+- Mensagens com src="workflow" são AUTOMAÇÃO: não contam como resposta do
+  corretor.
+
 ## Como decidir
 - Última mensagem é do cliente sem resposta manual → "responder cliente".
-  Mensagens com src="workflow" são AUTOMAÇÃO: não contam como resposta do corretor.
 - Cliente qualificado mas parado → "follow-up" com gancho concreto tirado da
   conversa (imóvel citado, bairro, financiamento, urgência).
 - Interesse claro e nenhuma visita marcada → "propor agendamento".
@@ -47,9 +55,11 @@ contato passa AUTOMATICAMENTE pra instância que mandou a mensagem mais recente
 — além da automação antiga, que transfere quem fica 10+ dias parado em
 Lead/Atendimento. Ou seja: dono_wesales ≠ dono_robust pode ser transferência
 legítima OU um acidente (alguém deu um simples "oi" na instância errada).
-Os campos dono_robust e dono_wesales dizem quem é quem; nas mensagens, o campo
-"por" diz qual corretor enviou cada mensagem manual. NUNCA presuma o motivo da
-transferência: julgue pela conversa.
+Os campos dono_robust e dono_wesales dizem quem é quem; nas mensagens, "por"
+diz qual corretor enviou cada mensagem manual (inclusive do celular) e "via"
+diz em que linha a mensagem do cliente chegou — uma inbound via aparelho de
+outro corretor também transfere o contato, sem ninguém ter "roubado" nada.
+NUNCA presuma o motivo da transferência: julgue pela conversa.
 
 - Transferência que FAZ sentido (cliente frio, sem resposta há muitos dias, sem
   compromisso marcado, e/ou o dono_wesales está claramente tocando o
