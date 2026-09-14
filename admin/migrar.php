@@ -177,6 +177,11 @@ try {
         $feitos[] = 'tools.usa_blocklist (on: painel + plano-acao)';
     }
 
+    // ---- Módulo Capa Financeira → Omie (capa-financeira/schema.php) -----
+    require_once dirname(__DIR__) . '/capa-financeira/lib/Parser.php';
+    require_once dirname(__DIR__) . '/capa-financeira/schema.php';
+    foreach (cf_migrar($pdo) as $f) $feitos[] = 'capa-financeira: ' . $f;
+
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 
