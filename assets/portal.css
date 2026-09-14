@@ -141,10 +141,19 @@ tr.cf-removida td{opacity:.45;text-decoration:line-through}tr.cf-removida td:las
 .cf-resumo{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
 .cf-kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}.cf-kpi span{display:block;font-size:12px;color:var(--mute);text-transform:uppercase}.cf-kpi b{font-size:18px}
 .cf-flags{margin:6px 0 0 18px;padding:0}.cf-flags li{margin:2px 0}
-.cf-barra{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0;position:sticky;top:8px;z-index:5}
+.cf-barra{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0}
 .cf-pend{font-size:13px;color:#7a2f16}.cf-pend.ok{color:var(--moss);font-weight:600}.cf-pend ul{margin:4px 0 0 18px;padding:0}
 .cf-acoes{display:flex;gap:8px;flex-shrink:0}.cf-btn-sec{background:#fff;color:var(--clay);border:1px solid var(--clay)}.cf-btn-sec:hover{background:rgba(180,81,47,.08)}
 .btn:disabled{background:var(--mute);cursor:not-allowed}
 .cf-h2{font-size:17px;margin:20px 0 6px}.cf-h2 small{color:var(--mute);font-weight:500;font-size:13px;margin-left:6px}
 .cf-fieldset{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:0}.cf-fieldset legend{font-weight:700;font-size:13px;padding:0 6px}
 .cf-link{font-size:13px;color:var(--moss);margin-left:10px}
+
+/* revisão: cabeçalho da tabela congelado enquanto a tabela estiver na tela; totais; aplicar pessoa em todas */
+.cf-rev .cf-tbl-wrap{overflow:visible}
+.cf-rev .cf-tbl thead th{position:sticky;top:0;z-index:3;box-shadow:0 1px 0 var(--line)}
+.cf-tbl tfoot td{font-weight:700;background:#efece2;border-top:2px solid var(--line)}
+.cf-aplicar{margin-top:4px;font-size:12px;background:#fff8e1;border:1px solid #e6c765;border-radius:6px;padding:5px 7px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.cf-aplicar button{font:inherit;font-size:12px;padding:3px 8px;border-radius:5px;border:1px solid var(--moss);background:var(--moss);color:#fff;cursor:pointer}
+.cf-aplicar button.sec{background:#fff;color:var(--moss)}
+.cf-toast{position:fixed;bottom:18px;right:18px;background:var(--moss);color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:20}
