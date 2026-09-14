@@ -72,6 +72,17 @@ case 'editar':
             if ($pid) { $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE id = ? AND ativo = 1'); $q->execute([$pid]); if (!$q->fetch()) falha('pessoa inválida'); }
             $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id = ?')->execute([$pid, $l['id']]);
             if ($pid && !empty($in['salvar_alias'])) cf_add_alias($pid, $l['cf_raw']);
+            if ($pid && !empty($in['aplicar_todas'])) {
+                // mesma pessoa em todas as linhas em revisão desta capa com o mesmo favorecido (coluna C)
+                $q = $pdo->prepare("SELECT id, cf_raw FROM cf_lancamentos WHERE capa_id = ? AND tipo = 'P' AND status = 'revisao' AND id <> ?");
+                $q->execute([$capaId, $l['id']]);
+                $ids = [];
+                foreach ($q->fetchAll() as $o) if (CapaParser::key($o['cf_raw']) === CapaParser::key($l['cf_raw'])) $ids[] = (int)$o['id'];
+                if ($ids) {
+                    $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pid]);
+                }
+                $resp['aplicado_em'] = $ids;
+            }
             break;
         case 'funcao':
         case 'natureza':

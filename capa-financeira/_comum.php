@@ -174,6 +174,9 @@ function cf_flag_texto(string $f): string
     if (str_starts_with($f, 'CONSTRUTORA_HIST_DIFERE_CAPA')) return 'Construtora no histórico difere da capa ' . substr($f, strlen('CONSTRUTORA_HIST_DIFERE_CAPA '));
     if (str_starts_with($f, 'DATA_VENDA_HIST_DIFERE_G3')) return 'Data da venda no histórico difere da capa (a capa vence) ' . substr($f, strlen('DATA_VENDA_HIST_DIFERE_G3 '));
     if (str_starts_with($f, 'COD_HIST_DIFERE_B6')) return 'COD no histórico difere do COD da capa ' . substr($f, strlen('COD_HIST_DIFERE_B6 '));
+    if (str_starts_with($f, 'FLUXO_NAO_PAREADO')) return 'Os recebimentos não batem 1:1 com o bloco FLUXO DE PAGAMENTO da capa — parcelas numeradas pela ordem dos lançamentos ' . substr($f, strlen('FLUXO_NAO_PAREADO '));
+    if (str_starts_with($f, 'ARQUIVO_IDENTICO_JA_ENVIADO')) return 'Este arquivo é idêntico a um já enviado ' . substr($f, strlen('ARQUIVO_IDENTICO_JA_ENVIADO '));
+    if (str_starts_with($f, 'LINHAS_REMOVIDAS_NA_NOVA_VERSAO')) return 'Linhas da versão anterior que não existem mais nesta ' . substr($f, strlen('LINHAS_REMOVIDAS_NA_NOVA_VERSAO '));
     if (str_starts_with($f, 'CONDICAO_DIVERGE')) return 'Condição da coluna G difere do prefixo do histórico — decida qual vale ' . substr($f, strlen('CONDICAO_DIVERGE '));
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA_CORTADA:')) return 'Condição não está no dicionário e passou de 20 caracteres: ' . substr($f, 30);
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA:')) return 'Condição não está no dicionário: ' . substr($f, 22);

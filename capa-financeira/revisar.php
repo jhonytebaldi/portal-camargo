@@ -44,6 +44,7 @@ portal_header('Revisar capa', $u);
 ?>
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
 <style>main.wrap{max-width:1560px}</style>
+<div class="cf-rev">
 <div class="cf-top">
   <div>
     <h1 class="home-titulo">Capa #<?= (int)$capa['id'] ?> — <?= h($capa['cliente']) ?> <?= (int)$capa['versao'] > 1 ? '<span class="cf-tag">versão ' . (int)$capa['versao'] . '</span>' : '' ?></h1>
@@ -114,7 +115,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <tbody>
 <?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido';
   $graves = (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')); ?>
-<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= $graves && !(int)$l['revisado'] ? 'cf-tem-grave' : '' ?>" data-id="<?= (int)$l['id'] ?>">
+<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= $graves && !(int)$l['revisado'] ? 'cf-tem-grave' : '' ?>" data-id="<?= (int)$l['id'] ?>" data-cf="<?= h(CapaParser::key($l['cf_raw'])) ?>">
   <td><?= (int)$l['linha_xlsx'] ?><br><?= cf_linha_diff($l, $antById) ?></td>
   <td>
     <?php if ($editavel && !$rem): ?><input type="date" class="cf-in" data-campo="data_prevista" value="<?= h((string)$l['data_prevista']) ?>">
@@ -144,7 +145,9 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   <td><?php if ($editavel): ?><button class="cf-x" data-acao="<?= $rem ? 'restaurar' : 'remover' ?>" title="<?= $rem ? 'restaurar' : 'remover esta linha' ?>"><?= $rem ? '↺' : '✕' ?></button><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
-</tbody></table></div>
+</tbody>
+<tfoot><tr><td colspan="7">Total a pagar (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $pagar))) ?></td><td colspan="5"></td></tr></tfoot>
+</table></div>
 
 <h2 class="cf-h2">Contas a receber <small><?= count($receber) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
@@ -171,7 +174,9 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   <td><?php if ($editavel): ?><button class="cf-x" data-acao="<?= $rem ? 'restaurar' : 'remover' ?>"><?= $rem ? '↺' : '✕' ?></button><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
-</tbody></table></div>
+</tbody>
+<tfoot><tr><td colspan="5">Total a receber (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $receber))) ?></td><td colspan="4"></td></tr></tfoot>
+</table></div>
 
 <p class="cf-dica">Legenda: <?php foreach ($legenda as $k => $v): ?><span class="cf-tag"><?= $k ?></span> <?= $v ?> &nbsp; <?php endforeach; ?></p>
 
@@ -192,12 +197,38 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     if (j.pendencias.length) { box.className = 'cf-pend'; box.innerHTML = '<b>' + j.pendencias.length + ' pendência(s) antes de confirmar:</b><ul>' + j.pendencias.slice(0,12).map(p => '<li>' + p + '</li>').join('') + '</ul>'; btn.disabled = true; }
     else { box.className = 'cf-pend ok'; box.textContent = 'Tudo revisado. Pode confirmar.'; btn.disabled = false; }
   }
+  function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3500); }
+  function aplicarPessoa(tr, pid, ids){
+    // reflete nas outras linhas do mesmo favorecido sem recarregar
+    ids.forEach(oid => { const otr = document.querySelector('tr[data-id="' + oid + '"]'); if (!otr) return;
+      const sel = otr.querySelector('.cf-pessoa'); if (sel) { sel.value = pid; sel.classList.toggle('cf-vazio', !pid); }
+      const cb = otr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
+      otr.querySelectorAll('.cf-aplicar').forEach(x => x.remove()); });
+  }
   document.querySelectorAll('.cf-in').forEach(el => {
     el.addEventListener('change', async () => {
       const tr = el.closest('tr'); const id = +tr.dataset.id; const campo = el.dataset.campo;
       let valor = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
       const body = {acao:'editar', id, campo, valor};
-      if (campo === 'pessoa_id') { const cb = tr.querySelector('.cf-salvar-alias'); body.salvar_alias = cb && cb.checked ? 1 : 0; }
+      if (campo === 'pessoa_id') {
+        const cb = tr.querySelector('.cf-salvar-alias'); body.salvar_alias = cb && cb.checked ? 1 : 0;
+        // outras linhas com o mesmo favorecido (coluna C) ainda sem pessoa ou com pessoa diferente
+        const outras = [...document.querySelectorAll('tr.cf-row[data-cf="' + tr.dataset.cf + '"]')].filter(o => o !== tr && o.querySelector('.cf-pessoa') && o.querySelector('.cf-pessoa').value !== valor);
+        if (valor && outras.length) {
+          tr.querySelectorAll('.cf-aplicar').forEach(x => x.remove());
+          const box = document.createElement('div'); box.className = 'cf-aplicar';
+          box.innerHTML = '<span>Mesmo favorecido em mais ' + outras.length + ' linha(s):</span> <button type="button" data-t="todas">Aplicar em todas</button> <button type="button" class="sec" data-t="uma">Só nesta</button>';
+          el.insertAdjacentElement('afterend', box);
+          box.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
+            body.aplicar_todas = b.dataset.t === 'todas' ? 1 : 0; box.remove();
+            const j = await acao(body); if (!j) return;
+            if (j.aplicado_em) { aplicarPessoa(tr, valor, j.aplicado_em); toast('Pessoa aplicada em ' + (j.aplicado_em.length + 1) + ' linhas'); }
+            el.classList.toggle('cf-vazio', !el.value); if (cb && el.value) cb.parentElement.remove();
+            tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente); atualizaPend(j);
+          }));
+          return;
+        }
+      }
       const j = await acao(body);
       if (!j) return;
       if (j.categoria !== undefined) tr.querySelector('.cf-cat').textContent = j.categoria || '';
@@ -225,4 +256,5 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   });
 })();
 </script>
+</div>
 <?php portal_footer();
