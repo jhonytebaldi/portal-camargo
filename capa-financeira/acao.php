@@ -71,6 +71,10 @@ case 'editar':
             $pid = (int)$valor ?: null;
             if ($pid) { $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE id = ?'); $q->execute([$pid]); if (!$q->fetch()) falha('pessoa inválida'); }
             $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id = ?')->execute([$pid, $l['id']]);
+            // pix padrão da pessoa nas linhas que ainda não têm chave
+            $pixPessoa = null;
+            if ($pid) { $q = $pdo->prepare('SELECT chave_pix FROM cf_pessoas WHERE id = ?'); $q->execute([$pid]); $pixPessoa = $q->fetchColumn() ?: null; }
+            if ($pixPessoa && !$l['chave_pix']) { $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id = ?')->execute([$pixPessoa, $l['id']]); $resp['chave_pix'] = $pixPessoa; }
             if ($pid && !empty($in['salvar_alias'])) cf_add_alias($pid, $l['cf_raw']);
             if ($pid && !empty($in['aplicar_todas'])) {
                 // mesma pessoa em todas as linhas em revisão desta capa com o mesmo favorecido (coluna C)
@@ -80,6 +84,7 @@ case 'editar':
                 foreach ($q->fetchAll() as $o) if (CapaParser::key($o['cf_raw']) === CapaParser::key($l['cf_raw'])) $ids[] = (int)$o['id'];
                 if ($ids) {
                     $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pid]);
+                    if ($pixPessoa) $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id IN (' . implode(',', $ids) . ") AND (chave_pix IS NULL OR chave_pix = '')")->execute([$pixPessoa]);
                 }
                 $resp['aplicado_em'] = $ids;
             }
@@ -104,6 +109,16 @@ case 'editar':
         case 'nota_fiscal':
             $v = mb_substr(CapaParser::norm((string)$valor), 0, 20, 'UTF-8');
             $pdo->prepare('UPDATE cf_lancamentos SET nota_fiscal = ? WHERE id = ?')->execute([$v !== '' ? $v : null, $l['id']]);
+            break;
+        case 'chave_pix':
+            $a = Pix::analisar((string)$valor);
+            if (!$a['valido']) falha('Chave Pix inválida: ' . $a['erro']);
+            $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id = ?')->execute([$a['valor'], $l['id']]);
+            $resp['chave_pix'] = $a['valor']; $resp['pix_tipo'] = $a['tipo'];
+            // guarda como padrão da pessoa se ela ainda não tem
+            if ($a['valor'] && $l['pessoa_id'] && !empty($in['salvar_na_pessoa'])) {
+                $pdo->prepare("UPDATE cf_pessoas SET chave_pix = ? WHERE id = ? AND (chave_pix IS NULL OR chave_pix = '')")->execute([$a['valor'], $l['pessoa_id']]);
+            }
             break;
         case 'revisado':
             $pdo->prepare('UPDATE cf_lancamentos SET revisado = ? WHERE id = ?')->execute([(int)$valor ? 1 : 0, $l['id']]);
@@ -146,8 +161,10 @@ case 'nova_pessoa':
     $fmtCnpj = fn(string $d) => strlen($d) === 14 ? preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $d) : $d;
     $fmtCpf = fn(string $d) => strlen($d) === 11 ? preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $d) : $d;
     $pagarPor = ($in['pagar_por'] ?? '') === 'CPF' || (!$cnpj && $cpf) ? 'CPF' : 'CNPJ';
-    $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, ativo) VALUES (?,?,?,?,?,?,1)')
-        ->execute([$nome, $key, CapaParser::norm((string)($in['razao_social'] ?? '')) ?: null, $cnpj ? $fmtCnpj($cnpj) : null, $cpf ? $fmtCpf($cpf) : null, $pagarPor]);
+    $px = Pix::analisar((string)($in['chave_pix'] ?? ''));
+    if (!$px['valido']) falha('Chave Pix inválida: ' . $px['erro']);
+    $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, chave_pix, ativo) VALUES (?,?,?,?,?,?,?,1)')
+        ->execute([$nome, $key, CapaParser::norm((string)($in['razao_social'] ?? '')) ?: null, $cnpj ? $fmtCnpj($cnpj) : null, $cpf ? $fmtCpf($cpf) : null, $pagarPor, $px['valor']]);
     $pid = (int)$pdo->lastInsertId();
     if (CapaParser::key($l['cf_raw']) !== $key) cf_add_alias($pid, $l['cf_raw']);
     $ids = [$l['id']];
@@ -157,7 +174,8 @@ case 'nova_pessoa':
         foreach ($q->fetchAll() as $o) if (CapaParser::key($o['cf_raw']) === CapaParser::key($l['cf_raw'])) $ids[] = (int)$o['id'];
     }
     $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pid]);
-    $resp['pessoa'] = ['id' => $pid, 'nome' => $nome];
+    if ($px['valor']) $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id IN (' . implode(',', $ids) . ")")->execute([$px['valor']]);
+    $resp['pessoa'] = ['id' => $pid, 'nome' => $nome, 'chave_pix' => $px['valor']];
     $resp['aplicado_em'] = array_values(array_filter($ids, fn($i) => $i !== (int)$l['id']));
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;

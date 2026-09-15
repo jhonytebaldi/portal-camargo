@@ -82,8 +82,8 @@ try {
 
     $ins = $pdo->prepare('INSERT INTO cf_lancamentos (capa_id, linha_xlsx, tipo, ordinal, chave_estavel, chave_exata, data_raw, cf_raw, favorecido_hist,
         funcao_raw, natureza_raw, clientes_hist, construtora_hist, unidade, status_imovel, data_venda_hist, col_g, prefixo, valor, parcela, total_parcelas,
-        rotulo_fluxo, flags, data_prevista, pessoa_id, funcao, natureza, categoria, nota_fiscal, condicao, status, dup_tipo, dup_de)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'revisao\',?,?)');
+        rotulo_fluxo, flags, data_prevista, pessoa_id, funcao, natureza, categoria, nota_fiscal, condicao, chave_pix, status, dup_tipo, dup_de)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'revisao\',?,?)');
 
     $ordinais = [];
     $vistos = [];
@@ -118,7 +118,8 @@ try {
             $l['funcao'], $l['natureza'], $l['clientes_hist'], $l['construtora_hist'], $l['unidade'], $l['status_imovel'], $l['data_venda_hist'],
             $l['col_g'], $l['prefixo'], $l['valor'], $l['parcela'] ?? null, $l['total_parcelas'] ?? null, $l['rotulo_fluxo'] ?? null,
             json_encode($flags, JSON_UNESCAPED_UNICODE),
-            $l['data'], $pessoaId, $l['funcao'], $l['natureza'], $categoria, $l['nota_fiscal'], $l['condicao'], $dupTipo, $dupDe,
+            $l['data'], $pessoaId, $l['funcao'], $l['natureza'], $categoria, $l['nota_fiscal'], $l['condicao'],
+            ($pessoaId && !empty($pessoas[$pessoaId]['chave_pix'])) ? $pessoas[$pessoaId]['chave_pix'] : null, $dupTipo, $dupDe,
         ]);
     }
     // linhas da versão anterior que sumiram

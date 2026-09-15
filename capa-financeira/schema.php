@@ -107,7 +107,7 @@ function cf_migrar(PDO $pdo): array
             departamento_omie VARCHAR(100) NULL,
             conta_vertical VARCHAR(60) NULL,             -- conta corrente padrão no Omie (por empresa)
             conta_camargo VARCHAR(60) NULL,
-            chave_pix VARCHAR(120) NULL,
+            chave_pix VARCHAR(120) NULL,                 -- chave Pix padrão de pagamento
             broker_id VARCHAR(40) NULL,                  -- vínculo com brokers (portal) p/ o corretor baixar o recibo
             ativo TINYINT(1) NOT NULL DEFAULT 1,
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -142,6 +142,26 @@ function cf_migrar(PDO $pdo): array
             PRIMARY KEY (cod, tipo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cf_sequencias';
+    }
+    // colunas acrescentadas depois da 1ª versão
+    $colExiste = function (string $t, string $c) use ($pdo): bool {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
+        $st->execute([$t, $c]); return (int)$st->fetchColumn() > 0;
+    };
+    if (!$colExiste('cf_lancamentos', 'chave_pix')) {
+        $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN chave_pix VARCHAR(120) NULL AFTER condicao");
+        $feitos[] = 'cf_lancamentos.chave_pix';
+    }
+    // normaliza chaves Pix importadas cruas (uma vez; só as válidas)
+    if (!$tem('cf_config') || (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave='pix_normalizado'")->fetchColumn() === 0) {
+        require_once __DIR__ . '/lib/Pix.php';
+        $n = 0;
+        foreach ($pdo->query("SELECT id, chave_pix FROM cf_pessoas WHERE chave_pix IS NOT NULL AND chave_pix <> ''")->fetchAll() as $r) {
+            $a = Pix::analisar((string)$r['chave_pix']);
+            if ($a['valido'] && $a['valor'] !== null && $a['valor'] !== $r['chave_pix']) { $pdo->prepare('UPDATE cf_pessoas SET chave_pix = ? WHERE id = ?')->execute([$a['valor'], $r['id']]); $n++; }
+        }
+        $pdo->prepare("INSERT IGNORE INTO cf_config (chave, valor) VALUES ('pix_normalizado', '1')")->execute();
+        if ($n) $feitos[] = "chaves pix normalizadas ($n)";
     }
     // registro da ferramenta
     $existe = (int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='capa-financeira'")->fetchColumn();

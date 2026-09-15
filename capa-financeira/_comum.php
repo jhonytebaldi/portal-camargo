@@ -10,6 +10,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/layout.php';
 require_once __DIR__ . '/../admin/comum.php';     // csrf_token() / csrf_check()
 require_once __DIR__ . '/lib/Parser.php';
+require_once __DIR__ . '/lib/Pix.php';
 
 /** Pasta de dados do módulo (fora da web). */
 function cf_data_dir(): string

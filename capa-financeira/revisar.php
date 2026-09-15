@@ -43,7 +43,8 @@ foreach ($linhas as $l) {
 portal_header('Revisar capa', $u);
 ?>
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
-<style>main.wrap{max-width:1560px}</style>
+<style>main.wrap{max-width:1680px}</style>
+<script src="/capa-financeira/pix.js?v=<?= @filemtime(__DIR__ . '/pix.js') ?: 1 ?>"></script>
 <div class="cf-rev">
 <div class="cf-top">
   <div>
@@ -111,7 +112,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <h2 class="cf-h2">Contas a pagar <small><?= count($pagar) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-tbl" id="tbl-pagar">
-<thead><tr><th>L</th><th>Data prevista</th><th>Favorecido (coluna C)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal</th><th>Condição</th><th>Alertas</th><th>Ok</th><th></th></tr></thead>
+<thead><tr><th>L</th><th>Data prevista</th><th>Favorecido (coluna C)</th><th>Pessoa (dicionário)</th><th>Chave Pix (destino)</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal</th><th>Condição</th><th>Alertas</th><th>Ok</th><th></th></tr></thead>
 <tbody>
 <?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido';
   $graves = (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')); ?>
@@ -136,6 +137,9 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       <?php if (!$l['pessoa_id']): ?><label class="cf-mini"><input type="checkbox" class="cf-salvar-alias" checked> salvar "<?= h($l['cf_raw']) ?>" como apelido</label><?php endif; ?>
     <?php else: ?><?= h($pessoas[(int)$l['pessoa_id']]['nome'] ?? '—') ?><?php endif; ?>
   </td>
+  <td class="cf-pix-cel"><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-pix" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" placeholder="CPF, CNPJ, e-mail, telefone…" autocomplete="off">
+      <?php if ($l['pessoa_id'] && empty($pessoas[(int)$l['pessoa_id']]['chave_pix'])): ?><label class="cf-mini"><input type="checkbox" class="cf-pix-salvar" checked> salvar como padrão da pessoa</label><?php endif; ?>
+      <?php else: ?><?= h((string)$l['chave_pix']) ?: '—' ?><?php endif; ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="funcao"><?php foreach (array_unique(array_merge($funcoes, [$l['funcao'] ?: 'CORRETOR'])) as $f): ?><option <?= $f === $l['funcao'] ? 'selected' : '' ?>><?= h($f) ?></option><?php endforeach; ?></select><?php else: ?><?= h((string)$l['funcao']) ?><?php endif; ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="natureza"><option <?= $l['natureza'] === 'COMISSAO' ? 'selected' : '' ?>>COMISSAO</option><option <?= $l['natureza'] === 'BONUS' ? 'selected' : '' ?>>BONUS</option></select><?php else: ?><?= h((string)$l['natureza']) ?><?php endif; ?></td>
   <td class="cf-cat"><?= h((string)$l['categoria']) ?: '<span class="cf-tag cf-grave">sem categoria</span>' ?></td>
@@ -148,7 +152,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 </tr>
 <?php endforeach; ?>
 </tbody>
-<tfoot><tr><td colspan="7">Total a pagar (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $pagar))) ?></td><td colspan="5"></td></tr></tfoot>
+<tfoot><tr><td colspan="8">Total a pagar (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $pagar))) ?></td><td colspan="5"></td></tr></tfoot>
 </table></div>
 
 <h2 class="cf-h2">Contas a receber <small><?= count($receber) ?> linha(s)</small></h2>
@@ -205,6 +209,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     ids.forEach(oid => { const otr = document.querySelector('tr[data-id="' + oid + '"]'); if (!otr) return;
       const sel = otr.querySelector('.cf-pessoa'); if (sel) { sel.value = pid; sel.classList.toggle('cf-vazio', !pid); }
       const cb = otr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
+      const pxSrc = tr.querySelector('.cf-pix'), pxDst = otr.querySelector('.cf-pix');
+      if (pxSrc && pxDst && !pxDst.value && pxSrc.value) { pxDst.value = pxSrc.value; pxDst.dispatchEvent(new Event('input')); }
       otr.querySelectorAll('.cf-aplicar').forEach(x => x.remove()); });
   }
   function novaPessoaForm(el, tr){
@@ -216,14 +222,18 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       + '<input class="cf-in" placeholder="Nome (como vai no recibo)" data-n="nome" style="width:100%;max-width:none"> '
       + '<input class="cf-in" placeholder="Razão social (empresa)" data-n="razao_social" style="width:100%;max-width:none"> '
       + '<input class="cf-in" placeholder="CNPJ" data-n="cnpj" style="width:48%"> <input class="cf-in" placeholder="CPF" data-n="cpf" style="width:48%"> '
+      + '<input class="cf-in cf-pix" placeholder="Chave Pix (CPF, CNPJ, e-mail, telefone, aleatória)" data-n="chave_pix" style="width:100%;max-width:none"> '
       + (outras.length ? '<label class="cf-mini" style="width:100%"><input type="checkbox" data-n="todas" checked> aplicar também nas outras ' + outras.length + ' linha(s) deste favorecido</label>' : '')
       + '<button type="button" data-t="salvar">Salvar e usar</button> <button type="button" class="sec" data-t="cancelar">Cancelar</button>';
     el.insertAdjacentElement('afterend', box);
+    window.cfPix && window.cfPix.liga(box.querySelector('[data-n=chave_pix]'));
     const inNome = box.querySelector('[data-n=nome]'); inNome.value = nomeCapa.split(' ').map(w => w.length > 2 ? w[0] + w.slice(1).toLowerCase() : w.toLowerCase()).join(' '); inNome.focus();
     box.querySelector('[data-t=cancelar]').addEventListener('click', () => { box.remove(); el.value = ''; });
     box.querySelector('[data-t=salvar]').addEventListener('click', async () => {
+      const pixEl = box.querySelector('[data-n=chave_pix]');
+      if (pixEl.value && pixEl.dataset.pixValido !== '1') { alert('Chave Pix inválida — confira antes de salvar.'); return; }
       const b = {acao:'nova_pessoa', id, nome: inNome.value, razao_social: box.querySelector('[data-n=razao_social]').value,
-        cnpj: box.querySelector('[data-n=cnpj]').value, cpf: box.querySelector('[data-n=cpf]').value,
+        cnpj: box.querySelector('[data-n=cnpj]').value, cpf: box.querySelector('[data-n=cpf]').value, chave_pix: pixEl.value,
         aplicar_todas: (box.querySelector('[data-n=todas]') && box.querySelector('[data-n=todas]').checked) ? 1 : 0};
       const j = await acao(b); if (!j) return;
       // adiciona a pessoa nova em todos os selects da página
@@ -231,6 +241,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       el.value = j.pessoa.id; el.classList.remove('cf-vazio'); box.remove();
       const cb = tr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
       if (j.aplicado_em && j.aplicado_em.length) aplicarPessoa(tr, String(j.pessoa.id), j.aplicado_em);
+      if (j.pessoa.chave_pix) [tr, ...(j.aplicado_em || []).map(i => document.querySelector('tr[data-id="' + i + '"]'))].forEach(r => { const px = r && r.querySelector('.cf-pix'); if (px) { px.value = j.pessoa.chave_pix; px.dispatchEvent(new Event('input')); } });
       toast('Pessoa "' + j.pessoa.nome + '" cadastrada' + (j.aplicado_em && j.aplicado_em.length ? ' e aplicada em ' + (j.aplicado_em.length + 1) + ' linhas' : ''));
       tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente); atualizaPend(j);
     });
@@ -240,7 +251,13 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       const tr = el.closest('tr'); const id = +tr.dataset.id; const campo = el.dataset.campo;
       let valor = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
       if (campo === 'pessoa_id' && valor === '__nova__') { novaPessoaForm(el, tr); return; }
+      if (campo === 'chave_pix') {
+        if (el.value && el.dataset.pixValido !== '1') { toast('Chave Pix inválida — não salvei'); return; }
+        if (el.value && el.dataset.pixValor === '') { toast('Chave Pix incompleta — não salvei'); return; }
+        valor = el.dataset.pixValor || '';
+      }
       const body = {acao:'editar', id, campo, valor};
+      if (campo === 'chave_pix') { const sp = tr.querySelector('.cf-pix-salvar'); body.salvar_na_pessoa = sp && sp.checked ? 1 : 0; }
       if (campo === 'pessoa_id') {
         const cb = tr.querySelector('.cf-salvar-alias'); body.salvar_alias = cb && cb.checked ? 1 : 0;
         // outras linhas com o mesmo favorecido (coluna C) ainda sem pessoa ou com pessoa diferente
@@ -263,6 +280,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       const j = await acao(body);
       if (!j) return;
       if (j.categoria !== undefined) tr.querySelector('.cf-cat').textContent = j.categoria || '';
+      if (j.chave_pix !== undefined && campo !== 'chave_pix') { const px = tr.querySelector('.cf-pix'); if (px && !px.value) { px.value = j.chave_pix || ''; px.dispatchEvent(new Event('input')); } }
+      if (campo === 'chave_pix' && j.chave_pix) { const sp = tr.querySelector('.cf-pix-salvar'); if (sp) sp.parentElement.remove(); }
       if (j.nota_fiscal !== undefined) { const nf = tr.querySelector('.cf-nf'); if (nf) nf.value = j.nota_fiscal || ''; }
       if (campo === 'pessoa_id') { el.classList.toggle('cf-vazio', !el.value); const cb = tr.querySelector('.cf-salvar-alias'); if (cb && el.value) cb.parentElement.remove(); }
       if (campo === 'revisado' || campo === 'pessoa_id' || campo === 'data_prevista') tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente);

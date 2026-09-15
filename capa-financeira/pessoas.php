@@ -30,10 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nome = CapaParser::norm((string)($_POST['nome'] ?? ''));
             if ($nome === '') throw new RuntimeException('Nome obrigatório');
             $cnpj = cf_so_digitos((string)($_POST['cnpj'] ?? '')); $cpf = cf_so_digitos((string)($_POST['cpf'] ?? ''));
+            $pix = Pix::analisar((string)($_POST['chave_pix'] ?? ''));
+            if (!$pix['valido']) throw new RuntimeException('Chave Pix inválida: ' . $pix['erro']);
             $dados = [$nome, CapaParser::key($nome), CapaParser::norm((string)($_POST['razao_social'] ?? '')) ?: null,
                 $cnpj ? cf_fmt_cnpj($cnpj) : null, $cpf ? cf_fmt_cpf($cpf) : null, ($_POST['pagar_por'] ?? 'CNPJ') === 'CPF' ? 'CPF' : 'CNPJ',
                 CapaParser::norm((string)($_POST['departamento_omie'] ?? '')) ?: null, CapaParser::norm((string)($_POST['conta_vertical'] ?? '')) ?: null,
-                CapaParser::norm((string)($_POST['conta_camargo'] ?? '')) ?: null, CapaParser::norm((string)($_POST['chave_pix'] ?? '')) ?: null,
+                CapaParser::norm((string)($_POST['conta_camargo'] ?? '')) ?: null, $pix['valor'],
                 !empty($_POST['ativo']) ? 1 : 0];
             if ($id) { $dados[] = $id; $pdo->prepare('UPDATE cf_pessoas SET nome=?, nome_key=?, razao_social=?, cnpj=?, cpf=?, pagar_por=?, departamento_omie=?, conta_vertical=?, conta_camargo=?, chave_pix=?, ativo=? WHERE id=?')->execute($dados); }
             else { $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, departamento_omie, conta_vertical, conta_camargo, chave_pix, ativo) VALUES (?,?,?,?,?,?,?,?,?,?,?)')->execute($dados); $id = (int)$pdo->lastInsertId(); }
@@ -79,6 +81,7 @@ if (!empty($_GET['id'])) $edit = $pessoas[(int)$_GET['id']] ?? null;
 portal_header('Pessoas — Capa Financeira', $u);
 ?>
 <style>main.wrap{max-width:1400px}</style>
+<script src="/capa-financeira/pix.js?v=<?= @filemtime(__DIR__ . '/pix.js') ?: 1 ?>"></script>
 <div class="cf-top">
   <div><h1 class="home-titulo">Pessoas (dicionário)</h1>
   <p class="home-sub">Quem recebe comissão. O nome da capa só é associado sozinho quando bate exatamente com o nome ou um apelido daqui; o resto você escolhe na revisão.</p></div>
@@ -106,7 +109,7 @@ portal_header('Pessoas — Capa Financeira', $u);
       <label>Conta corrente padrão (Vertical)<input name="conta_vertical" value="<?= h($edit['conta_vertical'] ?? '') ?>" placeholder="nome exato no Omie"></label>
       <label>Conta corrente padrão (Camargo)<input name="conta_camargo" value="<?= h($edit['conta_camargo'] ?? '') ?>"></label>
     </div>
-    <label>Chave PIX<input name="chave_pix" value="<?= h($edit['chave_pix'] ?? '') ?>"></label>
+    <label>Chave PIX (CPF, CNPJ, e-mail, telefone ou aleatória)<input name="chave_pix" class="cf-pix" autocomplete="off" value="<?= h($edit['chave_pix'] ?? '') ?>"></label>
     <label>Apelidos (como aparece nas capas), um por linha<textarea name="aliases_novos" rows="2" placeholder="OSVALDO&#10;FERNANDO FOSSILE"></textarea></label>
     <label class="cf-mini"><input type="checkbox" name="ativo" <?= ($edit['ativo'] ?? 1) ? 'checked' : '' ?>> ativo</label>
     <div><button class="btn">Salvar</button> <?php if ($edit): ?><a class="cf-link" href="/capa-financeira/pessoas.php">nova pessoa</a><?php endif; ?></div>
