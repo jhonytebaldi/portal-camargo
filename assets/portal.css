@@ -157,3 +157,6 @@ tr.cf-removida td{opacity:.45;text-decoration:line-through}tr.cf-removida td:las
 .cf-aplicar button{font:inherit;font-size:12px;padding:3px 8px;border-radius:5px;border:1px solid var(--moss);background:var(--moss);color:#fff;cursor:pointer}
 .cf-aplicar button.sec{background:#fff;color:var(--moss)}
 .cf-toast{position:fixed;bottom:18px;right:18px;background:var(--moss);color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:20}
+.cf-pix-cel .cf-pix{width:190px;max-width:none}
+.cf-pix-tipo{display:block;font-size:11px;color:var(--mute);margin-top:2px}
+.cf-pix.cf-pix-erro{border-color:var(--clay);background:#fff6f2}small.cf-pix-erro{color:var(--clay);font-weight:600}
