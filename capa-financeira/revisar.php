@@ -15,6 +15,12 @@ $st->execute([$id]);
 $capa = $st->fetch();
 if (!$capa) { http_response_code(404); exit('Capa não encontrada.'); }
 
+// linhas em revisão sem chave Pix herdam a padrão da pessoa (capas enviadas antes do campo existir, ou pessoa que ganhou chave depois)
+if ($capa['status'] === 'revisao') {
+    $pdo->prepare("UPDATE cf_lancamentos l JOIN cf_pessoas p ON p.id = l.pessoa_id
+                   SET l.chave_pix = p.chave_pix
+                   WHERE l.capa_id = ? AND l.status = 'revisao' AND (l.chave_pix IS NULL OR l.chave_pix = '') AND p.chave_pix IS NOT NULL AND p.chave_pix <> ''")->execute([$id]);
+}
 $st = $pdo->prepare('SELECT * FROM cf_lancamentos WHERE capa_id = ? ORDER BY linha_xlsx');
 $st->execute([$id]);
 $linhas = $st->fetchAll();

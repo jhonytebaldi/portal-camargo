@@ -151,6 +151,9 @@ function cf_migrar(PDO $pdo): array
     if (!$colExiste('cf_lancamentos', 'chave_pix')) {
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN chave_pix VARCHAR(120) NULL AFTER condicao");
         $feitos[] = 'cf_lancamentos.chave_pix';
+        // capas já em revisão herdam a chave padrão da pessoa
+        $pdo->exec("UPDATE cf_lancamentos l JOIN cf_pessoas p ON p.id = l.pessoa_id SET l.chave_pix = p.chave_pix
+                    WHERE l.status = 'revisao' AND (l.chave_pix IS NULL OR l.chave_pix = '') AND p.chave_pix IS NOT NULL AND p.chave_pix <> ''");
     }
     // normaliza chaves Pix importadas cruas (uma vez; só as válidas)
     if (!$tem('cf_config') || (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave='pix_normalizado'")->fetchColumn() === 0) {
