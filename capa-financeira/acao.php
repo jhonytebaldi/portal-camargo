@@ -69,7 +69,7 @@ case 'editar':
             break;
         case 'pessoa_id':
             $pid = (int)$valor ?: null;
-            if ($pid) { $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE id = ? AND ativo = 1'); $q->execute([$pid]); if (!$q->fetch()) falha('pessoa inválida'); }
+            if ($pid) { $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE id = ?'); $q->execute([$pid]); if (!$q->fetch()) falha('pessoa inválida'); }
             $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id = ?')->execute([$pid, $l['id']]);
             if ($pid && !empty($in['salvar_alias'])) cf_add_alias($pid, $l['cf_raw']);
             if ($pid && !empty($in['aplicar_todas'])) {
@@ -130,6 +130,35 @@ case 'editar_capa':
     $v = preg_replace('/\D+/', '', (string)($in['valor'] ?? '')) ?: null;
     $pdo->prepare('UPDATE cf_capas SET cod = ? WHERE id = ?')->execute([$v, $capaId]);
     $capa['cod'] = $v;
+    $resp['pendencias'] = cf_pendencias($pdo, $capa);
+    break;
+
+case 'nova_pessoa':
+    // cadastra direto da revisão e já associa à linha (e às demais do mesmo favorecido, se pedido)
+    $l = cf_linha($pdo, (int)($in['id'] ?? 0), $capaId);
+    $nome = CapaParser::norm((string)($in['nome'] ?? ''));
+    if ($nome === '') falha('informe o nome');
+    $key = CapaParser::key($nome);
+    $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE nome_key = ?'); $q->execute([$key]);
+    if ($ex = $q->fetchColumn()) falha('já existe uma pessoa com esse nome (id ' . (int)$ex . ') — selecione na lista');
+    $dig = fn(string $x) => preg_replace('/\D+/', '', $x) ?? '';
+    $cnpj = $dig((string)($in['cnpj'] ?? '')); $cpf = $dig((string)($in['cpf'] ?? ''));
+    $fmtCnpj = fn(string $d) => strlen($d) === 14 ? preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $d) : $d;
+    $fmtCpf = fn(string $d) => strlen($d) === 11 ? preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $d) : $d;
+    $pagarPor = ($in['pagar_por'] ?? '') === 'CPF' || (!$cnpj && $cpf) ? 'CPF' : 'CNPJ';
+    $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, ativo) VALUES (?,?,?,?,?,?,1)')
+        ->execute([$nome, $key, CapaParser::norm((string)($in['razao_social'] ?? '')) ?: null, $cnpj ? $fmtCnpj($cnpj) : null, $cpf ? $fmtCpf($cpf) : null, $pagarPor]);
+    $pid = (int)$pdo->lastInsertId();
+    if (CapaParser::key($l['cf_raw']) !== $key) cf_add_alias($pid, $l['cf_raw']);
+    $ids = [$l['id']];
+    if (!empty($in['aplicar_todas'])) {
+        $q = $pdo->prepare("SELECT id, cf_raw FROM cf_lancamentos WHERE capa_id = ? AND tipo = 'P' AND status = 'revisao' AND id <> ?");
+        $q->execute([$capaId, $l['id']]);
+        foreach ($q->fetchAll() as $o) if (CapaParser::key($o['cf_raw']) === CapaParser::key($l['cf_raw'])) $ids[] = (int)$o['id'];
+    }
+    $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pid]);
+    $resp['pessoa'] = ['id' => $pid, 'nome' => $nome];
+    $resp['aplicado_em'] = array_values(array_filter($ids, fn($i) => $i !== (int)$l['id']));
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;
 

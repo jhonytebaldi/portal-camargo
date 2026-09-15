@@ -54,7 +54,7 @@ if ($capa['cod'] !== null) {
 }
 
 /* ---- pessoas (resolução exata) ---- */
-$pessoas = cf_pessoas();
+$pessoas = cf_pessoas(false);   // desligados também: quem saiu ainda recebe parcelas
 
 $pdo->beginTransaction();
 try {

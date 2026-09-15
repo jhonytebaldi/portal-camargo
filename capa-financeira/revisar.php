@@ -18,7 +18,7 @@ if (!$capa) { http_response_code(404); exit('Capa não encontrada.'); }
 $st = $pdo->prepare('SELECT * FROM cf_lancamentos WHERE capa_id = ? ORDER BY linha_xlsx');
 $st->execute([$id]);
 $linhas = $st->fetchAll();
-$pessoas = cf_pessoas();
+$pessoas = cf_pessoas(false);   // inclui desligados: quem saiu ainda tem recebíveis
 $categorias = cf_config('categorias', []);
 $empresas = array_column(cf_config('empresas', []), null, 'id');
 $capaFlags = json_decode((string)$capa['capa_flags'], true) ?: [];
@@ -127,9 +127,11 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     <?php if ($editavel && !$rem): ?>
       <select class="cf-in cf-pessoa <?= $l['pessoa_id'] ? '' : 'cf-vazio' ?>" data-campo="pessoa_id">
         <option value="">— não identificado —</option>
+        <option value="__nova__">＋ Cadastrar nova pessoa…</option>
         <?php $sug = $l['pessoa_id'] ? [] : cf_sugerir_pessoas($l['cf_raw'], $pessoas);
         if ($sug): ?><optgroup label="Parecidos (confira!)"><?php foreach ($sug as $pid): ?><option value="<?= $pid ?>">≈ <?= h($pessoas[$pid]['nome']) ?></option><?php endforeach; ?></optgroup><?php endif; ?>
-        <optgroup label="Todas"><?php foreach ($pessoas as $pid => $p): ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?></option><?php endforeach; ?></optgroup>
+        <optgroup label="Equipe"><?php foreach ($pessoas as $pid => $p): if (!$p['ativo']) continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?></option><?php endforeach; ?></optgroup>
+        <optgroup label="Desligados"><?php foreach ($pessoas as $pid => $p): if ($p['ativo']) continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?> (desligado)</option><?php endforeach; ?></optgroup>
       </select>
       <?php if (!$l['pessoa_id']): ?><label class="cf-mini"><input type="checkbox" class="cf-salvar-alias" checked> salvar "<?= h($l['cf_raw']) ?>" como apelido</label><?php endif; ?>
     <?php else: ?><?= h($pessoas[(int)$l['pessoa_id']]['nome'] ?? '—') ?><?php endif; ?>
@@ -205,10 +207,39 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       const cb = otr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
       otr.querySelectorAll('.cf-aplicar').forEach(x => x.remove()); });
   }
+  function novaPessoaForm(el, tr){
+    const id = +tr.dataset.id; const nomeCapa = tr.querySelector('td:nth-child(3) b').textContent.trim();
+    tr.querySelectorAll('.cf-aplicar,.cf-nova').forEach(x => x.remove());
+    const outras = [...document.querySelectorAll('tr.cf-row[data-cf="' + tr.dataset.cf + '"]')].filter(o => o !== tr && o.querySelector('.cf-pessoa'));
+    const box = document.createElement('div'); box.className = 'cf-aplicar cf-nova';
+    box.innerHTML = '<div style="width:100%"><b>Nova pessoa</b></div>'
+      + '<input class="cf-in" placeholder="Nome (como vai no recibo)" data-n="nome" style="width:100%;max-width:none"> '
+      + '<input class="cf-in" placeholder="Razão social (empresa)" data-n="razao_social" style="width:100%;max-width:none"> '
+      + '<input class="cf-in" placeholder="CNPJ" data-n="cnpj" style="width:48%"> <input class="cf-in" placeholder="CPF" data-n="cpf" style="width:48%"> '
+      + (outras.length ? '<label class="cf-mini" style="width:100%"><input type="checkbox" data-n="todas" checked> aplicar também nas outras ' + outras.length + ' linha(s) deste favorecido</label>' : '')
+      + '<button type="button" data-t="salvar">Salvar e usar</button> <button type="button" class="sec" data-t="cancelar">Cancelar</button>';
+    el.insertAdjacentElement('afterend', box);
+    const inNome = box.querySelector('[data-n=nome]'); inNome.value = nomeCapa.split(' ').map(w => w.length > 2 ? w[0] + w.slice(1).toLowerCase() : w.toLowerCase()).join(' '); inNome.focus();
+    box.querySelector('[data-t=cancelar]').addEventListener('click', () => { box.remove(); el.value = ''; });
+    box.querySelector('[data-t=salvar]').addEventListener('click', async () => {
+      const b = {acao:'nova_pessoa', id, nome: inNome.value, razao_social: box.querySelector('[data-n=razao_social]').value,
+        cnpj: box.querySelector('[data-n=cnpj]').value, cpf: box.querySelector('[data-n=cpf]').value,
+        aplicar_todas: (box.querySelector('[data-n=todas]') && box.querySelector('[data-n=todas]').checked) ? 1 : 0};
+      const j = await acao(b); if (!j) return;
+      // adiciona a pessoa nova em todos os selects da página
+      document.querySelectorAll('select.cf-pessoa').forEach(sel => { const o = document.createElement('option'); o.value = j.pessoa.id; o.textContent = j.pessoa.nome; sel.appendChild(o); });
+      el.value = j.pessoa.id; el.classList.remove('cf-vazio'); box.remove();
+      const cb = tr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
+      if (j.aplicado_em && j.aplicado_em.length) aplicarPessoa(tr, String(j.pessoa.id), j.aplicado_em);
+      toast('Pessoa "' + j.pessoa.nome + '" cadastrada' + (j.aplicado_em && j.aplicado_em.length ? ' e aplicada em ' + (j.aplicado_em.length + 1) + ' linhas' : ''));
+      tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente); atualizaPend(j);
+    });
+  }
   document.querySelectorAll('.cf-in').forEach(el => {
     el.addEventListener('change', async () => {
       const tr = el.closest('tr'); const id = +tr.dataset.id; const campo = el.dataset.campo;
       let valor = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
+      if (campo === 'pessoa_id' && valor === '__nova__') { novaPessoaForm(el, tr); return; }
       const body = {acao:'editar', id, campo, valor};
       if (campo === 'pessoa_id') {
         const cb = tr.querySelector('.cf-salvar-alias'); body.salvar_alias = cb && cb.checked ? 1 : 0;

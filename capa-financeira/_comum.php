@@ -89,7 +89,7 @@ function cf_resolver_pessoa(string $nome, ?array $pessoas = null): ?int
     return null;
 }
 
-/** Sugestões (não automáticas): primeiro nome igual + palavras em comum. */
+/** Sugestões (não automáticas): primeiro nome igual + palavras em comum (inclui desligados). */
 function cf_sugerir_pessoas(string $nome, ?array $pessoas = null, int $max = 4): array
 {
     $t = preg_split('/ /', CapaParser::key($nome), -1, PREG_SPLIT_NO_EMPTY) ?: [];
