@@ -218,6 +218,8 @@ function cf_migrar(PDO $pdo): array
             ['id' => 'camargo',  'nome' => 'IMOBILIARIA CAMARGO', 'razao' => 'IMOBILIARIA CAMARGO', 'cnpj' => '28.987.418/0001-53', 'conta_padrao' => ''],
         ], JSON_UNESCAPED_UNICODE),
         'corretor_baixa_recibo' => '1',
+        // nomes das contas correntes cadastradas no Omie (sugestões na exportação; edite em Configurações)
+        'contas_omie' => json_encode(['vertical' => ['Sicredi', 'Banco Inter', 'Sicoob', 'Caixinha', 'Omie.CASH'], 'camargo' => ['Sicredi', 'Banco Inter', 'Caixa Econômica Federal', 'Caixinha', 'Omie.CASH']], JSON_UNESCAPED_UNICODE),
     ];
     foreach ($padroes as $k => $v) { $ins->execute([$k, $v]); if ($ins->rowCount()) $feitos[] = "config:$k"; }
     return $feitos;

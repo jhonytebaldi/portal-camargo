@@ -75,6 +75,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             exit(json_encode(['ok' => true, 'valor' => $valor]));
         }
+        if ($acao === 'conta_padrao') {
+            $empresa = (string)($in['empresa'] ?? ''); $tipo = ($in['tipo'] ?? 'P') === 'R' ? 'R' : 'P';
+            if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            $valor = mb_substr(trim((string)($in['valor'] ?? '')), 0, 40);
+            $emp = cf_config('empresas', []);
+            foreach ($emp as &$e) if ($e['id'] === $empresa) $e[$tipo === 'P' ? 'conta_padrao_cp' : 'conta_padrao'] = $valor;
+            unset($e);
+            cf_config_set('empresas', $emp);
+            exit(json_encode(['ok' => true, 'valor' => $valor]));
+        }
         if ($acao === 'gerar') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
             if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos');
@@ -180,6 +190,8 @@ portal_header('Exportar para o Omie', $u);
     <label>Data de registro <input type="date" id="exp-reg" class="cf-in" value="<?= date('Y-m-d') ?>"></label>
     <label>Data de emissão =
       <select id="exp-emi" class="cf-in"><option value="venda">data da venda (capa)</option><option value="registro">data de registro</option><option value="prevista">vencimento</option></select></label>
+    <label title="conta bancária da empresa no Omie (nome exato), usada em toda linha que não tiver conta própria">Conta corrente padrão (<?= $tipo === 'P' ? 'pagar' : 'receber' ?>) <input type="text" id="exp-conta" class="cf-in" list="contas-omie" maxlength="40" placeholder="ex.: Sicredi" value="<?= h((string)($emp[$tipo === 'P' ? 'conta_padrao_cp' : 'conta_padrao'] ?? '')) ?>" style="width:170px"> <button type="button" class="cf-x" id="btn-conta" title="salvar como padrão desta empresa">salvar</button></label>
+    <datalist id="contas-omie"><?php foreach ((array)(cf_config('contas_omie', [])[$empresa] ?? []) as $c): ?><option value="<?= h($c) ?>"></option><?php endforeach; ?></datalist>
     <span class="cf-dica" style="margin:0">Vencimento e Previsão = data prevista da linha. Nº Documento = código de integração. Observações levam cliente, construtora, imóvel, venda, COD, recibo, função e condição.</span>
   </div>
   <div class="cf-acoes"><button class="btn" id="btn-gerar">Gerar planilha (<span id="exp-n">0</span> linhas · <span id="exp-total">R$ 0,00</span>)</button></div>
@@ -196,7 +208,7 @@ portal_header('Exportar para o Omie', $u);
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['funcao']) ?><?= $l['natureza'] === 'BONUS' ? ' (BONUS)' : '' ?></small></td>
   <td><?= h($p['nome'] ?? '—') ?><br><small class="cf-raw">→ <?= h($m['cols']['C']['s'] ?? '—') ?><?= $p && !empty($p['departamento_omie']) ? ' · dep.: ' . h($p['departamento_omie']) : '' ?></small></td>
   <td><?= h((string)$l['categoria']) ?></td>
-  <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40" title="vazio = padrão da pessoa/empresa"></td>
+  <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" list="contas-omie" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40" title="vazio = padrão da pessoa/empresa"></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
@@ -216,7 +228,7 @@ portal_header('Exportar para o Omie', $u);
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['cf_raw']) ?></small></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="cliente_omie" value="<?= h((string)$l['cliente_omie']) ?>" placeholder="<?= h($m['cols']['C']['s'] ?? '') ?>" maxlength="60" title="vazio = primeiro comprador da capa"></td>
   <td><?= h((string)$l['categoria']) ?></td>
-  <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40"></td>
+  <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" list="contas-omie" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40"></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
@@ -282,6 +294,12 @@ portal_header('Exportar para o Omie', $u);
     const j = await post(body); if (!j) return;
     toast('Salvo — recarregando para reavaliar'); setTimeout(() => location.reload(), 600);
   }));
+  const bcta = document.getElementById('btn-conta');
+  if (bcta) bcta.addEventListener('click', async () => {
+    const v = document.getElementById('exp-conta').value.trim();
+    const j = await post({acao:'conta_padrao', valor: v}); if (!j) return;
+    toast(v ? 'Conta padrão salva — recarregando' : 'Conta padrão removida — recarregando'); setTimeout(() => location.reload(), 600);
+  });
   const bg = document.getElementById('btn-gerar');
   if (bg) bg.addEventListener('click', async () => {
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
