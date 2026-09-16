@@ -160,3 +160,7 @@ tr.cf-removida td{opacity:.45;text-decoration:line-through}tr.cf-removida td:las
 .cf-pix-cel .cf-pix{width:190px;max-width:none}
 .cf-pix-tipo{display:block;font-size:11px;color:var(--mute);margin-top:2px}
 .cf-pix.cf-pix-erro{border-color:var(--clay);background:#fff6f2}small.cf-pix-erro{color:var(--clay);font-weight:600}
+
+.cf-btn-perigo{border-color:var(--clay)!important;color:var(--clay)!important}.cf-btn-perigo:hover{background:rgba(180,81,47,.1)!important}
+.cf-ok-nome{display:block;margin-top:4px;font:inherit;font-size:12px;padding:3px 8px;border-radius:5px;border:1px solid var(--moss);background:var(--moss);color:#fff;cursor:pointer}
+.cf-ok-nome:hover{filter:brightness(1.08)}
