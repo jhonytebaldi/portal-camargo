@@ -20,6 +20,21 @@ $capaId = (int)($in['capa_id'] ?? 0);
 $st = $pdo->prepare('SELECT * FROM cf_capas WHERE id = ?'); $st->execute([$capaId]);
 $capa = $st->fetch();
 if (!$capa) falha('capa não encontrada', 404);
+$acao = (string)($in['acao'] ?? '');
+if ($acao === 'excluir') {
+    // apaga de vez uma capa que nunca foi confirmada (em revisão ou descartada) — nada dela virou código de integração
+    if (!in_array($capa['status'], ['revisao', 'descartada'], true)) falha('só dá pra excluir capa em revisão ou descartada; as confirmadas ficam no histórico');
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('UPDATE cf_lancamentos SET dup_de = NULL WHERE dup_de IN (SELECT id FROM (SELECT id FROM cf_lancamentos WHERE capa_id = ?) x)')->execute([$capaId]);
+        $pdo->prepare('UPDATE cf_capas SET capa_anterior_id = NULL WHERE capa_anterior_id = ?')->execute([$capaId]);
+        $pdo->prepare('DELETE FROM cf_lancamentos WHERE capa_id = ?')->execute([$capaId]);
+        $pdo->prepare('DELETE FROM cf_capas WHERE id = ?')->execute([$capaId]);
+        $pdo->commit();
+    } catch (Throwable $e) { $pdo->rollBack(); falha('erro ao excluir: ' . $e->getMessage(), 500); }
+    if ($capa['arquivo_path'] && is_file($capa['arquivo_path']) && str_starts_with(realpath($capa['arquivo_path']) ?: '', realpath(cf_data_dir()) ?: '#')) @unlink($capa['arquivo_path']);
+    exit(json_encode(['ok' => true, 'excluida' => $capaId]));
+}
 if ($capa['status'] !== 'revisao') falha('esta capa não está mais em revisão');
 
 /** Pendências que impedem a confirmação. */
@@ -54,7 +69,6 @@ function cf_tem_grave_pendente(array $l): bool
     return (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')) && !(int)$l['revisado'];
 }
 
-$acao = (string)($in['acao'] ?? '');
 $resp = ['ok' => true];
 
 switch ($acao) {
@@ -71,10 +85,12 @@ case 'editar':
             $pid = (int)$valor ?: null;
             if ($pid) { $q = $pdo->prepare('SELECT id FROM cf_pessoas WHERE id = ?'); $q->execute([$pid]); if (!$q->fetch()) falha('pessoa inválida'); }
             $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id = ?')->execute([$pid, $l['id']]);
-            // pix padrão da pessoa nas linhas que ainda não têm chave
+            // escolher a pessoa puxa a chave Pix cadastrada dela (sobrescreve a da linha); sem chave cadastrada, mantém o que está
             $pixPessoa = null;
             if ($pid) { $q = $pdo->prepare('SELECT chave_pix FROM cf_pessoas WHERE id = ?'); $q->execute([$pid]); $pixPessoa = $q->fetchColumn() ?: null; }
-            if ($pixPessoa && !$l['chave_pix']) { $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id = ?')->execute([$pixPessoa, $l['id']]); $resp['chave_pix'] = $pixPessoa; }
+            if ($pixPessoa) { $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id = ?')->execute([$pixPessoa, $l['id']]); }
+            $resp['chave_pix'] = $pixPessoa ?? ($l['chave_pix'] ?: '');
+            $resp['pessoa_tem_pix'] = (bool)$pixPessoa;
             if ($pid && !empty($in['salvar_alias'])) cf_add_alias($pid, $l['cf_raw']);
             if ($pid && !empty($in['aplicar_todas'])) {
                 // mesma pessoa em todas as linhas em revisão desta capa com o mesmo favorecido (coluna C)
@@ -84,7 +100,7 @@ case 'editar':
                 foreach ($q->fetchAll() as $o) if (CapaParser::key($o['cf_raw']) === CapaParser::key($l['cf_raw'])) $ids[] = (int)$o['id'];
                 if ($ids) {
                     $pdo->prepare('UPDATE cf_lancamentos SET pessoa_id = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pid]);
-                    if ($pixPessoa) $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id IN (' . implode(',', $ids) . ") AND (chave_pix IS NULL OR chave_pix = '')")->execute([$pixPessoa]);
+                    if ($pixPessoa) $pdo->prepare('UPDATE cf_lancamentos SET chave_pix = ? WHERE id IN (' . implode(',', $ids) . ')')->execute([$pixPessoa]);
                 }
                 $resp['aplicado_em'] = $ids;
             }

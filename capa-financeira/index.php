@@ -71,7 +71,7 @@ portal_header('Capa Financeira', $u);
 <?php else: ?>
 <div class="cf-tbl-wrap">
 <table class="grid cf-lista">
-  <thead><tr><th>#</th><th>COD</th><th>Cliente</th><th>Construtora</th><th>Venda</th><th>Empresa</th><th>Linhas</th><th>A pagar</th><th>A receber</th><th>Status</th><th>Enviada</th></tr></thead>
+  <thead><tr><th>#</th><th>COD</th><th>Cliente</th><th>Construtora</th><th>Venda</th><th>Empresa</th><th>Linhas</th><th>A pagar</th><th>A receber</th><th>Status</th><th>Enviada</th><th></th></tr></thead>
   <tbody>
   <?php foreach ($capas as $c): $fl = json_decode((string)$c['capa_flags'], true) ?: []; ?>
     <tr>
@@ -86,10 +86,24 @@ portal_header('Capa Financeira', $u);
       <td><?= cf_brl($c['total_receber']) ?></td>
       <td><span class="cf-status cf-st-<?= h($c['status']) ?>"><?= h($c['status']) ?></span><?= $fl ? ' <span class="cf-tag" title="' . h(implode(' | ', $fl)) . '">' . count($fl) . ' aviso(s)</span>' : '' ?></td>
       <td><?= h(substr((string)$c['criado_em'], 0, 16)) ?><br><small><?= h((string)$c['enviado_nome']) ?></small></td>
+      <td><?php if (in_array($c['status'], ['revisao', 'descartada'], true)): ?><button type="button" class="cf-x cf-excluir" data-id="<?= (int)$c['id'] ?>" data-nome="<?= h($c['cliente']) ?>" title="excluir esta capa de vez (ainda não foi confirmada)">✕</button><?php endif; ?></td>
     </tr>
   <?php endforeach; ?>
   </tbody>
 </table>
 </div>
+<p class="cf-dica">✕ exclui de vez uma capa enviada mas ainda não confirmada (arquivo e linhas). Capas confirmadas ficam no histórico.</p>
+<script>
+(function(){
+  const csrf = <?= json_encode(csrf_token()) ?>;
+  document.querySelectorAll('.cf-excluir').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Excluir a capa #' + b.dataset.id + ' (' + b.dataset.nome + ') de vez? Não tem como desfazer — dá pra reenviar a planilha depois.')) return;
+    const r = await fetch('/capa-financeira/acao.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':csrf}, body: JSON.stringify({acao:'excluir', capa_id: +b.dataset.id, csrf})});
+    let j = null; try { j = await r.json(); } catch(e) {}
+    if (!j || !j.ok) { alert('Não excluiu: ' + (j && j.erro ? j.erro : r.status)); return; }
+    b.closest('tr').remove();
+  }));
+})();
+</script>
 <?php endif; ?>
 <?php portal_footer();

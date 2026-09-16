@@ -87,8 +87,11 @@ portal_header('Revisar capa', $u);
   <div class="cf-acoes">
     <button class="btn" id="btn-confirmar" <?= $pend ? 'disabled' : '' ?>>Confirmar capa</button>
     <button class="btn cf-btn-sec" id="btn-descartar">Descartar</button>
+    <button class="btn cf-btn-sec cf-btn-perigo" id="btn-excluir" title="apaga a capa e as linhas de vez (só enquanto não foi confirmada)">Excluir</button>
   </div>
 </div>
+<?php elseif ($capa['status'] === 'descartada'): ?>
+<div class="cf-barra"><div class="cf-pend ok">Capa descartada.</div><div class="cf-acoes"><button class="btn cf-btn-sec cf-btn-perigo" id="btn-excluir">Excluir de vez</button></div></div>
 <?php endif; ?>
 
 <?php
@@ -141,6 +144,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
         <optgroup label="Desligados"><?php foreach ($pessoas as $pid => $p): if ($p['ativo']) continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?> (desligado)</option><?php endforeach; ?></optgroup>
       </select>
       <?php if (!$l['pessoa_id']): ?><label class="cf-mini"><input type="checkbox" class="cf-salvar-alias" checked> salvar "<?= h($l['cf_raw']) ?>" como apelido</label><?php endif; ?>
+      <?php if ($graves && !(int)$l['revisado']): ?><button type="button" class="cf-ok-nome" title="marca o alerta grave desta linha como conferido (mesmo que o Ok da última coluna)">✔ Conferido, pode seguir</button><?php endif; ?>
     <?php else: ?><?= h($pessoas[(int)$l['pessoa_id']]['nome'] ?? '—') ?><?php endif; ?>
   </td>
   <td class="cf-pix-cel"><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-pix" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" placeholder="CPF, CNPJ, e-mail, telefone…" autocomplete="off">
@@ -210,14 +214,19 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     else { box.className = 'cf-pend ok'; box.textContent = 'Tudo revisado. Pode confirmar.'; btn.disabled = false; }
   }
   function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3500); }
-  function aplicarPessoa(tr, pid, ids){
-    // reflete nas outras linhas do mesmo favorecido sem recarregar
+  function setPix(row, val){ const px = row && row.querySelector('.cf-pix'); if (!px) return; px.value = val || ''; px.dispatchEvent(new Event('input')); const sp = row.querySelector('.cf-pix-salvar'); if (sp && val) sp.parentElement.remove(); }
+  function aplicarPessoa(tr, pid, ids, pix){
+    // reflete nas outras linhas do mesmo favorecido sem recarregar (pix: chave cadastrada da pessoa, já gravada no servidor)
     ids.forEach(oid => { const otr = document.querySelector('tr[data-id="' + oid + '"]'); if (!otr) return;
       const sel = otr.querySelector('.cf-pessoa'); if (sel) { sel.value = pid; sel.classList.toggle('cf-vazio', !pid); }
       const cb = otr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
-      const pxSrc = tr.querySelector('.cf-pix'), pxDst = otr.querySelector('.cf-pix');
-      if (pxSrc && pxDst && !pxDst.value && pxSrc.value) { pxDst.value = pxSrc.value; pxDst.dispatchEvent(new Event('input')); }
+      if (pix) setPix(otr, pix);
       otr.querySelectorAll('.cf-aplicar').forEach(x => x.remove()); });
+  }
+  function marcaRevisado(tr, j){
+    tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente);
+    const ok = tr.querySelector('input[data-campo=revisado]'); if (ok) ok.checked = !j.tem_grave_pendente;
+    const b = tr.querySelector('.cf-ok-nome'); if (b && !j.tem_grave_pendente) b.remove();
   }
   function novaPessoaForm(el, tr){
     const id = +tr.dataset.id; const nomeCapa = tr.querySelector('td:nth-child(3) b').textContent.trim();
@@ -246,8 +255,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       document.querySelectorAll('select.cf-pessoa').forEach(sel => { const o = document.createElement('option'); o.value = j.pessoa.id; o.textContent = j.pessoa.nome; sel.appendChild(o); });
       el.value = j.pessoa.id; el.classList.remove('cf-vazio'); box.remove();
       const cb = tr.querySelector('.cf-salvar-alias'); if (cb) cb.parentElement.remove();
-      if (j.aplicado_em && j.aplicado_em.length) aplicarPessoa(tr, String(j.pessoa.id), j.aplicado_em);
-      if (j.pessoa.chave_pix) [tr, ...(j.aplicado_em || []).map(i => document.querySelector('tr[data-id="' + i + '"]'))].forEach(r => { const px = r && r.querySelector('.cf-pix'); if (px) { px.value = j.pessoa.chave_pix; px.dispatchEvent(new Event('input')); } });
+      if (j.pessoa.chave_pix) setPix(tr, j.pessoa.chave_pix);
+      if (j.aplicado_em && j.aplicado_em.length) aplicarPessoa(tr, String(j.pessoa.id), j.aplicado_em, j.pessoa.chave_pix);
       toast('Pessoa "' + j.pessoa.nome + '" cadastrada' + (j.aplicado_em && j.aplicado_em.length ? ' e aplicada em ' + (j.aplicado_em.length + 1) + ' linhas' : ''));
       tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente); atualizaPend(j);
     });
@@ -276,7 +285,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
           box.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
             body.aplicar_todas = b.dataset.t === 'todas' ? 1 : 0; box.remove();
             const j = await acao(body); if (!j) return;
-            if (j.aplicado_em) { aplicarPessoa(tr, valor, j.aplicado_em); toast('Pessoa aplicada em ' + (j.aplicado_em.length + 1) + ' linhas'); }
+            if (j.pessoa_tem_pix) setPix(tr, j.chave_pix);
+            if (j.aplicado_em) { aplicarPessoa(tr, valor, j.aplicado_em, j.pessoa_tem_pix ? j.chave_pix : ''); toast('Pessoa aplicada em ' + (j.aplicado_em.length + 1) + ' linhas'); }
             el.classList.toggle('cf-vazio', !el.value); if (cb && el.value) cb.parentElement.remove();
             tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente); atualizaPend(j);
           }));
@@ -286,14 +296,21 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       const j = await acao(body);
       if (!j) return;
       if (j.categoria !== undefined) tr.querySelector('.cf-cat').textContent = j.categoria || '';
-      if (j.chave_pix !== undefined && campo !== 'chave_pix') { const px = tr.querySelector('.cf-pix'); if (px && !px.value) { px.value = j.chave_pix || ''; px.dispatchEvent(new Event('input')); } }
+      if (campo === 'pessoa_id' && j.pessoa_tem_pix) setPix(tr, j.chave_pix);
       if (campo === 'chave_pix' && j.chave_pix) { const sp = tr.querySelector('.cf-pix-salvar'); if (sp) sp.parentElement.remove(); }
       if (j.nota_fiscal !== undefined) { const nf = tr.querySelector('.cf-nf'); if (nf) nf.value = j.nota_fiscal || ''; }
       if (campo === 'pessoa_id') { el.classList.toggle('cf-vazio', !el.value); const cb = tr.querySelector('.cf-salvar-alias'); if (cb && el.value) cb.parentElement.remove(); }
-      if (campo === 'revisado' || campo === 'pessoa_id' || campo === 'data_prevista') tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente);
+      if (campo === 'revisado' || campo === 'pessoa_id' || campo === 'data_prevista') marcaRevisado(tr, j);
       atualizaPend(j);
     });
   });
+  // "Conferido" logo abaixo da pessoa: mesma coisa que marcar o Ok da linha
+  document.querySelectorAll('.cf-ok-nome').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); const sel = tr.querySelector('.cf-pessoa');
+    if (sel && !sel.value) { toast('Escolha a pessoa antes de marcar como conferido'); sel.focus(); return; }
+    const j = await acao({acao:'editar', id: +tr.dataset.id, campo:'revisado', valor: 1}); if (!j) return;
+    marcaRevisado(tr, j); atualizaPend(j); toast('Linha conferida');
+  }));
   document.querySelectorAll('.cf-x').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const j = await acao({acao: b.dataset.acao, id: +tr.dataset.id});
     if (j) location.reload();
@@ -309,6 +326,11 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   if (bd) bd.addEventListener('click', async () => {
     if (!confirm('Descartar esta capa? Nada dela será exportado.')) return;
     const j = await acao({acao:'descartar'}); if (j) location.href = '/capa-financeira/';
+  });
+  const be = document.getElementById('btn-excluir');
+  if (be) be.addEventListener('click', async () => {
+    if (!confirm('Excluir esta capa de vez? O arquivo e todas as linhas somem — não tem como desfazer (dá pra reenviar a planilha depois).')) return;
+    const j = await acao({acao:'excluir'}); if (j) location.href = '/capa-financeira/';
   });
 })();
 </script>
