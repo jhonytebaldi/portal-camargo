@@ -90,6 +90,9 @@ portal_header('Revisar capa', $u);
     <button class="btn cf-btn-sec cf-btn-perigo" id="btn-excluir" title="apaga a capa e as linhas de vez (só enquanto não foi confirmada)">Excluir</button>
   </div>
 </div>
+<?php elseif ($capa['status'] === 'confirmada'): ?>
+<div class="cf-barra"><div class="cf-pend ok">Capa confirmada<?= $capa['confirmado_em'] ? ' em ' . h(substr((string)$capa['confirmado_em'], 0, 16)) : '' ?>. Para mudar alguma coisa, reabra: os códigos de integração continuam os mesmos; linhas já exportadas para o Omie que forem alteradas entram na lista "alterações depois da exportação".</div>
+  <div class="cf-acoes"><button class="btn cf-btn-sec" id="btn-reabrir">Reabrir para editar</button></div></div>
 <?php elseif ($capa['status'] === 'descartada'): ?>
 <div class="cf-barra"><div class="cf-pend ok">Capa descartada.</div><div class="cf-acoes"><button class="btn cf-btn-sec cf-btn-perigo" id="btn-excluir">Excluir de vez</button></div></div>
 <?php endif; ?>
@@ -326,6 +329,11 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   if (bd) bd.addEventListener('click', async () => {
     if (!confirm('Descartar esta capa? Nada dela será exportado.')) return;
     const j = await acao({acao:'descartar'}); if (j) location.href = '/capa-financeira/';
+  });
+  const br = document.getElementById('btn-reabrir');
+  if (br) br.addEventListener('click', async () => {
+    if (!confirm('Reabrir esta capa para edição? Ela sai de "confirmada" até você confirmar de novo.')) return;
+    const j = await acao({acao:'reabrir'}); if (j) location.reload();
   });
   const be = document.getElementById('btn-excluir');
   if (be) be.addEventListener('click', async () => {

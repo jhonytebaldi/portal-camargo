@@ -35,6 +35,21 @@ if ($acao === 'excluir') {
     if ($capa['arquivo_path'] && is_file($capa['arquivo_path']) && str_starts_with(realpath($capa['arquivo_path']) ?: '', realpath(cf_data_dir()) ?: '#')) @unlink($capa['arquivo_path']);
     exit(json_encode(['ok' => true, 'excluida' => $capaId]));
 }
+if ($acao === 'reabrir') {
+    // capa confirmada volta para revisão; códigos de integração ficam; linhas já exportadas guardam um retrato para detectar alteração
+    if ($capa['status'] !== 'confirmada') falha('só capas confirmadas podem ser reabertas');
+    $q = $pdo->prepare("SELECT id FROM cf_capas WHERE capa_anterior_id = ? AND status IN ('revisao','confirmada')"); $q->execute([$capaId]);
+    if ($q->fetch()) falha('esta capa já tem uma versão mais nova — edite a versão mais recente');
+    $pdo->beginTransaction();
+    try {
+        $q = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE capa_id = ? AND status IN ('confirmado','exportado')"); $q->execute([$capaId]);
+        $up = $pdo->prepare("UPDATE cf_lancamentos SET status = 'revisao', snapshot_exp = ? WHERE id = ?");
+        foreach ($q->fetchAll() as $l) $up->execute([$l['status'] === 'exportado' ? json_encode(cf_retrato($l), JSON_UNESCAPED_UNICODE) : $l['snapshot_exp'], $l['id']]);
+        $pdo->prepare("UPDATE cf_capas SET status = 'revisao', confirmado_em = NULL, confirmado_por = NULL WHERE id = ?")->execute([$capaId]);
+        $pdo->commit();
+    } catch (Throwable $e) { $pdo->rollBack(); falha('erro ao reabrir: ' . $e->getMessage(), 500); }
+    exit(json_encode(['ok' => true]));
+}
 if ($capa['status'] !== 'revisao') falha('esta capa não está mais em revisão');
 
 /** Pendências que impedem a confirmação. */
@@ -210,12 +225,19 @@ case 'confirmar':
         $linhas = $st->fetchAll();
         $seq = $pdo->prepare('INSERT INTO cf_sequencias (cod, tipo, ultimo) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE ultimo = ultimo + 1');
         $seqGet = $pdo->prepare('SELECT ultimo FROM cf_sequencias WHERE cod = ? AND tipo = ?');
-        $upd = $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', codigo_integracao = ?, alteracao_pos_exportacao = ? WHERE id = ?");
+        $upd = $pdo->prepare("UPDATE cf_lancamentos SET status = ?, codigo_integracao = ?, alteracao_pos_exportacao = ? WHERE id = ?");
         $ant = $pdo->prepare('SELECT * FROM cf_lancamentos WHERE id = ?');
         $subst = $pdo->prepare("UPDATE cf_lancamentos SET status = 'substituido' WHERE id = ? AND status = 'confirmado'");
         foreach ($linhas as $l) {
-            $codigo = null; $posExp = 0;
-            if ($l['dup_de'] && in_array($l['dup_tipo'], ['IGUAL', 'ALTERADA'], true)) {
+            $codigo = null; $posExp = (int)$l['alteracao_pos_exportacao']; $novoStatus = 'confirmado';
+            if ($l['codigo_integracao']) {
+                // capa reaberta: mantém o código; se a linha já tinha ido para o Omie, volta como exportada e marca se mudou algo
+                $codigo = $l['codigo_integracao'];
+                if ($l['exportacao_id']) {
+                    $novoStatus = 'exportado';
+                    if (cf_diferencas_exp(json_decode((string)$l['snapshot_exp'], true), $l)) $posExp = 1;
+                }
+            } elseif ($l['dup_de'] && in_array($l['dup_tipo'], ['IGUAL', 'ALTERADA'], true)) {
                 $ant->execute([$l['dup_de']]); $a = $ant->fetch();
                 if ($a && $a['codigo_integracao']) {
                     $codigo = $a['codigo_integracao'];
@@ -229,8 +251,10 @@ case 'confirmar':
                 $n = (int)$seqGet->fetchColumn();
                 $codigo = strtoupper((string)$capa['cod']) . '-' . $l['tipo'] . str_pad((string)$n, 3, '0', STR_PAD_LEFT);
             }
-            $upd->execute([$codigo, $posExp, $l['id']]);
+            $upd->execute([$novoStatus, $codigo, $posExp, $l['id']]);
         }
+        // linhas exportadas que foram removidas na reabertura: precisam ser excluídas no Omie
+        $pdo->prepare("UPDATE cf_lancamentos SET alteracao_pos_exportacao = 1 WHERE capa_id = ? AND status = 'removido' AND exportacao_id IS NOT NULL")->execute([$capaId]);
         // versão anterior: capa e linhas que não vieram na nova versão
         if ($capa['capa_anterior_id']) {
             $pdo->prepare("UPDATE cf_lancamentos SET status = 'substituido' WHERE capa_id = ? AND status = 'confirmado'")->execute([$capa['capa_anterior_id']]);

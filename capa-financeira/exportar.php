@@ -147,7 +147,7 @@ foreach ($pdo->query("SELECT c.empresa, l.tipo, COUNT(*) n FROM cf_lancamentos l
 $montadas = [];
 foreach ($linhas as $l) $montadas[(int)$l['id']] = Exportacao::montar($l, cf_exp_capa($l), $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null, $emp, $opts);
 $st = $pdo->prepare("SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, e.arquivo_nome FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_exportacoes e ON e.id = l.exportacao_id
-                     WHERE l.alteracao_pos_exportacao = 1 AND l.status IN ('exportado','confirmado') AND c.empresa = ? ORDER BY l.id DESC LIMIT 100");
+                     WHERE l.alteracao_pos_exportacao = 1 AND l.status IN ('exportado','removido') AND c.empresa = ? ORDER BY l.id DESC LIMIT 100");
 $st->execute([$empresa]); $alteradas = $st->fetchAll();
 $st = $pdo->prepare('SELECT e.*, u.nome AS por FROM cf_exportacoes e LEFT JOIN users u ON u.id = e.gerado_por WHERE e.empresa = ? ORDER BY e.id DESC LIMIT 20');
 $st->execute([$empresa]); $historico = $st->fetchAll();
@@ -232,10 +232,11 @@ portal_header('Exportar para o Omie', $u);
 <?php if ($alteradas): ?>
 <h2 class="cf-h2">Alterações depois da exportação <small>ajustar manualmente no Omie</small></h2>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl">
-<thead><tr><th>Código</th><th>Capa</th><th>Favorecido/Cliente</th><th>Valor</th><th>Vencimento</th><th>NF</th><th>Exportado em</th><th></th></tr></thead>
+<thead><tr><th>Código</th><th>Capa</th><th>Favorecido/Cliente</th><th>Valor</th><th>Vencimento</th><th>NF</th><th>Exportado em</th><th>O que fazer no Omie</th><th></th></tr></thead>
 <tbody><?php foreach ($alteradas as $a): ?>
 <tr data-id="<?= (int)$a['id'] ?>"><td><b><?= h((string)$a['codigo_integracao']) ?></b></td><td><a href="/capa-financeira/revisar.php?id=<?= (int)$a['capa_id'] ?>"><?= h((string)$a['capa_cod']) ?></a> <?= h(mb_substr((string)$a['capa_cliente'], 0, 30)) ?></td>
 <td><?= h((string)$a['cf_raw']) ?></td><td class="cf-num"><?= cf_brl($a['valor']) ?></td><td><?= cf_data_br($a['data_prevista']) ?></td><td><?= h((string)$a['nota_fiscal']) ?></td><td><small><?= h((string)$a['arquivo_nome']) ?></small></td>
+<td><?php if ($a['status'] === 'removido'): ?><span class="cf-tag cf-grave">excluir o título</span><?php else: $dif = cf_diferencas_exp(json_decode((string)$a['snapshot_exp'], true), $a); echo $dif ? 'alterar: ' . h(implode(', ', $dif)) : 'conferir o título'; endif; ?></td>
 <td><button type="button" class="cf-x exp-ajustado" title="já ajustei este título no Omie">✔ ajustado</button></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <p class="cf-dica">Na importação por planilha o Omie identifica o título por Categoria + Nota Fiscal + Fornecedor + Valor + Parcela + Vencimento — reimportar uma linha alterada criaria um título novo. Por isso estas ficam para ajuste manual (busque pelo Nº Documento = código de integração). Com a API isso passa a ser automático.</p>

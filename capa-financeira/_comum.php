@@ -132,6 +132,30 @@ function cf_observacao(array $capa, array $l): string
     return implode(' | ', $p);
 }
 
+/** campos que, alterados depois de exportar, precisam de ajuste manual no Omie (retrato gravado ao reabrir a capa) */
+function cf_retrato(array $l): array
+{
+    return ['valor' => number_format((float)$l['valor'], 2, '.', ''), 'data_prevista' => $l['data_prevista'], 'categoria' => $l['categoria'], 'nota_fiscal' => (string)$l['nota_fiscal'],
+            'pessoa_id' => $l['pessoa_id'] ? (int)$l['pessoa_id'] : null, 'chave_pix' => (string)$l['chave_pix'], 'conta_corrente' => (string)$l['conta_corrente'],
+            'cliente_omie' => (string)$l['cliente_omie'], 'parcela' => $l['parcela'] ? (int)$l['parcela'] : null, 'total_parcelas' => $l['total_parcelas'] ? (int)$l['total_parcelas'] : null];
+}
+/** rótulos do que mudou entre o retrato e a linha atual (vazio = nada relevante mudou) */
+function cf_diferencas_exp(?array $antes, array $l): array
+{
+    if (!$antes) return [];
+    $agora = cf_retrato($l);
+    $rot = ['valor' => 'valor', 'data_prevista' => 'vencimento', 'categoria' => 'categoria', 'nota_fiscal' => 'nota fiscal', 'pessoa_id' => 'fornecedor', 'chave_pix' => 'chave Pix',
+            'conta_corrente' => 'conta corrente', 'cliente_omie' => 'cliente', 'parcela' => 'parcela', 'total_parcelas' => 'total de parcelas'];
+    $dif = [];
+    foreach ($rot as $k => $r) {
+        if (!array_key_exists($k, $antes)) continue;
+        // Pix preenchida automaticamente depois (estava vazia na exportação) não conta como alteração
+        if ($k === 'chave_pix' && (string)$antes[$k] === '') continue;
+        if ($antes[$k] != $agora[$k]) $dif[] = $r;
+    }
+    return $dif;
+}
+
 /* ---------------- formatação ---------------- */
 
 function cf_brl(float|int|string|null $v): string

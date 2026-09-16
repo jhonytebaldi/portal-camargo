@@ -160,6 +160,10 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN conta_corrente VARCHAR(60) NULL AFTER chave_pix, ADD COLUMN cliente_omie VARCHAR(60) NULL AFTER conta_corrente");
         $feitos[] = 'cf_lancamentos.conta_corrente/cliente_omie';
     }
+    if (!$colExiste('cf_lancamentos', 'snapshot_exp')) {
+        $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN snapshot_exp JSON NULL AFTER exportacao_id");
+        $feitos[] = 'cf_lancamentos.snapshot_exp';
+    }
     if (!$tem('cf_exportacoes')) {
         $pdo->exec("CREATE TABLE cf_exportacoes (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
