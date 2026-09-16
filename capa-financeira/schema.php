@@ -155,6 +155,29 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("UPDATE cf_lancamentos l JOIN cf_pessoas p ON p.id = l.pessoa_id SET l.chave_pix = p.chave_pix
                     WHERE l.status = 'revisao' AND (l.chave_pix IS NULL OR l.chave_pix = '') AND p.chave_pix IS NOT NULL AND p.chave_pix <> ''");
     }
+    // fase 2 — exportação para o Omie
+    if (!$colExiste('cf_lancamentos', 'conta_corrente')) {
+        $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN conta_corrente VARCHAR(60) NULL AFTER chave_pix, ADD COLUMN cliente_omie VARCHAR(60) NULL AFTER conta_corrente");
+        $feitos[] = 'cf_lancamentos.conta_corrente/cliente_omie';
+    }
+    if (!$tem('cf_exportacoes')) {
+        $pdo->exec("CREATE TABLE cf_exportacoes (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            tipo CHAR(1) NOT NULL,
+            empresa VARCHAR(20) NOT NULL,
+            arquivo_nome VARCHAR(200) NOT NULL,
+            arquivo_path VARCHAR(400) NOT NULL,
+            n_linhas INT UNSIGNED NOT NULL DEFAULT 0,
+            total DECIMAL(14,2) NOT NULL DEFAULT 0,
+            data_registro DATE NULL,
+            avisos JSON NULL,
+            status ENUM('gerada','desfeita') NOT NULL DEFAULT 'gerada',
+            gerado_por INT UNSIGNED NULL,
+            gerado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY ix_cfe_emp (empresa, tipo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela cf_exportacoes';
+    }
     // normaliza chaves Pix importadas cruas (uma vez; só as válidas)
     if (!$tem('cf_config') || (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave='pix_normalizado'")->fetchColumn() === 0) {
         require_once __DIR__ . '/lib/Pix.php';

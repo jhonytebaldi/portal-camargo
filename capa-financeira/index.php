@@ -21,6 +21,7 @@ $sql .= ' ORDER BY c.id DESC LIMIT 200';
 $st = $pdo->prepare($sql); $st->execute($args);
 $capas = $st->fetchAll();
 $nPessoas = (int)$pdo->query('SELECT COUNT(*) FROM cf_pessoas WHERE ativo = 1')->fetchColumn();
+$nExportar = (int)$pdo->query("SELECT COUNT(*) FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.status = 'confirmado' AND c.status = 'confirmada'")->fetchColumn();
 
 portal_header('Capa Financeira', $u);
 ?>
@@ -31,6 +32,7 @@ portal_header('Capa Financeira', $u);
     <p class="home-sub">Envie a capa da venda, revise os lançamentos, confirme. Depois gere as planilhas do Omie e os recibos.</p>
   </div>
   <nav class="cf-nav">
+    <a href="/capa-financeira/exportar.php"><b>Exportar para o Omie</b><?= $nExportar ? ' <span class="cf-tag">' . $nExportar . '</span>' : '' ?></a>
     <a href="/capa-financeira/pessoas.php">Pessoas (dicionário)</a>
     <a href="/capa-financeira/configuracoes.php">Configurações</a>
   </nav>

@@ -42,6 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $e['razao'] = CapaParser::norm((string)($_POST["razao_$id"] ?? $e['razao']));
                 $e['cnpj'] = CapaParser::norm((string)($_POST["cnpj_$id"] ?? $e['cnpj']));
                 $e['conta_padrao'] = CapaParser::norm((string)($_POST["conta_$id"] ?? ''));
+                $e['conta_padrao_cp'] = CapaParser::norm((string)($_POST["contacp_$id"] ?? ''));
+                $e['projeto_omie'] = !empty($_POST["projeto_$id"]) ? 1 : 0;
                 $e['logo_propria'] = !empty($_POST["logo_$id"]) ? 1 : 0;
                 $e['endereco'] = CapaParser::norm((string)($_POST["end_$id"] ?? ($e['endereco'] ?? '')));
             }
@@ -92,6 +94,8 @@ portal_header('Configurações — Capa Financeira', $u);
       <label>Razão social (no recibo)<input name="razao_<?= $id ?>" value="<?= h($e['razao'] ?? '') ?>"></label>
       <label>CNPJ<input name="cnpj_<?= $id ?>" value="<?= h($e['cnpj']) ?>"></label>
       <label>Conta corrente padrão das contas a receber (nome exato no Omie)<input name="conta_<?= $id ?>" value="<?= h($e['conta_padrao'] ?? '') ?>"></label>
+      <label>Conta corrente padrão das contas a pagar (nome exato no Omie; a conta da pessoa, se preenchida, vence)<input name="contacp_<?= $id ?>" value="<?= h($e['conta_padrao_cp'] ?? '') ?>"></label>
+      <label class="cf-mini"><input type="checkbox" name="projeto_<?= $id ?>" <?= !empty($e['projeto_omie']) ? 'checked' : '' ?>> preencher a coluna Projeto do Omie com a construtora (só marque se os projetos existem no Omie com esse nome)</label>
       <label>Endereço (rodapé do recibo, opcional)<input name="end_<?= $id ?>" value="<?= h($e['endereco'] ?? '') ?>"></label>
       <label class="cf-mini"><input type="checkbox" name="logo_<?= $id ?>" <?= !empty($e['logo_propria']) ? 'checked' : '' ?>> usar logo/dados próprios no recibo (senão usa a marca Camargo)</label>
     </fieldset>
