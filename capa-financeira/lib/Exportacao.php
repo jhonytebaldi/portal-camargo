@@ -60,7 +60,7 @@ final class Exportacao
             if ($tipo === 'P') $conta = trim((string)($p[$emp['id'] === 'vertical' ? 'conta_vertical' : 'conta_camargo'] ?? '')) ?: trim((string)($emp['conta_padrao_cp'] ?? ''));
             else $conta = trim((string)($emp['conta_padrao'] ?? ''));
         }
-        if ($conta === '') $erros[] = 'sem conta corrente (defina na linha, na pessoa ou em Configurações › empresa)';
+        if ($conta === '') $erros[] = 'sem conta corrente do Omie — é a conta bancária da empresa que paga/recebe (ex.: Sicredi, Banco Inter), não a chave Pix. Preencha na linha ou defina a padrão no topo da tela';
         elseif (mb_strlen($conta) > self::LIM['conta']) $erros[] = 'conta corrente com mais de 40 caracteres';
         $c['E'] = ['s' => $conta];
 
