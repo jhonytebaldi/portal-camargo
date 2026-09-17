@@ -181,6 +181,9 @@ try {
     require_once dirname(__DIR__) . '/capa-financeira/lib/Parser.php';
     require_once dirname(__DIR__) . '/capa-financeira/schema.php';
     foreach (cf_migrar($pdo) as $f) $feitos[] = 'capa-financeira: ' . $f;
+    // ---- Recibos do Omie (recibos-omie/schema.php) -----
+    require_once dirname(__DIR__) . '/recibos-omie/schema.php';
+    foreach (ro_migrar($pdo) as $f) $feitos[] = 'recibos-omie: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
