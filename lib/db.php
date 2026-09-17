@@ -31,7 +31,12 @@ function portal_load_config(): void {
         dirname(__DIR__) . '/config/config.php',
     ]);
     foreach ($candidatos as $c) {
-        if ($c && is_readable($c)) { require_once $c; $carregado = true; return; }
+        if ($c && is_readable($c)) {
+            require_once $c;
+            // arquivos extras de configuração ao lado do config.php (ex.: omie.php com OMIE_CONTAS)
+            foreach (glob(dirname($c) . '/*.php') ?: [] as $extra) if (realpath($extra) !== realpath($c) && basename($extra) !== 'config.example.php') require_once $extra;
+            $carregado = true; return;
+        }
     }
     http_response_code(500);
     exit('Configuração do portal não encontrada. Crie o config.php (veja config/config.example.php).');
