@@ -182,6 +182,29 @@ function cf_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cf_exportacoes';
     }
+    // fase 3 — recibos
+    if (!$tem('cf_recibos')) {
+        $pdo->exec("CREATE TABLE cf_recibos (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            numero VARCHAR(120) NOT NULL,                 -- código(s) de integração impresso(s)
+            pessoa_id INT UNSIGNED NOT NULL,
+            empresa VARCHAR(20) NOT NULL,
+            lancamento_ids JSON NOT NULL,
+            valor DECIMAL(14,2) NOT NULL,
+            data_recibo DATE NOT NULL,
+            arquivo_nome VARCHAR(200) NOT NULL,
+            arquivo_path VARCHAR(400) NOT NULL,
+            status ENUM('atual','substituido') NOT NULL DEFAULT 'atual',
+            gerado_por INT UNSIGNED NULL,
+            gerado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY ix_cfr_pessoa (pessoa_id), KEY ix_cfr_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela cf_recibos';
+    }
+    if (!$colExiste('cf_lancamentos', 'recibo_id')) {
+        $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN recibo_id INT UNSIGNED NULL AFTER exportacao_id");
+        $feitos[] = 'cf_lancamentos.recibo_id';
+    }
     // normaliza chaves Pix importadas cruas (uma vez; só as válidas)
     if (!$tem('cf_config') || (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave='pix_normalizado'")->fetchColumn() === 0) {
         require_once __DIR__ . '/lib/Pix.php';

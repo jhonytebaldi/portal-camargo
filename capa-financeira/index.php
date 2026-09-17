@@ -33,6 +33,7 @@ portal_header('Capa Financeira', $u);
   </div>
   <nav class="cf-nav">
     <a href="/capa-financeira/exportar.php"><b>Exportar para o Omie</b><?= $nExportar ? ' <span class="cf-tag">' . $nExportar . '</span>' : '' ?></a>
+    <a href="/capa-financeira/recibos.php">Recibos</a>
     <a href="/capa-financeira/pessoas.php">Pessoas (dicionário)</a>
     <a href="/capa-financeira/configuracoes.php">Configurações</a>
   </nav>

@@ -115,9 +115,24 @@ function cf_add_alias(int $pessoaId, string $alias): void
 }
 
 /** Observação padronizada que vai para o Omie (facilita a busca lá). */
-function cf_observacao(array $capa, array $l): string
+/**
+ * Observação do título no Omie — PADRÃO ÚNICO (a equipe segue o mesmo ao lançar na mão):
+ *   RECIBO: 1375-P001 | FAVORECIDO: Jhony Tebaldi | FUNCAO: DIRETOR (BONUS) | CLIENTE: … | CONSTRUTORA: … |
+ *   IMOVEL: … | STATUS: PLANTA | VENDA: dd/mm/aaaa | COD: 1375 | COND: SE ENTREGAR IMOVEL
+ * Contas a receber: RECIBO: 1375-R001 | PARCELA: 1/5 | CLIENTE … (sem FAVORECIDO/FUNCAO) … | FLUXO: PARCELA 01
+ * Campos vazios são omitidos; separador " | "; rótulos sem acento e em maiúsculas.
+ */
+function cf_observacao(array $capa, array $l, ?string $favorecido = null): string
 {
     $p = [];
+    if (!empty($l['codigo_integracao'])) $p[] = 'RECIBO: ' . $l['codigo_integracao'];
+    if (($l['tipo'] ?? '') === 'P') {
+        $fav = $favorecido ?: ($l['cf_raw'] ?? '');
+        if ($fav !== '') $p[] = 'FAVORECIDO: ' . $fav;
+        if (!empty($l['funcao'])) $p[] = 'FUNCAO: ' . $l['funcao'] . (($l['natureza'] ?? '') === 'BONUS' ? ' (BONUS)' : '');
+    } elseif (!empty($l['parcela']) && !empty($l['total_parcelas'])) {
+        $p[] = 'PARCELA: ' . (int)$l['parcela'] . '/' . (int)$l['total_parcelas'];
+    }
     $p[] = 'CLIENTE: ' . $capa['cliente'];
     $p[] = 'CONSTRUTORA: ' . $capa['construtora'];
     if (!empty($l['unidade'])) $p[] = 'IMOVEL: ' . $l['unidade'];
@@ -125,8 +140,6 @@ function cf_observacao(array $capa, array $l): string
     if (!empty($l['status_imovel'])) $p[] = 'STATUS: ' . $l['status_imovel'];
     if (!empty($capa['data_venda'])) $p[] = 'VENDA: ' . cf_data_br($capa['data_venda']);
     if (!empty($capa['cod'])) $p[] = 'COD: ' . $capa['cod'];
-    if (!empty($l['codigo_integracao'])) $p[] = 'RECIBO: ' . $l['codigo_integracao'];
-    if (($l['tipo'] ?? '') === 'P' && !empty($l['funcao'])) $p[] = 'FUNCAO: ' . $l['funcao'] . (($l['natureza'] ?? '') === 'BONUS' ? ' (BONUS)' : '');
     if (!empty($l['condicao'])) $p[] = 'COND: ' . $l['condicao'];
     if (!empty($l['rotulo_fluxo'])) $p[] = 'FLUXO: ' . $l['rotulo_fluxo'];
     return implode(' | ', $p);
