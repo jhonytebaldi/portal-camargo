@@ -83,7 +83,7 @@ final class Exportacao
         if ($prev !== '') { $c['K'] = ['d' => $prev]; $c['L'] = ['d' => $prev]; }
 
         // S — observações (o "banco de dados" do título dentro do Omie)
-        $obs = cf_observacao($capa, $l);
+        $obs = cf_observacao($capa, $l, $p['nome'] ?? null);
         $c['S'] = ['s' => $obs];
 
         // U — nº do documento = código de integração (dá pra achar o título pela busca do Omie)
