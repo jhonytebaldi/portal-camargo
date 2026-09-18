@@ -462,7 +462,7 @@ def publicar():
             try:
                 cob = datetime.strptime(str(a.get("cobrar_em") or ""), "%Y-%m-%d").date()
             except ValueError: pass
-            if cob is None or cob <= hoje: cob = hoje + timedelta(days=3)
+            if cob is None or cob <= hoje: cob = hoje + timedelta(days=1)
             if (cob - hoje).days > 14: cob = hoje + timedelta(days=14)
             c["cobrar_em"] = cob.isoformat()
             n_aguardar += 1

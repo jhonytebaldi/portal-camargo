@@ -43,8 +43,9 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 - O corretor JÁ agiu e a bola está com o cliente (última mensagem manual é do
   corretor). Estime o prazo de retorno: se a conversa tem prazo COMBINADO
   ("te respondo segunda", "vou falar com meu esposo no fim de semana", "volto
-  da viagem dia 20"), use-o; sem prazo combinado, considere ~3 dias após a
-  última mensagem do corretor. Então:
+  da viagem dia 20"), use-o; SEM prazo combinado, cobre já no DIA SEGUINTE à
+  última mensagem do corretor — só dê mais folga se o contexto pedir (ex.:
+  cliente disse que precisa de uns dias pra resolver algo). Então:
   · Prazo AINDA NÃO venceu → "aguardar retorno" + campo "cobrar_em" com a data
     (AAAA-MM-DD) em que cobrar se o cliente calar. Esse caso NÃO vira tarefa no
     plano — o sistema volta a olhar o cliente na data. titulo/justificativa
@@ -100,7 +101,7 @@ Grave no arquivo de saída um array com um objeto POR cliente do lote:
  "msg_sugerida": "<mensagem pronta de WhatsApp em pt-BR, tom leve e pessoal, 1-3 frases, SEM saudação genérica tipo 'Espero que esteja bem'; null se a ação não é mandar mensagem>",
  "ajuste_score": <int -20..+20 conforme sinais de intenção: pediu visita/financiamento/urgência/imóvel específico = positivo; desinteresse/silêncio longo = negativo>,
  "encerrar_motivo": "<só quando acao=encerrar: motivo curto>",
- "cobrar_em": "<só quando acao=aguardar retorno: data AAAA-MM-DD em que cobrar o cliente se não responder — o prazo combinado na conversa, ou ~3 dias após a última mensagem do corretor>",
+ "cobrar_em": "<só quando acao=aguardar retorno: data AAAA-MM-DD em que cobrar o cliente se não responder — o prazo combinado na conversa; sem prazo combinado, o dia seguinte à última mensagem do corretor (mais folga só se o contexto pedir)>",
  "nome_detectado": "<APENAS quando o cadastro está sem nome, ou com nome genérico/errado (número, 'Contato', apelido de sistema), E o cliente se identificou claramente na conversa ('aqui é a Fernanda', assinatura, corretor o chama pelo nome e ele confirma): o nome detectado. Caso contrário null. Serve para o corretor corrigir o cadastro no Robust/GHL.>"
 }
 

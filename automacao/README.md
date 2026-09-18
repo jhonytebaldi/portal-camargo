@@ -40,7 +40,7 @@ tarefas cumpridas detectadas viram check automático).
   análise não tratou. NUNCA transferir automaticamente nos CRMs.
 - Mensagem de `workflow` não conta como resposta do corretor.
 - "Aguardar retorno" NÃO vira tarefa: a análise devolve `cobrar_em` (prazo
-  combinado na conversa, ou ~3 dias) e o cliente sai do plano; a rotina pula
+  combinado na conversa; sem prazo, o dia seguinte) e o cliente sai do plano; a rotina pula
   a re-análise dele até a data vencer (ou até algo novo acontecer) e, vencida,
   gera "follow-up" com mensagem de continuidade.
 - Reimportar o mesmo dia preserva checks manuais e automáticos.
