@@ -440,6 +440,9 @@ if ($ultimaAtu) {
       <span class="pa-prog" data-prog="<?= (int)$p['id'] ?>"><?= $ok ?>/<?= $tot ?> feitas</span>
       <?php if ($itens): ?>
         <button class="btn pa-copiar" data-copiar="<?= (int)$p['id'] ?>">Copiar p/ WhatsApp</button>
+        <?php if ($p['texto_whatsapp'] !== ''): ?>
+          <textarea id="wa-<?= (int)$p['id'] ?>" hidden><?= h($p['texto_whatsapp']) ?></textarea>
+        <?php endif; ?>
       <?php endif; ?>
     </div>
     <div class="pa-barra"><i data-barra="<?= (int)$p['id'] ?>" style="width:<?= $tot ? round(100 * $ok / $tot) : 0 ?>%"></i></div>
@@ -665,7 +668,14 @@ function montaTextoWa(sec){
     return lin.join('\n');
   }
 
-  /* ---- formato padrão: texto corrido, tom de análise do gestor ---- */
+  /* ---- formato padrão: análise do gestor ----
+     O texto bom é o REDIGIDO pela rotina (guardado no plano). O template
+     abaixo é só fallback: quando a rotina ainda não escreveu o texto do dia,
+     ou quando o corretor SELECIONOU itens específicos (aí o texto precisa
+     refletir a seleção, então é montado na hora). */
+  const redigido = document.getElementById('wa-' + (sec.querySelector('[data-copiar]')?.dataset.copiar || ''));
+  if (redigido && redigido.value.trim() && !sel.length) return redigido.value.trim();
+
   const nome1 = sec.dataset.waNome || '';
   const h = new Date().getHours();
   const sauda = h < 12 ? 'Bom dia' : (h < 18 ? 'Boa tarde' : 'Boa noite');

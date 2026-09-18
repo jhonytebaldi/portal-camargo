@@ -145,6 +145,22 @@ try {
         }
     }
 
+    /* ---- textos "análise do gestor": atualiza SÓ o texto_whatsapp dos
+       planos do dia (redigido pelos subagentes após a importação), sem
+       tocar em itens nem checks. ---- */
+    $nTextos = 0;
+    if (!empty($body['textos']) && is_array($body['textos'])) {
+        $upT = $pdo->prepare('UPDATE pa_planos SET texto_whatsapp = ?
+                               WHERE data = ? AND robust_atendente = ?');
+        foreach ($body['textos'] as $t) {
+            if (empty($t['robust_atendente'])) continue;
+            $txt = trim((string)($t['texto_whatsapp'] ?? ''));
+            if ($txt === '') continue;
+            $upT->execute([$txt, $data, (int)$t['robust_atendente']]);
+            $nTextos += $upT->rowCount();
+        }
+    }
+
     /* ---- checks automáticos: a varredura detectou que a tarefa de um dia
        anterior foi cumprida (ex.: corretor respondeu, visita registrada).
        Marca feito=1/feito_auto=1 sem sobrescrever check manual existente. */
@@ -164,7 +180,7 @@ try {
     $pdo->commit();
     echo json_encode(['ok' => true, 'data' => $data,
         'clientes' => $nCli, 'planos' => $nPlanos, 'itens' => $nItens,
-        'auto_checks' => $nAuto, 'bloqueados' => $nBloq]);
+        'auto_checks' => $nAuto, 'bloqueados' => $nBloq, 'textos' => $nTextos]);
 } catch (Throwable $e) {
     $pdo->rollBack();
     http_response_code(500);
