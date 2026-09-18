@@ -37,6 +37,13 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   ("visitou", "gostou", "não gostou"). Estar no stage 3 (Visita) por si só NÃO
   é confirmação.
 - Visita realizada e CONFIRMADA sem desdobramento → "pós-visita".
+- REGRA DE ESTÁGIO PÓS-VISITA: cliente que comprovadamente VEIO à visita tem
+  que estar em Visita, Proposta ou Negociado no Robust. Se há indícios claros
+  de que a visita ACONTECEU (confirmada como acima) e o stage é 0, 1 ou 2,
+  RECOMENDE FORTEMENTE a correção: acrescente no INÍCIO da justificativa da
+  tarefa (seja ela qual for) "⚠ Evoluir para VISITA no Robust — a visita já
+  aconteceu e o atendimento ainda está em <etapa atual>." Não mude a ação por
+  causa disso; é um aviso somado à tarefa do dia.
 - Visita/agendamento com data já passada e SEM confirmação de comparecimento →
   "verificar visita": perguntar se conseguiu ir e, se não foi, reagendar.
 - Stage 4 → "avançar proposta" (documentação, contraproposta, prazo).
