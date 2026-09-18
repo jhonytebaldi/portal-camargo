@@ -131,6 +131,12 @@ try {
         $pdo->exec("ALTER TABLE pa_clientes ADD COLUMN ghl_assigned VARCHAR(40) NULL");
         $feitos[] = 'pa_clientes.ghl_assigned';
     }
+    // Aguardar retorno sem virar tarefa: data em que cobrar o cliente se ele
+    // não responder (a rotina pula a re-análise e não gera item até lá).
+    if (!col_existe($pdo, 'pa_clientes', 'cobrar_em')) {
+        $pdo->exec("ALTER TABLE pa_clientes ADD COLUMN cobrar_em DATE NULL");
+        $feitos[] = 'pa_clientes.cobrar_em';
+    }
     // Aplica o de-para GHL ↔ Robust conferido (plano-acao/depara-seed.php).
     // Idempotente e conservador: só preenche robust_user_id quando NULL —
     // o que o admin ajustar depois na mão nunca é sobrescrito.
