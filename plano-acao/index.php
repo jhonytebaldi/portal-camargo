@@ -352,8 +352,8 @@ if ($ultimaAtu) {
       <option value="0">todas</option>
     </select>
     <select id="wa-fmt">
-      <option value="completo" selected>completo (por quê + msg)</option>
-      <option value="resumido">resumido (só título)</option>
+      <option value="completo" selected>análise do gestor (padrão)</option>
+      <option value="resumido">lista resumida (só título)</option>
     </select>
   </span>
   <span class="pa-selinfo" id="sel-info"></span>
@@ -433,7 +433,8 @@ if ($ultimaAtu) {
     $teams = implode(',', $teamByBroker[$p['broker_id']] ?? []);
 ?>
   <section class="pa-plano" data-teams="<?= h($teams) ?>"
-           data-wa-cab="PLANO DE AÇÃO — <?= h(explode(' ', $p['corretor_nome'])[0]) ?> · <?= h(pa_data_label($dataSel)) ?>">
+           data-wa-cab="PLANO DE AÇÃO — <?= h(explode(' ', $p['corretor_nome'])[0]) ?> · <?= h(pa_data_label($dataSel)) ?>"
+           data-wa-nome="<?= h(explode(' ', $p['corretor_nome'])[0]) ?>">
     <div class="pa-cab">
       <h2><?= h($p['corretor_nome']) ?></h2>
       <span class="pa-prog" data-prog="<?= (int)$p['id'] ?>"><?= $ok ?>/<?= $tot ?> feitas</span>
@@ -644,35 +645,59 @@ function montaTextoWa(sec){
   if (sel.length) itens = sel;
   const total = itens.length;
   if (qtd > 0) itens = itens.slice(0, qtd);
-  const FX = {vermelho:'🔴 *AGORA CEDO*', amarelo:'🟡 *AINDA HOJE*',
-              azul:'🔵 *ESTA SEMANA*', branco:'⚪ *MANTER / AVALIAR ENCERRAR*'};
-  const cont = {vermelho:0, amarelo:0, azul:0, branco:0};
-  itens.forEach(i => { if (cont[i.dataset.faixa] !== undefined) cont[i.dataset.faixa]++; });
   const txt = (el, s) => { const x = el.querySelector(s); return x ? x.textContent.trim() : ''; };
-  const lin = ['*' + (sec.dataset.waCab || 'PLANO DE AÇÃO') + '*',
-    itens.length + ' tarefa(s)' + (total > itens.length ? ' de ' + total + ' listadas' : '') +
-    ' · 🔴' + cont.vermelho + ' 🟡' + cont.amarelo + ' 🔵' + cont.azul + ' ⚪' + cont.branco, ''];
-  let fx = null, n = 0;
-  itens.forEach(it => {
-    if (it.dataset.faixa !== fx) { fx = it.dataset.faixa; lin.push(FX[fx] || fx); }
-    n++;
-    const nome = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
-          stage = txt(it, '.pa-meta .pa-badge:not(.acao):not(.origem):not(.auto)'),
-          feito = it.querySelector('.pa-check')?.checked;
-    lin.push(n + '. *' + nome + '*' + (feito ? ' ✅' : '') + (tel ? ' · ' + tel : '') +
-             (stage ? ' (' + stage + ')' : '') + ' · cód. ' + it.dataset.aid);
-    lin.push('→ ' + txt(it, '.pa-tit'));
-    if (fmt === 'completo') {
-      const just = txt(it, '.pa-just');
-      if (just) lin.push('_' + just.replace(/_/g, '‗') + '_');
-      const msg = txt(it, '.pa-msg pre');
-      if (msg) lin.push('✉️ Sugestão de mensagem:', '"' + msg + '"');
-      lin.push('');
-    }
+
+  /* ---- formato resumido: lista compacta ---- */
+  if (fmt !== 'completo') {
+    const lin = ['*' + (sec.dataset.waCab || 'PLANO DE AÇÃO') + '*',
+      itens.length + ' tarefa(s)' + (total > itens.length ? ' de ' + total + ' listadas' : ''), ''];
+    let n = 0;
+    itens.forEach(it => {
+      n++;
+      const nome = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
+            feito = it.querySelector('.pa-check')?.checked;
+      lin.push(n + '. *' + nome + '*' + (feito ? ' ✅' : '') + (tel ? ' · ' + tel : '') + ' · cód. ' + it.dataset.aid);
+      lin.push('→ ' + txt(it, '.pa-tit'));
+    });
+    lin.push('');
+    if (total > itens.length) lin.push('… +' + (total - itens.length) + ' tarefa(s) na lista completa.');
+    lin.push('Plano completo com telefones e mensagens: portal.imobcamargo.com.br/plano-acao/');
+    return lin.join('\n');
+  }
+
+  /* ---- formato padrão: texto corrido, tom de análise do gestor ---- */
+  const nome1 = sec.dataset.waNome || '';
+  const h = new Date().getHours();
+  const sauda = h < 12 ? 'Bom dia' : (h < 18 ? 'Boa tarde' : 'Boa noite');
+  const aberturas = [
+    'Dei uma passada na tua carteira, o que precisa de atenção hoje:',
+    'Olhei teus atendimentos aqui, foco nesses hoje:',
+    'Revisei tua carteira, esses são os pontos de hoje:',
+    'Dei uma olhada nos teus atendimentos, atenção nesses aqui:'];
+  const introsMsg = ['Pode ir de algo assim:', 'Pode mandar:', 'Algo assim já resolve:', 'Uma ideia de texto:'];
+  const seed = new Date().getDate() + (sec.dataset.waNome || '').length;
+  const lin = [sauda + (nome1 ? ' ' + nome1 : '') + '! ' + aberturas[seed % aberturas.length], ''];
+  itens.forEach((it, i) => {
+    const nomeC = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
+          feito = it.querySelector('.pa-check')?.checked, faixa = it.dataset.faixa;
+    let just = txt(it, '.pa-just');
+    if (just) just = just.charAt(0).toLowerCase() + just.slice(1);
+    let tit = txt(it, '.pa-tit');
+    let cab = '*' + nomeC + '*' + (feito ? ' ✅' : '') + (tel ? ' ' + tel : '');
+    if (i === 0 && faixa === 'vermelho') cab = 'O mais urgente: ' + cab;
+    else if (i === 0) cab = 'Começa por aqui: ' + cab;
+    let bloco = cab + (just ? ' — ' + just : '');
+    if (!/[.!?…]$/.test(bloco)) bloco += '.';
+    bloco += ' ' + tit + (/[.!?…]$/.test(tit) ? '' : '.');
+    const msg = txt(it, '.pa-msg pre');
+    lin.push(bloco + (msg ? ' ' + introsMsg[(seed + i) % introsMsg.length] : ''));
+    if (msg) lin.push('"' + msg + '"');
+    lin.push('(cód ' + it.dataset.aid + ')', '');
   });
-  if (fmt !== 'completo') lin.push('');
-  if (total > itens.length) lin.push('… +' + (total - itens.length) + ' tarefa(s) na lista completa.');
-  lin.push('Plano completo com telefones e mensagens: portal.imobcamargo.com.br/plano-acao/');
+  const resto = total - itens.length;
+  lin.push(resto > 0
+    ? 'O resto (' + resto + ' tarefa' + (resto > 1 ? 's' : '') + ') tá no portal, com telefones e mensagens. Qualquer coisa me chama 👊'
+    : 'Tudo isso tá no portal também, com telefones e mensagens. Qualquer coisa me chama 👊');
   return lin.join('\n');
 }
 document.addEventListener('click', async (e) => {
