@@ -56,15 +56,15 @@ try {
         $up = $pdo->prepare(
             'INSERT INTO pa_clientes (atendimento_id, cliente_id, nome, telefones,
                 robust_atendente, broker_id, stage, ghl_contact_id, ghl_conv_id,
-                ghl_assigned, last_msg_at, last_analise_at, resumo, atualizado_em)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+                ghl_assigned, last_msg_at, last_analise_at, resumo, cobrar_em, atualizado_em)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
              ON DUPLICATE KEY UPDATE cliente_id=VALUES(cliente_id), nome=VALUES(nome),
                 telefones=VALUES(telefones), robust_atendente=VALUES(robust_atendente),
                 broker_id=VALUES(broker_id), stage=VALUES(stage),
                 ghl_contact_id=VALUES(ghl_contact_id), ghl_conv_id=VALUES(ghl_conv_id),
                 ghl_assigned=VALUES(ghl_assigned),
                 last_msg_at=VALUES(last_msg_at), last_analise_at=VALUES(last_analise_at),
-                resumo=VALUES(resumo), atualizado_em=NOW()'
+                resumo=VALUES(resumo), cobrar_em=VALUES(cobrar_em), atualizado_em=NOW()'
         );
         foreach ($body['clientes'] as $c) {
             if (empty($c['atendimento_id'])) continue;
@@ -79,6 +79,8 @@ try {
                 isset($c['last_msg_at']) ? (int)$c['last_msg_at'] : null,
                 ($c['last_analise_at'] ?? null) ?: null,
                 ($c['resumo'] ?? null) ?: null,
+                (isset($c['cobrar_em']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$c['cobrar_em']))
+                    ? (string)$c['cobrar_em'] : null,
             ]);
             $nCli++;
         }
