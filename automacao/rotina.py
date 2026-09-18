@@ -568,12 +568,61 @@ def publicar():
               "carry_forward": n_carry, "titularidade_divergente": n_div,
               "alinhar_titularidade": n_alinhar, "aguardando_retorno": n_aguardar}
     json.dump(resumo, open(os.path.join(DIR, "resumo_publicacao.json"), "w"), ensure_ascii=False)
+
+    # ---- entrada p/ os textos "análise do gestor" (redigidos por subagentes
+    # com estilo_gestor.md; depois `rotina.py textos` publica no portal) ----
+    gdir = os.path.join(DIR, "gestor")
+    os.makedirs(gdir, exist_ok=True)
+    os.makedirs(os.path.join(gdir, "out"), exist_ok=True)
+    for sub in ("", "out"):
+        d = os.path.join(gdir, sub)
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            if os.path.isfile(fp): os.remove(fp)
+    ginput = []
+    for p in planos:
+        top = [i for i in p["itens"] if i["faixa"] in ("vermelho", "amarelo")][:15]
+        ginput.append({"robust_atendente": p["robust_atendente"],
+            "corretor": p["corretor_nome"], "data": DATA,
+            "tarefas_no_portal": len(p["itens"]) - len(top),
+            "itens": [{k: i.get(k) for k in ("cliente_nome", "telefones", "stage", "acao",
+                       "titulo", "justificativa", "msg_sugerida", "faixa", "atendimento_id")}
+                      for i in top]})
+    json.dump(ginput, open(os.path.join(gdir, "entrada.json"), "w"), ensure_ascii=False)
+    resumo["textos_gestor"] = len(ginput)
+
     print(json.dumps(resumo, ensure_ascii=False))
     if not res.get("ok"): sys.exit("ERRO na importação: " + r.text[:300])
+
+# =====================================================================
+def textos():
+    """Publica os textos 'análise do gestor' escritos pelos subagentes.
+    Lê trabalho/gestor/out/*.json (arrays de {robust_atendente, texto}) e
+    atualiza pa_planos.texto_whatsapp do dia — sem mexer nos itens/checks."""
+    ctx = json.load(open(os.path.join(DIR, "contexto.json")))
+    gout = os.path.join(DIR, "gestor", "out")
+    textos = []
+    for f in sorted(os.listdir(gout)):
+        if not f.endswith(".json"): continue
+        for o in json.load(open(os.path.join(gout, f))):
+            if o.get("robust_atendente") and (o.get("texto") or "").strip():
+                textos.append({"robust_atendente": int(o["robust_atendente"]),
+                               "texto_whatsapp": o["texto"].strip()})
+    if not textos: sys.exit("ERRO: nenhum texto em trabalho/gestor/out/")
+    body = {"data": ctx["data_plano"], "textos": textos}
+    r = requests.post(f"{PORTAL}/plano-acao/api-importar.php", headers=PA, json=body, timeout=120)
+    res = {}
+    try: res = r.json()
+    except Exception: pass
+    print(json.dumps({"ok": bool(res.get("ok")), "http": r.status_code,
+                      "textos_enviados": len(textos), "textos_gravados": res.get("textos")},
+                     ensure_ascii=False))
+    if not res.get("ok"): sys.exit("ERRO ao publicar textos: " + r.text[:300])
 
 # =====================================================================
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "preparar": preparar()
     elif cmd == "publicar": publicar()
-    else: sys.exit("uso: rotina.py preparar|publicar")
+    elif cmd == "textos": textos()
+    else: sys.exit("uso: rotina.py preparar|publicar|textos")

@@ -20,10 +20,21 @@ tarefas cumpridas detectadas viram check automático).
    Gravar cada resultado em `trabalho/analise/out_NN.json` (mesma ordem).
 5. `python3 rotina.py publicar` — merge, nota/fallback de titularidade,
    auto-checks e importação no portal.
-   Imprime um resumo JSON (também em `trabalho/resumo_publicacao.json`).
-6. Reportar ao Jhony em 3-5 linhas: nº de clientes, re-analisados,
-   auto-checks, divergências e qualquer falha de API. Sem perguntas —
-   se algo falhar parcialmente, publicar o que der e relatar.
+   Imprime um resumo JSON (também em `trabalho/resumo_publicacao.json`) e
+   gera `trabalho/gestor/entrada.json` para o passo seguinte.
+6. Textos "análise do gestor" (o que o botão Copiar p/ WhatsApp entrega):
+   dividir os corretores de `trabalho/gestor/entrada.json` entre subagentes
+   (~5 corretores por subagente, em paralelo). Cada subagente lê
+   `estilo_gestor.md` e escreve, POR corretor, o briefing no tom do gestor,
+   gravando `trabalho/gestor/out/out_NN.json` como array de
+   `{"robust_atendente": <id>, "texto": "<texto pronto>"}`.
+   Use o modelo mais capaz disponível no ambiente para ESTES subagentes
+   (a escrita é a cara do gestor); os lotes da análise (passo 4) seguem no
+   modelo padrão. Depois: `python3 rotina.py textos` — publica os textos.
+7. Reportar ao Jhony em 3-5 linhas: nº de clientes, re-analisados,
+   auto-checks, divergências, textos do gestor publicados e qualquer falha
+   de API. Sem perguntas — se algo falhar parcialmente, publicar o que der
+   e relatar.
 
 ## Regras que o código já aplica (não reimplementar)
 
