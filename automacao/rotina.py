@@ -128,10 +128,11 @@ def preparar():
             c["last_analise"] = cc.get("last_analise_at"); c["stage_cache"] = cc.get("stage")
             c["assigned_cache"] = cc.get("ghl_assigned")
             c["last_msg_cache"] = int(cc["last_msg_at"]) if cc.get("last_msg_at") else None
+            c["cobrar_em"] = cc.get("cobrar_em")
         else:
             c["nome"] = None; c["tels"] = []; c["ghl_contact"] = None; c["ghl_conv"] = None
             c["last_analise"] = None; c["stage_cache"] = None
-            c["assigned_cache"] = None; c["last_msg_cache"] = None
+            c["assigned_cache"] = None; c["last_msg_cache"] = None; c["cobrar_em"] = None
             falta_p.append(aid)
     ids_p = sorted({cli[a]["cliente_id"] for a in falta_p if cli[a]["cliente_id"]})
     for i in range(0, len(ids_p), 80):
@@ -259,6 +260,19 @@ def preparar():
                    or int(itens_ant[aid].get("feito") or 0) == 1   # tarefa concluída → decidir o próximo passo
                    or c["div"] != div_cache                         # titularidade mudou (divergiu ou voltou)
                    or (c["div"] and c.get("assigned") != c.get("assigned_cache")))  # trocou de dono de novo
+        # aguardando retorno combinado (cobrar_em no futuro): não re-analisa e
+        # não gera tarefa até a data vencer — a MENOS que algo novo aconteça
+        # (mensagem, andamento, mudança de stage ou de titularidade).
+        cob = None
+        try: cob = datetime.strptime(str(c.get("cobrar_em") or ""), "%Y-%m-%d").date()
+        except ValueError: pass
+        if precisa and cob and cob > agora.date():
+            algo_novo = ((lm is not None and la is not None and lm > la)
+                         or (lu is not None and la is not None and lu > la)
+                         or (c.get("stage_cache") is not None and int(c["stage_cache"]) != c["stage"])
+                         or c["div"] != div_cache
+                         or (c["div"] and c.get("assigned") != c.get("assigned_cache")))
+            if not algo_novo: precisa = False
         if precisa: rean.append(aid)
     log(f"re-análise: {len(rean)} de {len(cli)}")
 
@@ -388,6 +402,7 @@ def preparar():
                 "dias_parado": c.get("dias_parado"), "pre_score": c.get("pre_score", 30),
                 "flags": c.get("flags", []), "obs": c.get("obs") or "",
                 "andamentos": c.get("andamentos", []),
+                "cobranca_combinada": c.get("cobrar_em"),
                 "dono_robust": c["corretor"],
                 "dono_wesales": ghl2nome.get(c.get("assigned")) if c.get("assigned") else None,
                 "titularidade_divergente": bool(c.get("div")),
@@ -433,9 +448,27 @@ def publicar():
             return f"({d[2:4]}) {d[4:-4]}-{d[-4:]}"
         return t or ""
 
-    por, n_div, n_alinhar, n_carry = {}, 0, 0, 0
+    hoje = datetime.strptime(DATA, "%Y-%m-%d").date()
+    por, n_div, n_alinhar, n_carry, n_aguardar = {}, 0, 0, 0, 0
     for aid, c in cli.items():
         a = ana.get(aid)
+        divergente = bool(c.get("assigned") and rob2broker.get(c["robust_atendente"])
+                          and c["assigned"] != rob2broker[c["robust_atendente"]])
+        if a and a["acao"] == "aguardar retorno" and not divergente:
+            # dentro do prazo de retorno combinado: NÃO vira tarefa no plano.
+            # Guarda a data de cobrança; a rotina só volta a olhar o cliente
+            # quando ela vencer (ou quando algo novo acontecer).
+            cob = None
+            try:
+                cob = datetime.strptime(str(a.get("cobrar_em") or ""), "%Y-%m-%d").date()
+            except ValueError: pass
+            if cob is None or cob <= hoje: cob = hoje + timedelta(days=3)
+            if (cob - hoje).days > 14: cob = hoje + timedelta(days=14)
+            c["cobrar_em"] = cob.isoformat()
+            n_aguardar += 1
+            continue
+        if a:
+            c["cobrar_em"] = None   # tarefa real: limpa o prazo de espera
         if a:  # análise nova
             score = max(5, min(98, int(c.get("pre_score", 30)) + int(a.get("ajuste_score") or 0)))
             item = {"acao": a["acao"], "titulo": (a.get("titulo") or "")[:255],
@@ -520,7 +553,7 @@ def publicar():
             "stage": c["stage"], "ghl_contact_id": c.get("ghl_contact"), "ghl_conv_id": c.get("ghl_conv"),
             "ghl_assigned": c.get("assigned"), "last_msg_at": c.get("last_msg"),
             "last_analise_at": agora if aid in ana else (c.get("last_analise") or agora),
-            "resumo": None})
+            "resumo": None, "cobrar_em": c.get("cobrar_em")})
 
     body = {"data": DATA, "clientes": clientes_payload, "planos": planos,
             "auto_checks": [{"data": a["data"], "atendimento_id": a["atendimento_id"]}
@@ -533,7 +566,7 @@ def publicar():
               "planos": res.get("planos"), "itens": res.get("itens"),
               "auto_checks": res.get("auto_checks"), "re_analisados": len(ana),
               "carry_forward": n_carry, "titularidade_divergente": n_div,
-              "alinhar_titularidade": n_alinhar}
+              "alinhar_titularidade": n_alinhar, "aguardando_retorno": n_aguardar}
     json.dump(resumo, open(os.path.join(DIR, "resumo_publicacao.json"), "w"), ensure_ascii=False)
     print(json.dumps(resumo, ensure_ascii=False))
     if not res.get("ok"): sys.exit("ERRO na importação: " + r.text[:300])

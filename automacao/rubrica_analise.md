@@ -40,9 +40,20 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 - Visita/agendamento com data já passada e SEM confirmação de comparecimento →
   "verificar visita": perguntar se conseguiu ir e, se não foi, reagendar.
 - Stage 4 → "avançar proposta" (documentação, contraproposta, prazo).
-- O corretor JÁ agiu (última mensagem manual é dele, há menos de 3 dias) e a
-  bola está com o cliente → "aguardar retorno": nada a fazer hoje; o título diz
-  o que esperar e quando cobrar (ex.: "Aguardar resposta; cobrar sexta se calar").
+- O corretor JÁ agiu e a bola está com o cliente (última mensagem manual é do
+  corretor). Estime o prazo de retorno: se a conversa tem prazo COMBINADO
+  ("te respondo segunda", "vou falar com meu esposo no fim de semana", "volto
+  da viagem dia 20"), use-o; sem prazo combinado, considere ~3 dias após a
+  última mensagem do corretor. Então:
+  · Prazo AINDA NÃO venceu → "aguardar retorno" + campo "cobrar_em" com a data
+    (AAAA-MM-DD) em que cobrar se o cliente calar. Esse caso NÃO vira tarefa no
+    plano — o sistema volta a olhar o cliente na data. titulo/justificativa
+    curtos (só registro), msg_sugerida = null.
+  · Prazo JÁ venceu (o cliente devia ter respondido) → NÃO use "aguardar
+    retorno": gere "follow-up" com msg_sugerida retomando o que ficou
+    combinado (ex.: "E aí, conseguiu conversar com seu esposo?"). O campo
+    cobranca_combinada do cliente, quando presente, é a data que tinha sido
+    combinada — cite-a se ajudar no gancho.
 - 15–45 dias parado com histórico de interesse → "reativar" (nova oferta, novo ângulo).
 - 3+ tentativas sem retorno E 30+ dias parado, ou desinteresse explícito
   ("já comprei", "não quero mais", número errado) → "encerrar".
@@ -89,6 +100,7 @@ Grave no arquivo de saída um array com um objeto POR cliente do lote:
  "msg_sugerida": "<mensagem pronta de WhatsApp em pt-BR, tom leve e pessoal, 1-3 frases, SEM saudação genérica tipo 'Espero que esteja bem'; null se a ação não é mandar mensagem>",
  "ajuste_score": <int -20..+20 conforme sinais de intenção: pediu visita/financiamento/urgência/imóvel específico = positivo; desinteresse/silêncio longo = negativo>,
  "encerrar_motivo": "<só quando acao=encerrar: motivo curto>",
+ "cobrar_em": "<só quando acao=aguardar retorno: data AAAA-MM-DD em que cobrar o cliente se não responder — o prazo combinado na conversa, ou ~3 dias após a última mensagem do corretor>",
  "nome_detectado": "<APENAS quando o cadastro está sem nome, ou com nome genérico/errado (número, 'Contato', apelido de sistema), E o cliente se identificou claramente na conversa ('aqui é a Fernanda', assinatura, corretor o chama pelo nome e ele confirma): o nome detectado. Caso contrário null. Serve para o corretor corrigir o cadastro no Robust/GHL.>"
 }
 
