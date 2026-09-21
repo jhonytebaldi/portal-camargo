@@ -258,6 +258,7 @@ def preparar():
                    or (c.get("stage_cache") is not None and int(c["stage_cache"]) != c["stage"])
                    or (agora - la).days >= 5           # ninguém fica sem nova análise por mais de 5 dias
                    or int(itens_ant[aid].get("feito") or 0) == 1   # tarefa concluída → decidir o próximo passo
+                   or itens_ant[aid].get("acao") == "confirmar visita"  # sensível a data: re-olhar TODA rodada
                    or c["div"] != div_cache                         # titularidade mudou (divergiu ou voltou)
                    or (c["div"] and c.get("assigned") != c.get("assigned_cache")))  # trocou de dono de novo
         # aguardando retorno combinado (cobrar_em no futuro): não re-analisa e
@@ -581,7 +582,18 @@ def publicar():
             if os.path.isfile(fp): os.remove(fp)
     ginput = []
     for p in planos:
-        top = [i for i in p["itens"] if i["faixa"] in ("vermelho", "amarelo")][:15]
+        # pelo menos 15 tarefas (regra do Jhony): vermelho/amarelo, depois azul e branco (encerrar por contexto antes de por transferência)
+        top = [i for i in p["itens"] if i["faixa"] in ("vermelho", "amarelo")]
+        if len(top) < 15:
+            top += [i for i in p["itens"] if i["faixa"] == "azul"][:15 - len(top)]
+        if len(top) < 15:
+            brancos = [i for i in p["itens"] if i["faixa"] == "branco"]
+            def eh_transf(i):
+                j = (i.get("justificativa") or "") + (i.get("titulo") or "")
+                return 1 if ("WeSales" in j or "itularidade" in j) else 0
+            brancos.sort(key=lambda i: (eh_transf(i), -int(i.get("score") or 0)))
+            top += brancos[:15 - len(top)]
+        top = top[:15]
         ginput.append({"robust_atendente": p["robust_atendente"],
             "corretor": p["corretor_nome"], "data": DATA,
             "tarefas_no_portal": len(p["itens"]) - len(top),
