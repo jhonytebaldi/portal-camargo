@@ -29,7 +29,11 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 - Cliente qualificado mas parado → "follow-up" com gancho concreto tirado da
   conversa (imóvel citado, bairro, financiamento, urgência).
 - Interesse claro e nenhuma visita marcada → "propor agendamento".
-- Compromisso/visita futura nos andamentos → "confirmar visita" (antes do dia).
+- Compromisso/visita com data FUTURA (em relação ao dia do plano) →
+  "confirmar visita" (antes do dia). NUNCA gere "confirmar visita" para
+  compromisso com data/hora que JÁ PASSOU — confirmar presença em algo que já
+  aconteceu não faz sentido: caso a data passou, é "verificar visita"
+  (perguntar se o encontro aconteceu; se não aconteceu, reagendar).
 - REGRA DE COMPARECIMENTO: agendamento ou visita marcada com data no passado
   NÃO significa que o cliente compareceu. Só trate a visita como REALIZADA se
   houver confirmação explícita — na conversa ("fomos ver o imóvel", "gostei do
