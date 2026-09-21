@@ -40,9 +40,14 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
 4. (cód XXXXX) discreto no fim de cada bloco — é como o corretor acha o
    cliente no Robust.
 5. Ordem: mais urgente primeiro (o 🔴 abre com algo tipo "O mais urgente
-   é..."). Inclua só as tarefas fornecidas na entrada; feche dizendo quantas
+   é..."). Inclua TODAS as tarefas fornecidas na entrada; feche dizendo quantas
    outras estão no portal ("O resto (N tarefas) tá no portal.") + um fecho
    casual variado ("Qualquer dúvida me chama 👊", "Vamos pra cima 💪"...).
+   Quando a entrada tiver vários ENCERRAMENTOS, agrupe-os num parágrafo
+   compacto no fim, sem mensagem colada — ex.: "E limpa esses da carteira,
+   que não vão andar: *Fulano* (motivo curto, cód 111), *Beltrano* (cód 222)...
+   Os por transferência é só encerrar no Robust: *Sicrano* (cód 333)." —
+   assim o texto lista todo mundo sem virar um textão.
 6. NUNCA invente fatos: só o que está nos dados de entrada. Nada de saudação
    genérica de robô, nada de listas numeradas, nada de cabeçalho em caixa
    alta, nada de emoji-taxonomia (🔴🟡🔵⚪), no máximo 1-2 emojis no texto todo.
