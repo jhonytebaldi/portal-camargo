@@ -646,6 +646,7 @@ function montaTextoWa(sec){
   let itens = [...sec.querySelectorAll('.pa-item')].filter(i => !i.classList.contains('pa-oculto'));
   const sel = itens.filter(i => i.querySelector('.pa-sel').checked);
   if (sel.length) itens = sel;
+  itens = itens.filter(i => !i.querySelector('.pa-check')?.checked);   // feitas ficam fora do texto
   const total = itens.length;
   if (qtd > 0) itens = itens.slice(0, qtd);
   const txt = (el, s) => { const x = el.querySelector(s); return x ? x.textContent.trim() : ''; };
@@ -657,9 +658,8 @@ function montaTextoWa(sec){
     let n = 0;
     itens.forEach(it => {
       n++;
-      const nome = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
-            feito = it.querySelector('.pa-check')?.checked;
-      lin.push(n + '. *' + nome + '*' + (feito ? ' ✅' : '') + (tel ? ' · ' + tel : '') + ' · cód. ' + it.dataset.aid);
+      const nome = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel');
+      lin.push(n + '. *' + nome + '*' + (tel ? ' · ' + tel : ''));
       lin.push('→ ' + txt(it, '.pa-tit'));
     });
     lin.push('');
@@ -688,12 +688,11 @@ function montaTextoWa(sec){
   const seed = new Date().getDate() + (sec.dataset.waNome || '').length;
   const lin = [sauda + (nome1 ? ' ' + nome1 : '') + '! ' + aberturas[seed % aberturas.length], ''];
   itens.forEach((it, i) => {
-    const nomeC = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'),
-          feito = it.querySelector('.pa-check')?.checked, faixa = it.dataset.faixa;
+    const nomeC = txt(it, '.pa-nome'), tel = txt(it, '.pa-tel'), faixa = it.dataset.faixa;
     let just = txt(it, '.pa-just');
     if (just) just = just.charAt(0).toLowerCase() + just.slice(1);
     let tit = txt(it, '.pa-tit');
-    let cab = '*' + nomeC + '*' + (feito ? ' ✅' : '') + (tel ? ' ' + tel : '');
+    let cab = '*' + nomeC + '*' + (tel ? ' ' + tel : '');
     if (i === 0 && faixa === 'vermelho') cab = 'O mais urgente: ' + cab;
     else if (i === 0) cab = 'Começa por aqui: ' + cab;
     let bloco = cab + (just ? ' — ' + just : '');
@@ -702,7 +701,7 @@ function montaTextoWa(sec){
     const msg = txt(it, '.pa-msg pre');
     lin.push(bloco + (msg ? ' ' + introsMsg[(seed + i) % introsMsg.length] : ''));
     if (msg) lin.push('"' + msg + '"');
-    lin.push('(cód ' + it.dataset.aid + ')', '');
+    lin.push('');
   });
   const resto = total - itens.length;
   lin.push(resto > 0
