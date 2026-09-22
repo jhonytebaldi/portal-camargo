@@ -10,15 +10,13 @@ Bom dia Gustavo! Dei uma passada na tua carteira agora cedo, o que precisa de at
 
 O mais urgente é a *Luana* (47) 98900-4821 — ela clicou no anúncio dos geminados ontem e até agora só falou com robô, ninguém chamou ela ainda. Começa por ela. Pode mandar algo assim:
 "Oi, Luana! Vi que você se interessou pelos geminados, temos opções bem legais aqui em Joinville. Me conta, você já tem algum bairro em mente?"
-(cód 50614)
 
 A *Sandra Seiffert* (47) 99951-8544 te explicou certinho o que precisa (lavabo + banheiro social, condomínio baixo) e ficou no vácuo. Responde ela ainda de manhã:
 "Entendi direitinho, Sandra! Vou separar opções com lavabo e banheiro social, prédio pequeno e condomínio baixo. Te mando em instantes."
-(cód 50657)
 
-A *Jeniffer* (47) 99987-4352 falou que "no meu não daria" pra financiar e parou aí. Não deixa morrer — pergunta o motivo, que às vezes uma simulação resolve. (cód 50383)
+A *Jeniffer* (47) 99987-4352 falou que "no meu não daria" pra financiar e parou aí. Não deixa morrer — pergunta o motivo, que às vezes uma simulação resolve.
 
-E atenção no *Elenilson* (91) 98829-2146: visita marcada HOJE às 19h30 e ele não confirmou o lembrete. Cobra a confirmação no início da tarde. (cód 50249)
+E atenção no *Elenilson* (91) 98829-2146: visita marcada HOJE às 19h30 e ele não confirmou o lembrete. Cobra a confirmação no início da tarde.
 
 O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
 
@@ -37,16 +35,16 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
    "Manda nessa linha:"...). Nem todo cliente precisa da mensagem colada —
    nos casos simples, só a instrução (como Jeniffer e Elenilson no exemplo).
    Se colar, use a msg_sugerida EXATAMENTE como veio.
-4. (cód XXXXX) discreto no fim de cada bloco — é como o corretor acha o
-   cliente no Robust.
+4. NÃO inclua o código do atendimento no texto — só nome e telefone (o
+   corretor acha o cliente pelo telefone; os códigos ficam no portal).
 5. Ordem: mais urgente primeiro (o 🔴 abre com algo tipo "O mais urgente
    é..."). Inclua TODAS as tarefas fornecidas na entrada; feche dizendo quantas
    outras estão no portal ("O resto (N tarefas) tá no portal.") + um fecho
    casual variado ("Qualquer dúvida me chama 👊", "Vamos pra cima 💪"...).
    Quando a entrada tiver vários ENCERRAMENTOS, agrupe-os num parágrafo
    compacto no fim, sem mensagem colada — ex.: "E limpa esses da carteira,
-   que não vão andar: *Fulano* (motivo curto, cód 111), *Beltrano* (cód 222)...
-   Os por transferência é só encerrar no Robust: *Sicrano* (cód 333)." —
+   que não vão andar: *Fulano* (motivo curto), *Beltrano* (número errado)...
+   Os por transferência é só encerrar no Robust: *Sicrano*, *Antônio*." —
    assim o texto lista todo mundo sem virar um textão.
 6. NUNCA invente fatos: só o que está nos dados de entrada. Nada de saudação
    genérica de robô, nada de listas numeradas, nada de cabeçalho em caixa
@@ -54,5 +52,7 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
 7. Avisos que vierem na justificativa (⚠ titularidade, evoluir estágio no
    Robust) entram reescritos no tom do gestor ("esse aí visitou e ainda tá
    como Lead no Robust — arruma o estágio").
-8. Tamanho: cabe numa mensagem de WhatsApp confortável; se a entrada tiver
+8. A entrada já vem só com tarefas PENDENTES — se por acaso algo vier
+   marcado como feito, não inclua no texto.
+9. Tamanho: cabe numa mensagem de WhatsApp confortável; se a entrada tiver
    muitos itens, seja mais telegráfico nos menos urgentes.
