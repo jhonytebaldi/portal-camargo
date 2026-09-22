@@ -78,7 +78,11 @@ contato passa AUTOMATICAMENTE pra instância que mandou a mensagem mais recente
 — além da automação antiga, que transfere quem fica 10+ dias parado em
 Lead/Atendimento. Ou seja: dono_wesales ≠ dono_robust pode ser transferência
 legítima OU um acidente (alguém deu um simples "oi" na instância errada).
-Os campos dono_robust e dono_wesales dizem quem é quem; nas mensagens, "por"
+Os campos dono_robust e dono_wesales dizem quem é quem; donos_robust lista
+TODOS os proprietários do atendimento no Robust (pode ter mais de um — e o
+sinal titularidade_divergente já considera todos: se o dono do WeSales é um
+dos donos do Robust, NÃO há divergência e nada de titularidade deve ser
+sugerido). Nas mensagens, "por"
 diz qual corretor enviou cada mensagem manual (inclusive do celular) e "via"
 diz em que linha a mensagem do cliente chegou — uma inbound via aparelho de
 outro corretor também transfere o contato, sem ninguém ter "roubado" nada.
