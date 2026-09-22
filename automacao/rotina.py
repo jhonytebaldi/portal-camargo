@@ -106,11 +106,19 @@ def preparar():
             if j is None: erro_atend.append(rid); return
             for r in j["data"]:
                 if r.get("stage") in (0, 1, 2, 3, 4):
+                    # um atendimento pode ter MAIS DE UM proprietário no Robust
+                    # (atendentes_detalhes); o plano fica com o atendente_1
+                    # quando ele está no escopo, e a titularidade compara o
+                    # dono do WeSales com TODOS os donos
+                    donos = sorted({d.get("usuario_id") for d in (r.get("atendentes_detalhes") or [])
+                                    if d.get("usuario_id")})
+                    ra = r.get("atendente_1") if r.get("atendente_1") in escopo else rid
                     cli[r["id"]] = {"atendimento_id": r["id"], "cliente_id": r.get("cliente"),
                         "lead": r.get("lead"), "stage": r["stage"], "origin": r.get("origin"),
                         "obs": (r.get("obs") or "")[:600], "criado": r.get("created_at"),
-                        "last_update": r.get("last_update"), "robust_atendente": rid,
-                        "corretor": nomes_rob.get(rid, str(rid))}
+                        "last_update": r.get("last_update"), "robust_atendente": ra,
+                        "corretor": nomes_rob.get(ra, str(ra)),
+                        "donos": donos or [ra]}
             pages = j["meta"]["pages"]; page += 1
             if pages and page <= pages: time.sleep(0.2)
     with ThreadPoolExecutor(4) as ex: list(ex.map(busca_atend, escopo))
@@ -246,10 +254,12 @@ def preparar():
     for aid, c in cli.items():
         # divergência de titularidade Robust×WeSales (o WeSales passa o contato
         # pra instância que mandou a mensagem mais recente, além da automação
-        # de inatividade — o MOTIVO só dá pra julgar lendo a conversa)
-        esperado = rob2broker.get(c["robust_atendente"])
-        c["div"] = bool(c.get("assigned") and esperado and c["assigned"] != esperado)
-        div_cache = bool(c.get("assigned_cache") and esperado and c["assigned_cache"] != esperado)
+        # de inatividade — o MOTIVO só dá pra julgar lendo a conversa).
+        # Vale contra TODOS os donos do Robust: se o dono do WeSales já é um
+        # dos proprietários do atendimento, NÃO há divergência.
+        donos_brk = {rob2broker.get(d) for d in c.get("donos", [c["robust_atendente"]])} - {None}
+        c["div"] = bool(c.get("assigned") and donos_brk and c["assigned"] not in donos_brk)
+        div_cache = bool(c.get("assigned_cache") and donos_brk and c["assigned_cache"] not in donos_brk)
         la = parse_iso(c.get("last_analise"))
         lm = datetime.fromtimestamp(c["last_msg"]/1000, TZ) if c.get("last_msg") else None
         lu = parse_iso(c.get("last_update"))
@@ -405,6 +415,7 @@ def preparar():
                 "andamentos": c.get("andamentos", []),
                 "cobranca_combinada": c.get("cobrar_em"),
                 "dono_robust": c["corretor"],
+                "donos_robust": [nomes_rob.get(d, str(d)) for d in c.get("donos", [])],
                 "dono_wesales": ghl2nome.get(c.get("assigned")) if c.get("assigned") else None,
                 "titularidade_divergente": bool(c.get("div")),
                 "tem_conversa": bool(c.get("ghl_conv")), "msgs": c.get("msgs", [])})
@@ -453,8 +464,8 @@ def publicar():
     por, n_div, n_alinhar, n_carry, n_aguardar = {}, 0, 0, 0, 0
     for aid, c in cli.items():
         a = ana.get(aid)
-        divergente = bool(c.get("assigned") and rob2broker.get(c["robust_atendente"])
-                          and c["assigned"] != rob2broker[c["robust_atendente"]])
+        _donos_brk = {rob2broker.get(d) for d in c.get("donos", [c["robust_atendente"]])} - {None}
+        divergente = bool(c.get("assigned") and _donos_brk and c["assigned"] not in _donos_brk)
         if a and a["acao"] == "aguardar retorno" and not divergente:
             # dentro do prazo de retorno combinado: NÃO vira tarefa no plano.
             # Guarda a data de cobrança; a rotina só volta a olhar o cliente
@@ -491,8 +502,10 @@ def publicar():
         # inatividade) — quem julga o caso é a ANÁLISE, lendo a conversa
         # (regra de titularidade na rubrica). Aqui só o fallback factual pro
         # carry-forward e uma nota de segurança se a análise não tratou.
-        assigned, esperado = c.get("assigned"), rob2broker.get(c["robust_atendente"])
-        if assigned and esperado and assigned != esperado:
+        # Compara com TODOS os donos do Robust (atendimentos multi-proprietário).
+        assigned = c.get("assigned")
+        donos_brk = {rob2broker.get(d) for d in c.get("donos", [c["robust_atendente"]])} - {None}
+        if assigned and donos_brk and assigned not in donos_brk:
             n_div += 1
             outro_full = ghl2nome.get(assigned, "outro corretor")
             nota = (f"⚠ Titularidade: no WeSales este contato está com {outro_full}; "
@@ -582,12 +595,19 @@ def publicar():
             if os.path.isfile(fp): os.remove(fp)
     ginput = []
     for p in planos:
+        # só tarefas PENDENTES entram no texto: exclui as que o check manual do
+        # mesmo dia já marcou como feitas (reimportação preserva o check por
+        # atendimento quando a ação não mudou)
+        def feita(i):
+            ant = itens_ant.get(i["atendimento_id"]) or {}
+            return int(ant.get("feito") or 0) == 1 and ant.get("acao") == i["acao"]
+        pend = [i for i in p["itens"] if not feita(i)]
         # pelo menos 15 tarefas (regra do Jhony): vermelho/amarelo, depois azul e branco (encerrar por contexto antes de por transferência)
-        top = [i for i in p["itens"] if i["faixa"] in ("vermelho", "amarelo")]
+        top = [i for i in pend if i["faixa"] in ("vermelho", "amarelo")]
         if len(top) < 15:
-            top += [i for i in p["itens"] if i["faixa"] == "azul"][:15 - len(top)]
+            top += [i for i in pend if i["faixa"] == "azul"][:15 - len(top)]
         if len(top) < 15:
-            brancos = [i for i in p["itens"] if i["faixa"] == "branco"]
+            brancos = [i for i in pend if i["faixa"] == "branco"]
             def eh_transf(i):
                 j = (i.get("justificativa") or "") + (i.get("titulo") or "")
                 return 1 if ("WeSales" in j or "itularidade" in j) else 0
@@ -596,7 +616,7 @@ def publicar():
         top = top[:15]
         ginput.append({"robust_atendente": p["robust_atendente"],
             "corretor": p["corretor_nome"], "data": DATA,
-            "tarefas_no_portal": len(p["itens"]) - len(top),
+            "tarefas_no_portal": len(pend) - len(top),
             "itens": [{k: i.get(k) for k in ("cliente_nome", "telefones", "stage", "acao",
                        "titulo", "justificativa", "msg_sugerida", "faixa", "atendimento_id")}
                       for i in top]})
