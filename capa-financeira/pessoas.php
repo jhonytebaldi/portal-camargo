@@ -48,28 +48,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $f = $_FILES['planilha'] ?? null;
             if (!$f || $f['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('Envie a planilha .xlsx da equipe');
             $ws = Xlsx::open($f['tmp_name']);
-            // cabeçalho: procura NOME / CPF / CHAVE PIX
+            // cabeçalho: procura NOME / CPF / RAZÃO SOCIAL / CHAVE PIX
             $col = [];
             for ($r = 1; $r <= min(5, $ws->maxRow()); $r++) for ($c = 1; $c <= $ws->maxCol(); $c++) {
                 $k = CapaParser::key($ws->cell($r, $c));
                 if ($k === 'NOME') $col['nome'] = [$r, $c]; elseif ($k === 'CPF') $col['cpf'] = $c; elseif (str_starts_with($k, 'CHAVE PIX')) $col['pix'] = $c;
+                elseif (str_starts_with($k, 'RAZAO SOCIAL')) $col['razao'] = $c;
             }
             if (!isset($col['nome'])) throw new RuntimeException('Não achei a coluna NOME');
-            [$hr, $cn] = $col['nome']; $novos = 0; $atual = 0;
-            $sel = $pdo->prepare('SELECT id FROM cf_pessoas WHERE nome_key = ?');
-            $ins = $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, cnpj, cpf, pagar_por, chave_pix) VALUES (?,?,?,?,?,?)');
-            $upd = $pdo->prepare('UPDATE cf_pessoas SET cnpj = COALESCE(cnpj, ?), cpf = COALESCE(cpf, ?), chave_pix = COALESCE(chave_pix, ?) WHERE id = ?');
+            [$hr, $cn] = $col['nome']; $novos = 0; $atual = 0; $avisos = [];
+            $todas = cf_pessoas(false);
+            $porKey = []; $porCpf = [];
+            foreach ($todas as $pid => $p) { $porKey[$p['nome_key']] = $pid; if ($p['cpf']) $porCpf[cf_so_digitos($p['cpf'])] = $pid; foreach ($p['aliases'] as $a) $porKey[$a['alias_key']] = $pid; }
+            $ins = $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, chave_pix) VALUES (?,?,?,?,?,?,?)');
+            // preenche o que falta; corrige chave Pix inválida; razão social/CNPJ da planilha vencem quando a pessoa não tem
+            $upd = $pdo->prepare('UPDATE cf_pessoas SET razao_social = COALESCE(NULLIF(razao_social, ""), ?), cnpj = COALESCE(NULLIF(cnpj, ""), ?), cpf = COALESCE(NULLIF(cpf, ""), ?), chave_pix = ?, pagar_por = ? WHERE id = ?');
             for ($r = $hr + 1; $r <= $ws->maxRow(); $r++) {
                 $nome = CapaParser::norm($ws->cell($r, $cn)); if ($nome === '') continue;
-                $cpf = isset($col['cpf']) ? cf_so_digitos(CapaParser::norm($ws->cell($r, $col['cpf']))) : '';
-                $pixRaw = isset($col['pix']) ? CapaParser::norm($ws->cell($r, $col['pix'])) : '';
+                $cpfCel = isset($col['cpf']) ? $ws->cell($r, $col['cpf']) : null;
+                if (is_float($cpfCel) && floor($cpfCel) == $cpfCel) $cpfCel = sprintf('%011.0f', $cpfCel);
+                $cpf = cf_so_digitos(CapaParser::norm($cpfCel));
+                if ($cpf !== '' && strlen($cpf) !== 11) { $avisos[] = "$nome: CPF com " . strlen($cpf) . ' dígitos (ignorado)'; $cpf = ''; }
+                $razao = isset($col['razao']) ? CapaParser::norm($ws->cell($r, $col['razao'])) : '';
+                $pixCel = isset($col['pix']) ? $ws->cell($r, $col['pix']) : null;
+                if (is_float($pixCel) && floor($pixCel) == $pixCel) $pixCel = sprintf('%.0f', $pixCel);   // célula numérica (telefone/CPF sem pontuação)
+                $pixRaw = CapaParser::norm($pixCel);
+                $px = Pix::analisar($pixRaw);
+                if ($pixRaw !== '' && !$px['valido']) { $avisos[] = "$nome: chave Pix \"$pixRaw\" inválida (" . $px['erro'] . ') — não gravada'; $pixRaw = ''; }
+                else $pixRaw = (string)($px['valor'] ?? '');
                 $pixD = cf_so_digitos($pixRaw);
-                $cnpj = (strlen($pixD) === 14 && !str_contains($pixRaw, '@')) ? cf_fmt_cnpj($pixD) : null;
-                $sel->execute([CapaParser::key($nome)]);
-                if ($id = $sel->fetchColumn()) { $upd->execute([$cnpj, $cpf ? cf_fmt_cpf($cpf) : null, $pixRaw ?: null, (int)$id]); $atual++; }
-                else { $ins->execute([cf_nome_bonito($nome), CapaParser::key($nome), $cnpj, $cpf ? cf_fmt_cpf($cpf) : null, $cnpj ? 'CNPJ' : 'CPF', $pixRaw ?: null]); $novos++; }
+                $cnpj = ($px['tipo'] === 'cnpj') ? cf_fmt_cnpj($pixD) : null;
+                // razão social preenchida sem CNPJ na Pix (ex.: pessoa que recebe no CPF) — mantém só a razão
+                $key = CapaParser::key($nome);
+                $id = $porKey[$key] ?? ($cpf !== '' ? ($porCpf[$cpf] ?? null) : null);
+                if ($id) {
+                    $p = $todas[$id];
+                    $pixFinal = $pixRaw !== '' ? $pixRaw : (string)$p['chave_pix'];
+                    // Pix antiga inválida no cadastro (ex.: CNPJ com 13 dígitos) é substituída
+                    if ($pixFinal !== '' && !Pix::analisar($pixFinal)['valido']) $pixFinal = $pixRaw;
+                    $cnpjFinal = $cnpj ?: ($p['cnpj'] ?: null);
+                    $pagarPor = $cnpjFinal ? 'CNPJ' : 'CPF';
+                    $upd->execute([$razao ?: null, $cnpj, $cpf ? cf_fmt_cpf($cpf) : null, $pixFinal ?: null, $pagarPor, (int)$id]);
+                    if ($key !== $p['nome_key'] && !isset($porKey[$key])) cf_add_alias((int)$id, $nome);
+                    $atual++;
+                } else {
+                    $ins->execute([cf_nome_bonito($nome), $key, $razao ?: null, $cnpj, $cpf ? cf_fmt_cpf($cpf) : null, $cnpj ? 'CNPJ' : 'CPF', $pixRaw ?: null]);
+                    $pid = (int)$pdo->lastInsertId(); $porKey[$key] = $pid; if ($cpf) $porCpf[$cpf] = $pid;
+                    $todas[$pid] = ['nome_key' => $key, 'cpf' => $cpf, 'cnpj' => $cnpj, 'chave_pix' => $pixRaw, 'aliases' => []];
+                    $novos++;
+                }
             }
-            $msg = "Importação: $novos pessoa(s) nova(s), $atual atualizada(s). Confira razão social, departamento e conta padrão.";
+            if ($avisos) $erro = 'Avisos: ' . implode(' · ', $avisos);
+            $msg = "Importação: $novos pessoa(s) nova(s), $atual atualizada(s). Confira departamento e conta padrão.";
         }
     } catch (Throwable $e) { $erro = $e->getMessage(); }
 }
@@ -118,7 +148,7 @@ portal_header('Pessoas — Capa Financeira', $u);
 </section>
 <section class="card">
   <h2>Importar planilha da equipe</h2>
-  <p class="cf-dica">Planilha "DADOS CORRETORES EQUIPE.xlsx" (colunas NOME, CPF, CHAVE PIX). Quem já existe só ganha CPF/CNPJ que estiver faltando; ninguém é apagado. Data de nascimento e celular não são guardados.</p>
+  <p class="cf-dica">Planilha "DADOS CORRETORES EQUIPE.xlsx" (colunas NOME, CPF, RAZÃO SOCIAL, CHAVE PIX). Quem já existe (mesmo nome, apelido ou CPF) ganha razão social/CPF/CNPJ que estiver faltando e a chave Pix da planilha; ninguém é apagado. Chave Pix inválida é avisada e não entra. Data de nascimento e celular não são guardados.</p>
   <form method="post" enctype="multipart/form-data" class="cf-form">
     <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="importar">
     <input type="file" name="planilha" accept=".xlsx" required>
