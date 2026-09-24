@@ -135,6 +135,15 @@ final class CapaParser
     /* ---------------- histórico ---------------- */
 
     /** @return array{0:string,1:array,2:array} [tipo, campos, flags] */
+    /** mesma pessoa/empresa escrita com pequena diferença (letra a mais/a menos/trocada): distância ≤ 15% do tamanho, ≤ 4 letras */
+    public static function grafiaParecida(string $a, string $b): bool
+    {
+        $ka = str_replace(' ', '', self::key($a)); $kb = str_replace(' ', '', self::key($b));
+        if ($ka === '' || $kb === '') return false;
+        $d = levenshtein($ka, $kb); $n = max(strlen($ka), strlen($kb));
+        return $d > 0 && $d <= 4 && $d / $n <= 0.15;
+    }
+
     public function parseHist(mixed $hRaw): array
     {
         $h = self::norm($hRaw);
@@ -334,9 +343,11 @@ final class CapaParser
                     $flags[] = 'GRAVE:PARECE_BONUS (bate com bloco BONUS da capa ou coluna G)';
                 }
             }
-            if ($h['clientes'] && self::key($h['clientes']) !== self::key($capa['cliente'])) $flags[] = "CLIENTES_HIST_DIFEREM_CAPA ('{$h['clientes']}')";
+            if ($h['clientes'] && self::key($h['clientes']) !== self::key($capa['cliente'])) {
+                $flags[] = (self::grafiaParecida($h['clientes'], $capa['cliente']) ? 'CLIENTES_HIST_GRAFIA' : 'CLIENTES_HIST_DIFEREM_CAPA') . " ('{$h['clientes']}')";
+            }
             if ($h['construtora'] && str_replace(' ', '', self::key($h['construtora'])) !== str_replace(' ', '', self::key($capa['construtora']))) {
-                $flags[] = "CONSTRUTORA_HIST_DIFERE_CAPA ('{$h['construtora']}')";
+                $flags[] = (self::grafiaParecida($h['construtora'], $capa['construtora']) ? 'CONSTRUTORA_HIST_GRAFIA' : 'CONSTRUTORA_HIST_DIFERE_CAPA') . " ('{$h['construtora']}')";
             }
             if ($h['data_venda_hist'] && $dataVenda) {
                 [$dh] = self::parseDateCell($h['data_venda_hist']);
