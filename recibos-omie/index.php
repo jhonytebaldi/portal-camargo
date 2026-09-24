@@ -188,11 +188,7 @@ portal_header('Recibos do Omie', $u);
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
 <style>main.wrap{max-width:1600px}.ro-val-ok{color:#2e6b3a;font-weight:600}.ro-val-nao{color:#b4512f;font-weight:700}.ro-per button{font:inherit;font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-per button.on{background:var(--moss);color:#fff;border-color:var(--moss)}</style>
 <div class="cf-rev">
-<div class="cf-top">
-  <div><h1 class="home-titulo"><?= $gestor ? 'Recibos do Omie' : 'Meus recibos' ?></h1>
-    <p class="home-sub"><?= $gestor ? 'Declaração e Recibo a partir das contas a pagar já registradas no Omie — busque pela API por período ou envie o relatório "Finanças › Contas a Pagar" (.xlsx). Mesmo modelo dos recibos da Capa Financeira.' : 'Recibos das suas comissões e bônus.' ?></p></div>
-  <?php if ($gestor): ?><nav class="cf-nav"><a href="/capa-financeira/">Capa Financeira</a><a href="/capa-financeira/recibos.php">Recibos das capas</a><a href="/capa-financeira/pessoas.php">Pessoas</a></nav><?php endif; ?>
-</div>
+<?php cf_cabecalho($gestor ? 'Recibos do Omie' : 'Meus recibos', $gestor ? 'Declaração e Recibo a partir das contas a pagar já registradas no Omie — busque pela API por período ou envie o relatório "Finanças › Contas a Pagar" (.xlsx). Mesmo modelo dos recibos da Capa Financeira.' : 'Recibos das suas comissões e bônus.', $gestor ? [['Recibos do Omie', null]] : [['Meus recibos', null]], 'recibos-omie'); ?>
 
 <?php if ($gestor): ?>
 <div class="cf-duas" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
