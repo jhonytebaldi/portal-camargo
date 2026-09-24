@@ -24,7 +24,7 @@ final class CapaParser
 {
     public const NF_MAX = 20;
     public const STATUS_IMOVEL = ['PRONTO', 'PLANTA'];
-    public const FUNCOES = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRAÇÃO', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'PRE-VENDA', 'FINANCEIRO', 'SAC'];
+    public const FUNCOES = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRAÇÃO', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'PRE-VENDA', 'FINANCEIRO', 'SAC', 'ADM', 'ADMINISTRATIVO'];
     public const NATUREZAS = ['COMISSAO', 'BONUS', 'REPASSE'];
 
     /** Dicionário padrão de condições → código curto (configurável em cf_config). */
