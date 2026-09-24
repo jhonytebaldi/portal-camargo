@@ -237,14 +237,15 @@ portal_header('Recibos do Omie', $u);
 <tbody>
 <?php foreach ($titulos as $t): $p = Titulo::pessoaPorDoc($pessoas, $t['doc']); $o = $t['obs'];
   $q = $pdo->prepare("SELECT r.id, r.numero FROM ro_recibo_itens i JOIN ro_recibos r ON r.id = i.recibo_id WHERE i.fingerprint = ? AND r.status = 'atual' LIMIT 1"); $q->execute([$t['fingerprint']]); $ja = $q->fetch();
-  $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true); ?>
+  $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);
+  $repasse = stripos((string)$t['categoria'], 'repasse') !== false || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE'; ?>
 <tr class="cf-row <?= $naoAchou ? 'cf-tem-grave' : '' ?>" data-t="<?= h(json_encode($t, JSON_UNESCAPED_UNICODE)) ?>" data-valor="<?= (float)$t['valor'] ?>" data-nao="<?= $naoAchou ? 1 : 0 ?>" data-ja="<?= $ja ? 1 : 0 ?>">
-  <td><input type="checkbox" class="ro-sel" <?= $naoAchou || $pago || $ja ? '' : 'checked' ?>></td>
+  <td><input type="checkbox" class="ro-sel" <?= $naoAchou || $pago || $ja || $repasse ? '' : 'checked' ?>></td>
   <td><?= h($t['situacao']) ?><?= $t['nota_fiscal'] ? '<br><small class="cf-raw">NF: ' . h($t['nota_fiscal']) . '</small>' : '' ?></td>
   <td><?= cf_data_br($t['vencimento']) ?><?= $t['previsao'] && $t['previsao'] !== $t['vencimento'] ? '<br><small class="cf-raw">prev. ' . cf_data_br($t['previsao']) . '</small>' : '' ?></td>
   <td><?= h($t['razao']) ?><br><small class="cf-raw"><?= h($t['doc']) ?></small></td>
   <td><?= $p ? h($p['nome']) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>' ?></td>
-  <td><?= h((string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria']))) ?><?= $o['natureza'] === 'BONUS' ? ' <span class="cf-tag">BONUS</span>' : '' ?><br><small class="cf-raw"><?= h((string)$t['categoria']) ?></small></td>
+  <td><?= h((string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria']))) ?><?= $o['natureza'] === 'BONUS' ? ' <span class="cf-tag">BONUS</span>' : '' ?><?= $repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '' ?><br><small class="cf-raw"><?= h((string)$t['categoria']) ?></small></td>
   <td><small><?= h(mb_substr((string)($o['cliente'] ?? ''), 0, 45)) ?><br><span class="cf-raw"><?= h(mb_substr((string)($o['imovel'] ?? ''), 0, 45)) ?></span><?= $o['padrao'] === 'vazio' ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '' ?></small></td>
   <td><?= h((string)($o['cod'] ?? '—')) ?><?= $o['venda'] ? '<br><small class="cf-raw">' . h($o['venda']) . '</small>' : '' ?></td>
   <td class="cf-num"><?= cf_brl($t['valor']) ?></td>
