@@ -95,7 +95,7 @@ final class Exportacao
             if ($nf !== '') $c['Y'] = ['s' => $nf];
             $pix = trim((string)($l['chave_pix'] ?? ''));
             if ($pix !== '') { $c['AA'] = ['s' => 'Chave Pix']; $c['AK'] = ['s' => $pix]; }
-            else $avisos[] = 'sem chave Pix (forma de pagamento fica em branco)';
+            elseif (($l['natureza'] ?? '') !== 'REPASSE') $avisos[] = 'sem chave Pix (forma de pagamento fica em branco)';
             $dep = trim((string)($p['departamento_omie'] ?? ''));
             if ($dep !== '') $c['AX'] = ['s' => mb_substr($dep, 0, self::LIM['departamento'])];
         } else {

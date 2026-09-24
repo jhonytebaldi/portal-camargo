@@ -25,7 +25,7 @@ final class CapaParser
     public const NF_MAX = 20;
     public const STATUS_IMOVEL = ['PRONTO', 'PLANTA'];
     public const FUNCOES = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRAÇÃO', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'PRE-VENDA', 'FINANCEIRO', 'SAC'];
-    public const NATUREZAS = ['COMISSAO', 'BONUS'];
+    public const NATUREZAS = ['COMISSAO', 'BONUS', 'REPASSE'];
 
     /** Dicionário padrão de condições → código curto (configurável em cf_config). */
     public const NF_DICT_PADRAO = [
@@ -315,7 +315,17 @@ final class CapaParser
             foreach ($hflags as $fl) $flags[] = $fl;
             if ($tipoH !== $tipoCol) $flags[] = 'TIPO_COLUNA_X_HISTORICO';
             $cf = self::norm($c);
-            if ($tipoCol === 'PAGAR') {
+            // REPASSE (coluna G ou prefixo do histórico): dinheiro do cliente que passa pela imobiliária e vai para a construtora/terceiro.
+            // Não é comissão: sem função, favorecido = coluna C, sem conferência de nome com o histórico.
+            $repasse = str_contains(self::key($g), 'REPASSE') || str_contains(self::key($h['prefixo'] ?? ''), 'REPASSE') || str_starts_with(self::key($d), 'REPASSE');
+            if ($repasse) {
+                $h['natureza'] = 'REPASSE'; $h['funcao'] = null;
+                // histórico do repasse é texto livre: não tentar extrair cliente/construtora/imóvel dele (vêm da capa)
+                foreach (['favorecido', 'clientes', 'construtora', 'unidade', 'status_imovel', 'data_venda_hist', 'cod_hist'] as $k) $h[$k] = null;
+                $flags = array_values(array_filter($flags, fn($f) => !str_starts_with($f, 'HIST_') && $f !== 'TIPO_COLUNA_X_HISTORICO'));
+                $flags[] = 'REPASSE (favorecido = terceiro; categoria de repasse)';
+            }
+            if ($tipoCol === 'PAGAR' && !$repasse) {
                 if ($h['favorecido'] && self::key($cf) !== self::key($h['favorecido'])) {
                     $flags[] = (self::nomeAbreviado($cf, $h['favorecido']) ? 'FAVORECIDO_ABREVIADO' : 'GRAVE:FAVORECIDO_DIVERGE')
                              . " (coluna C='{$cf}' × histórico='{$h['favorecido']}')";
@@ -337,7 +347,8 @@ final class CapaParser
             }
             if ($h['cod_hist'] && $capa['cod'] && $h['cod_hist'] != $capa['cod']) $flags[] = "COD_HIST_DIFERE_B6 ({$h['cod_hist']} × {$capa['cod']})";
             $colG = self::norm($g) !== '' ? self::norm($g) : null;
-            if ($tipoCol === 'PAGAR') [$nf, $cond] = $this->buildNf($h['natureza'], $colG, $h['prefixo'], $flags);
+            if ($repasse) { $nf = 'REPASSE'; $cond = $colG && self::key($colG) !== 'REPASSE' ? $colG : null; }
+            elseif ($tipoCol === 'PAGAR') [$nf, $cond] = $this->buildNf($h['natureza'], $colG, $h['prefixo'], $flags);
             else { $nf = null; $cond = $colG; }
             $linhas[] = [
                 'linha_xlsx' => $r, 'tipo' => $tipoCol, 'data' => $data, 'data_raw' => $dataRaw,
