@@ -57,6 +57,7 @@ function cf_parser(): CapaParser
 function cf_categoria(string $tipo, ?string $funcao, ?string $natureza, ?string $statusImovel): ?string
 {
     $map = cf_config('categorias', []);
+    if ($natureza === 'REPASSE') return $map[$tipo === 'R' ? 'RECEBER_REPASSE' : 'REPASSE'] ?? null;
     if ($tipo === 'R') return $map[$statusImovel === 'PRONTO' ? 'RECEBER_NOVO' : 'RECEBER_NOVO'] ?? null; // PRONTO confirma na tela
     if ($natureza === 'BONUS') return $map['BONUS'] ?? null;
     $f = CapaParser::key($funcao ?? '');
@@ -129,9 +130,11 @@ function cf_observacao(array $capa, array $l, ?string $favorecido = null): strin
     if (($l['tipo'] ?? '') === 'P') {
         $fav = $favorecido ?: ($l['cf_raw'] ?? '');
         if ($fav !== '') $p[] = 'FAVORECIDO: ' . $fav;
-        if (!empty($l['funcao'])) $p[] = 'FUNCAO: ' . $l['funcao'] . (($l['natureza'] ?? '') === 'BONUS' ? ' (BONUS)' : '');
-    } elseif (!empty($l['parcela']) && !empty($l['total_parcelas'])) {
-        $p[] = 'PARCELA: ' . (int)$l['parcela'] . '/' . (int)$l['total_parcelas'];
+        if (($l['natureza'] ?? '') === 'REPASSE') $p[] = 'NATUREZA: REPASSE';
+        elseif (!empty($l['funcao'])) $p[] = 'FUNCAO: ' . $l['funcao'] . (($l['natureza'] ?? '') === 'BONUS' ? ' (BONUS)' : '');
+    } else {
+        if (($l['natureza'] ?? '') === 'REPASSE') $p[] = 'NATUREZA: REPASSE';
+        if (!empty($l['parcela']) && !empty($l['total_parcelas'])) $p[] = 'PARCELA: ' . (int)$l['parcela'] . '/' . (int)$l['total_parcelas'];
     }
     $p[] = 'CLIENTE: ' . $capa['cliente'];
     $p[] = 'CONSTRUTORA: ' . $capa['construtora'];
@@ -207,6 +210,7 @@ function cf_flag_texto(string $f): string
     ];
     if (isset($map[$f])) return $map[$f];
     if (str_starts_with($f, 'GRAVE:FAVORECIDO_DIVERGE')) return 'Favorecido da coluna C é DIFERENTE do nome no histórico ' . substr($f, strlen('GRAVE:FAVORECIDO_DIVERGE '));
+    if (str_starts_with($f, 'REPASSE')) return 'Repasse a terceiro (construtora): não é comissão — favorecido é a coluna C, sem função; confira a categoria (Repasse a Terceiros / Futuro)';
     if (str_starts_with($f, 'FAVORECIDO_ABREVIADO')) return 'Nome abreviado no histórico ' . substr($f, strlen('FAVORECIDO_ABREVIADO '));
     if (str_starts_with($f, 'CLIENTES_HIST_DIFEREM_CAPA')) return 'Clientes no histórico diferem da capa ' . substr($f, strlen('CLIENTES_HIST_DIFEREM_CAPA '));
     if (str_starts_with($f, 'CONSTRUTORA_HIST_DIFERE_CAPA')) return 'Construtora no histórico difere da capa ' . substr($f, strlen('CONSTRUTORA_HIST_DIFERE_CAPA '));

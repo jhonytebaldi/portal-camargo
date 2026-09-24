@@ -143,8 +143,9 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
         <option value="__nova__">＋ Cadastrar nova pessoa…</option>
         <?php $sug = $l['pessoa_id'] ? [] : cf_sugerir_pessoas($l['cf_raw'], $pessoas);
         if ($sug): ?><optgroup label="Parecidos (confira!)"><?php foreach ($sug as $pid): ?><option value="<?= $pid ?>">≈ <?= h($pessoas[$pid]['nome']) ?></option><?php endforeach; ?></optgroup><?php endif; ?>
-        <optgroup label="Equipe"><?php foreach ($pessoas as $pid => $p): if (!$p['ativo']) continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?></option><?php endforeach; ?></optgroup>
-        <optgroup label="Desligados"><?php foreach ($pessoas as $pid => $p): if ($p['ativo']) continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?> (desligado)</option><?php endforeach; ?></optgroup>
+        <?php $terc = array_filter($pessoas, fn($p) => ($p['tipo'] ?? 'equipe') === 'terceiro'); if ($terc || $l['natureza'] === 'REPASSE'): ?><optgroup label="Construtoras / terceiros (repasse)"><?php foreach ($terc as $pid => $p): ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?></option><?php endforeach; ?></optgroup><?php endif; ?>
+        <optgroup label="Equipe"><?php foreach ($pessoas as $pid => $p): if (!$p['ativo'] || ($p['tipo'] ?? 'equipe') === 'terceiro') continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?></option><?php endforeach; ?></optgroup>
+        <optgroup label="Desligados"><?php foreach ($pessoas as $pid => $p): if ($p['ativo'] || ($p['tipo'] ?? 'equipe') === 'terceiro') continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?> (desligado)</option><?php endforeach; ?></optgroup>
       </select>
       <?php if (!$l['pessoa_id']): ?><label class="cf-mini"><input type="checkbox" class="cf-salvar-alias" checked> salvar "<?= h($l['cf_raw']) ?>" como apelido</label><?php endif; ?>
       <?php if ($graves && !(int)$l['revisado']): ?><button type="button" class="cf-ok-nome" title="marca o alerta grave desta linha como conferido (mesmo que o Ok da última coluna)">✔ Conferido, pode seguir</button><?php endif; ?>
@@ -154,8 +155,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       <?php if ($l['pessoa_id'] && empty($pessoas[(int)$l['pessoa_id']]['chave_pix'])): ?><label class="cf-mini"><input type="checkbox" class="cf-pix-salvar" checked> salvar como padrão da pessoa</label><?php endif; ?>
       <?php else: ?><?= h((string)$l['chave_pix']) ?: '—' ?><?php endif; ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="funcao"><?php foreach (array_unique(array_merge($funcoes, [$l['funcao'] ?: 'CORRETOR'])) as $f): ?><option <?= $f === $l['funcao'] ? 'selected' : '' ?>><?= h($f) ?></option><?php endforeach; ?></select><?php else: ?><?= h((string)$l['funcao']) ?><?php endif; ?></td>
-  <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="natureza"><option <?= $l['natureza'] === 'COMISSAO' ? 'selected' : '' ?>>COMISSAO</option><option <?= $l['natureza'] === 'BONUS' ? 'selected' : '' ?>>BONUS</option></select><?php else: ?><?= h((string)$l['natureza']) ?><?php endif; ?></td>
-  <td class="cf-cat"><?= h((string)$l['categoria']) ?: '<span class="cf-tag cf-grave">sem categoria</span>' ?></td>
+  <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="natureza"><option <?= $l['natureza'] === 'COMISSAO' ? 'selected' : '' ?>>COMISSAO</option><option <?= $l['natureza'] === 'BONUS' ? 'selected' : '' ?>>BONUS</option><option <?= $l['natureza'] === 'REPASSE' ? 'selected' : '' ?>>REPASSE</option></select><?php else: ?><?= h((string)$l['natureza']) ?><?php endif; ?></td>
+  <td class="cf-cat"><?php if ($editavel && !$rem && $l['natureza'] === 'REPASSE'): ?><select class="cf-in" data-campo="categoria"><?php foreach (array_unique([$categorias['REPASSE'] ?? '', $categorias['REPASSE_FUTURO'] ?? '']) as $c): if ($c === '') continue; ?><option <?= $c === $l['categoria'] ? 'selected' : '' ?>><?= h($c) ?></option><?php endforeach; ?></select><?php else: ?><?= h((string)$l['categoria']) ?: '<span class="cf-tag cf-grave">sem categoria</span>' ?><?php endif; ?></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-nf" maxlength="20" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>"><?php else: ?><?= h((string)$l['nota_fiscal']) ?><?php endif; ?></td>
   <td><small><?= h((string)$l['condicao']) ?><?= $l['prefixo'] && $l['col_g'] && CapaParser::key($l['prefixo']) !== CapaParser::key($l['col_g']) ? '<br>G: ' . h($l['col_g']) . '<br>prefixo: ' . h($l['prefixo']) : '' ?></small></td>
@@ -182,7 +183,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   <td><b><?= h($l['cf_raw']) ?></b></td>
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="categoria">
-        <?php foreach (array_unique([$categorias['RECEBER_NOVO'] ?? '', $categorias['RECEBER_USADO'] ?? '', $categorias['RECEBER_BONUS'] ?? '']) as $c): if ($c === '') continue; ?>
+        <?php foreach (array_unique([$categorias['RECEBER_NOVO'] ?? '', $categorias['RECEBER_USADO'] ?? '', $categorias['RECEBER_BONUS'] ?? '', $categorias['RECEBER_REPASSE'] ?? '', $categorias['RECEBER_REPASSE_FUTURO'] ?? '']) as $c): if ($c === '') continue; ?>
           <option <?= $c === $l['categoria'] ? 'selected' : '' ?>><?= h($c) ?></option><?php endforeach; ?></select>
         <?php if ($l['status_imovel'] === 'PRONTO'): ?><br><small class="cf-raw">imóvel PRONTO: confirme se é usado</small><?php endif; ?>
       <?php else: ?><?= h((string)$l['categoria']) ?><?php endif; ?></td>
@@ -298,6 +299,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       }
       const j = await acao(body);
       if (!j) return;
+      if (campo === 'natureza' && (valor === 'REPASSE' || tr.querySelector('.cf-cat select'))) { location.reload(); return; }
       if (j.categoria !== undefined) tr.querySelector('.cf-cat').textContent = j.categoria || '';
       if (campo === 'pessoa_id' && j.pessoa_tem_pix) setPix(tr, j.chave_pix);
       if (campo === 'chave_pix' && j.chave_pix) { const sp = tr.querySelector('.cf-pix-salvar'); if (sp) sp.parentElement.remove(); }

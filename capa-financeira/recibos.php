@@ -51,7 +51,7 @@ function cf_rec_linhas(PDO $pdo, array $f, ?array $ids = null): array
     $sql = "SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, c.construtora AS capa_construtora, c.unidade AS capa_unidade, c.bairro AS capa_bairro,
                    c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, r.id AS rec_id, r.numero AS rec_numero, r.arquivo_nome AS rec_arquivo, r.data_recibo AS rec_data, r.gerado_em AS rec_em
             FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_recibos r ON r.id = l.recibo_id AND r.status = 'atual'
-            WHERE l.tipo = 'P' AND l.status IN ('confirmado','exportado') AND c.status = 'confirmada'";
+            WHERE l.tipo = 'P' AND l.status IN ('confirmado','exportado') AND c.status = 'confirmada' AND COALESCE(l.natureza,'') <> 'REPASSE'";
     $a = [];
     if ($ids !== null) { if (!$ids) return []; $sql .= ' AND l.id IN (' . implode(',', array_map('intval', $ids)) . ')'; }
     if (!empty($f['pessoa'])) { $sql .= ' AND l.pessoa_id = ?'; $a[] = (int)$f['pessoa']; }

@@ -36,9 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cnpj ? cf_fmt_cnpj($cnpj) : null, $cpf ? cf_fmt_cpf($cpf) : null, ($_POST['pagar_por'] ?? 'CNPJ') === 'CPF' ? 'CPF' : 'CNPJ',
                 CapaParser::norm((string)($_POST['departamento_omie'] ?? '')) ?: null, CapaParser::norm((string)($_POST['conta_vertical'] ?? '')) ?: null,
                 CapaParser::norm((string)($_POST['conta_camargo'] ?? '')) ?: null, $pix['valor'],
-                !empty($_POST['ativo']) ? 1 : 0];
-            if ($id) { $dados[] = $id; $pdo->prepare('UPDATE cf_pessoas SET nome=?, nome_key=?, razao_social=?, cnpj=?, cpf=?, pagar_por=?, departamento_omie=?, conta_vertical=?, conta_camargo=?, chave_pix=?, ativo=? WHERE id=?')->execute($dados); }
-            else { $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, departamento_omie, conta_vertical, conta_camargo, chave_pix, ativo) VALUES (?,?,?,?,?,?,?,?,?,?,?)')->execute($dados); $id = (int)$pdo->lastInsertId(); }
+                !empty($_POST['ativo']) ? 1 : 0, ($_POST['tipo'] ?? 'equipe') === 'terceiro' ? 'terceiro' : 'equipe'];
+            if ($id) { $dados[] = $id; $pdo->prepare('UPDATE cf_pessoas SET nome=?, nome_key=?, razao_social=?, cnpj=?, cpf=?, pagar_por=?, departamento_omie=?, conta_vertical=?, conta_camargo=?, chave_pix=?, ativo=?, tipo=? WHERE id=?')->execute($dados); }
+            else { $pdo->prepare('INSERT INTO cf_pessoas (nome, nome_key, razao_social, cnpj, cpf, pagar_por, departamento_omie, conta_vertical, conta_camargo, chave_pix, ativo, tipo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')->execute($dados); $id = (int)$pdo->lastInsertId(); }
             foreach (preg_split('/[\n;]+/', (string)($_POST['aliases_novos'] ?? '')) ?: [] as $a) if (CapaParser::norm($a) !== '') cf_add_alias($id, $a);
             $msg = 'Pessoa salva.';
         } elseif ($op === 'apelido_remover') {
@@ -141,6 +141,7 @@ portal_header('Pessoas — Capa Financeira', $u);
     </div>
     <label>Chave PIX (CPF, CNPJ, e-mail, telefone ou aleatória)<input name="chave_pix" class="cf-pix" autocomplete="off" value="<?= h($edit['chave_pix'] ?? '') ?>"></label>
     <label>Apelidos (como aparece nas capas), um por linha<textarea name="aliases_novos" rows="2" placeholder="OSVALDO&#10;FERNANDO FOSSILE"></textarea></label>
+    <label>Tipo<select name="tipo"><option value="equipe" <?= ($edit['tipo'] ?? 'equipe') === 'equipe' ? 'selected' : '' ?>>Equipe (corretor, gestor…)</option><option value="terceiro" <?= ($edit['tipo'] ?? '') === 'terceiro' ? 'selected' : '' ?>>Construtora / terceiro (só repasse, sem recibo)</option></select></label>
     <label class="cf-mini"><input type="checkbox" name="ativo" <?= ($edit['ativo'] ?? 1) ? 'checked' : '' ?>> ativo</label>
     <div><button class="btn">Salvar</button> <?php if ($edit): ?><a class="cf-link" href="/capa-financeira/pessoas.php">nova pessoa</a><?php endif; ?></div>
   </form>
@@ -160,11 +161,12 @@ portal_header('Pessoas — Capa Financeira', $u);
 <h2 class="cf-h2">Cadastro <small><?= count($pessoas) ?></small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-lista">
-<thead><tr><th>Nome</th><th>Apelidos</th><th>Empresa / CNPJ</th><th>CPF</th><th>Paga por</th><th>Departamento</th><th>Contas (Vertical / Camargo)</th><th>Ativo</th></tr></thead>
+<thead><tr><th>Nome</th><th>Tipo</th><th>Apelidos</th><th>Empresa / CNPJ</th><th>CPF</th><th>Paga por</th><th>Departamento</th><th>Contas (Vertical / Camargo)</th><th>Ativo</th></tr></thead>
 <tbody>
 <?php foreach ($pessoas as $p): ?>
 <tr class="<?= $p['ativo'] ? '' : 'cf-removida' ?>">
   <td><a href="/capa-financeira/pessoas.php?id=<?= (int)$p['id'] ?>"><?= h($p['nome']) ?></a></td>
+  <td><?= ($p['tipo'] ?? 'equipe') === 'terceiro' ? '<span class="cf-tag">construtora/terceiro</span>' : 'equipe' ?></td>
   <td><small><?= h(implode(' · ', array_column($p['aliases'], 'alias'))) ?></small></td>
   <td><?= h((string)$p['razao_social']) ?><?= $p['cnpj'] ? '<br><small>' . h($p['cnpj']) . '</small>' : '' ?><?= !$p['razao_social'] && $p['cnpj'] ? ' <span class="cf-tag cf-grave">sem razão social</span>' : '' ?></td>
   <td><?= $p['cpf'] ? '•••.' . h(substr($p['cpf'], 4)) : '—' ?></td>

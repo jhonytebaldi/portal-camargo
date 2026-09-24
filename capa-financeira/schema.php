@@ -205,6 +205,17 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN recibo_id INT UNSIGNED NULL AFTER exportacao_id");
         $feitos[] = 'cf_lancamentos.recibo_id';
     }
+    if (!$colExiste('cf_pessoas', 'tipo')) {
+        $pdo->exec("ALTER TABLE cf_pessoas ADD COLUMN tipo ENUM('equipe','terceiro') NOT NULL DEFAULT 'equipe' AFTER nome_key");
+        $feitos[] = 'cf_pessoas.tipo';
+    }
+    // categorias de repasse (acrescenta às existentes sem sobrescrever o que o usuário editou)
+    $catAtual = json_decode((string)($pdo->query("SELECT valor FROM cf_config WHERE chave='categorias'")->fetchColumn() ?: '{}'), true) ?: [];
+    if ($catAtual && !isset($catAtual['REPASSE'])) {
+        $catAtual += ['REPASSE' => 'Repasse a Terceiros', 'REPASSE_FUTURO' => 'Repasse a Terceiros Futuro', 'RECEBER_REPASSE' => 'Recebidos de repasse imediato', 'RECEBER_REPASSE_FUTURO' => 'Recebidos de repasse futuro'];
+        $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='categorias'")->execute([json_encode($catAtual, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:categorias de repasse';
+    }
     // normaliza chaves Pix importadas cruas (uma vez; só as válidas)
     if (!$tem('cf_config') || (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave='pix_normalizado'")->fetchColumn() === 0) {
         require_once __DIR__ . '/lib/Pix.php';
@@ -234,6 +245,8 @@ function cf_migrar(PDO $pdo): array
             'BONUS' => 'Repasse de bonificaçao',
             'RECEBER_NOVO' => 'Comissao sobre venda de imovel novo', 'RECEBER_USADO' => 'Comissao sobre venda de imovel usado',
             'RECEBER_BONUS' => 'Recebidos de bonificaçao para repasse',
+            'REPASSE' => 'Repasse a Terceiros', 'REPASSE_FUTURO' => 'Repasse a Terceiros Futuro',
+            'RECEBER_REPASSE' => 'Recebidos de repasse imediato', 'RECEBER_REPASSE_FUTURO' => 'Recebidos de repasse futuro',
         ], JSON_UNESCAPED_UNICODE),
         'nf_dict' => json_encode(CapaParser::NF_DICT_PADRAO, JSON_UNESCAPED_UNICODE),
         'empresas' => json_encode([

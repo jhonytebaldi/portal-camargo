@@ -123,12 +123,13 @@ case 'editar':
         case 'funcao':
         case 'natureza':
             $v = CapaParser::key((string)$valor);
-            if ($campo === 'natureza' && !in_array($v, ['COMISSAO', 'BONUS'], true)) falha('natureza inválida');
-            $novo = [$campo === 'funcao' ? 'funcao' : 'natureza' => $v];
+            if ($campo === 'natureza' && !in_array($v, ['COMISSAO', 'BONUS', 'REPASSE'], true)) falha('natureza inválida');
             $funcao = $campo === 'funcao' ? $v : $l['funcao']; $nat = $campo === 'natureza' ? $v : $l['natureza'];
+            if ($nat === 'REPASSE') $funcao = null;
             $cat = cf_categoria('P', $funcao, $nat, $l['status_imovel']);
             $flags = [];
-            [$nf] = cf_parser()->buildNf($nat, $l['col_g'], $l['prefixo'], $flags);
+            if ($nat === 'REPASSE') $nf = 'REPASSE';
+            else [$nf] = cf_parser()->buildNf($nat, $l['col_g'], $l['prefixo'], $flags);
             $pdo->prepare("UPDATE cf_lancamentos SET funcao = ?, natureza = ?, categoria = ?, nota_fiscal = ? WHERE id = ?")->execute([$funcao, $nat, $cat, $nf, $l['id']]);
             $resp['categoria'] = $cat; $resp['nota_fiscal'] = $nf;
             break;
