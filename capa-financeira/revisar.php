@@ -40,27 +40,22 @@ $pend = [];
 foreach ($linhas as $l) {
     if ($l['status'] !== 'revisao') continue;
     $fl = json_decode((string)$l['flags'], true) ?: [];
-    $graves = array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:'));
     if ($l['tipo'] === 'P' && !$l['pessoa_id']) $pend[] = "Linha {$l['linha_xlsx']}: favorecido não identificado";
     if (!$l['data_prevista']) $pend[] = "Linha {$l['linha_xlsx']}: sem data prevista";
-    if ($graves && !(int)$l['revisado']) $pend[] = "Linha {$l['linha_xlsx']}: alerta grave sem revisão";
+    if (cf_flags_alerta($fl) && !(int)$l['revisado']) $pend[] = "Linha {$l['linha_xlsx']}: alerta sem conferir";
 }
 
 portal_header('Revisar capa', $u);
 ?>
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
-<style>main.wrap{max-width:1680px}</style>
+<style>main.wrap{max-width:none;width:auto;margin:0 18px}</style>
 <script src="/capa-financeira/pix.js?v=<?= @filemtime(__DIR__ . '/pix.js') ?: 1 ?>"></script>
 <div class="cf-rev">
-<div class="cf-top">
-  <div>
-    <h1 class="home-titulo">Capa #<?= (int)$capa['id'] ?> — <?= h($capa['cliente']) ?> <?= (int)$capa['versao'] > 1 ? '<span class="cf-tag">versão ' . (int)$capa['versao'] . '</span>' : '' ?></h1>
-    <p class="home-sub"><?= h($capa['construtora']) ?> · <?= h($capa['unidade']) ?> · <?= h($capa['bairro']) ?> · COD <b><?= h((string)$capa['cod']) ?: '—' ?></b> · venda <b><?= cf_data_br($capa['data_venda']) ?></b> · empresa <b><?= h($empresas[$capa['empresa']]['nome'] ?? strtoupper($capa['empresa'])) ?></b></p>
-    <p class="cf-dica">Arquivo: <?= h($capa['arquivo_nome']) ?> · enviado por <?= h((string)$capa['enviado_nome']) ?> em <?= h(substr((string)$capa['criado_em'], 0, 16)) ?> · status <span class="cf-status cf-st-<?= h($capa['status']) ?>"><?= h($capa['status']) ?></span>
-      <?php if ($anterior): ?> · substitui a <a href="/capa-financeira/revisar.php?id=<?= (int)$anterior['id'] ?>">capa #<?= (int)$anterior['id'] ?> (v<?= (int)$anterior['versao'] ?>)</a><?php endif; ?></p>
-  </div>
-  <nav class="cf-nav"><a href="/capa-financeira/">← Capas</a></nav>
-</div>
+<?php cf_cabecalho('Capa #' . (int)$capa['id'] . ' — ' . h($capa['cliente']) . ((int)$capa['versao'] > 1 ? ' <span class="cf-tag">versão ' . (int)$capa['versao'] . '</span>' : ''),
+    h($capa['construtora']) . ' · ' . h($capa['unidade']) . ' · ' . h($capa['bairro']) . ' · COD <b>' . (h((string)$capa['cod']) ?: '—') . '</b> · venda <b>' . cf_data_br($capa['data_venda']) . '</b> · empresa <b>' . h($empresas[$capa['empresa']]['nome'] ?? strtoupper($capa['empresa'])) . '</b>',
+    [['Capa Financeira', '/capa-financeira/'], ['Capas', '/capa-financeira/'], ['Capa #' . (int)$capa['id'], null]], 'capas',
+    '<p class="cf-dica">Arquivo: ' . h($capa['arquivo_nome']) . ' · enviado por ' . h((string)$capa['enviado_nome']) . ' em ' . h(substr((string)$capa['criado_em'], 0, 16)) . ' · status <span class="cf-status cf-st-' . h($capa['status']) . '">' . h($capa['status']) . '</span>'
+    . ($anterior ? ' · substitui a <a href="/capa-financeira/revisar.php?id=' . (int)$anterior['id'] . '">capa #' . (int)$anterior['id'] . ' (v' . (int)$anterior['versao'] . ')</a>' : '') . '</p>'); ?>
 
 <div class="cf-resumo">
   <div class="cf-kpi"><span>A pagar</span><b><?= cf_brl($capa['total_pagar']) ?></b></div>
@@ -98,7 +93,7 @@ portal_header('Revisar capa', $u);
 <?php endif; ?>
 
 <?php
-$legenda = ['IGUAL' => 'igual à versão anterior', 'ALTERADA' => 'alterada em relação à versão anterior', 'NOVA' => 'nova nesta versão', 'POSSIVEL_DUPLICATA' => 'possível duplicata de outra capa'];
+$legenda = ['IGUAL' => 'igual à versão anterior', 'ALTERADA' => 'alterada em relação à versão anterior', 'NOVA' => 'nova nesta versão', 'POSSIVEL_DUPLICATA' => 'possível duplicata dentro desta capa'];
 function cf_linha_diff(array $l, array $antById): string {
     if (!$l['dup_tipo']) return '';
     $cls = ['IGUAL' => 'cf-d-igual', 'ALTERADA' => 'cf-d-alt', 'NOVA' => 'cf-d-nova', 'POSSIVEL_DUPLICATA' => 'cf-d-dup'][$l['dup_tipo']] ?? '';
@@ -109,13 +104,30 @@ function cf_linha_diff(array $l, array $antById): string {
     }
     return '<span class="cf-tag ' . $cls . '" title="' . h($tit) . '">' . h($l['dup_tipo']) . '</span>';
 }
-function cf_render_flags(array $fl): string {
-    $out = '';
+/** célula da esquerda: nº da linha, diff, pílulas de alerta e o botão Conferido (+ "todos iguais") */
+function cf_render_alertas(array $l, array $fl, array $antById, bool $editavel, bool $rem, array $repeticoes): string {
+    $al = cf_flags_alerta($fl); $rev = (int)$l['revisado'] === 1;
+    $out = '<span class="cf-lnum">' . (int)$l['linha_xlsx'] . '</span> ' . cf_linha_diff($l, $antById);
     foreach ($fl as $f) {
-        if ($f === 'PESSOA_NAO_IDENTIFICADA') continue;
-        $out .= '<div class="cf-flag cf-' . cf_nivel_flag($f) . '">' . h(cf_flag_texto($f)) . '</div>';
+        $info = in_array(cf_flag_codigo($f), CF_FLAGS_INFO, true); if ($f === 'PESSOA_NAO_IDENTIFICADA') continue;
+        $cls = $info ? 'cf-ok' : ($rev ? 'cf-ok' : 'cf-' . cf_nivel_flag($f));
+        $out .= '<br><span class="cf-pill ' . $cls . '" title="' . h(cf_flag_texto($f)) . '">' . ($rev && !$info ? '✔ ' : '') . h(cf_flag_curto($f)) . '</span>';
+    }
+    if ($al && !$rev && $editavel && !$rem) {
+        $out .= '<button type="button" class="cf-ok-btn" title="' . h(implode(' | ', array_map('cf_flag_texto', $al))) . '">✔ Conferido</button>';
+        $cods = array_unique(array_map('cf_flag_codigo', $al)); $iguais = 0;
+        foreach ($cods as $c) $iguais = max($iguais, ($repeticoes[$c] ?? 1) - 1);
+        if ($iguais > 0) $out .= '<button type="button" class="cf-ok-todos" data-cods="' . h(implode(' ', $cods)) . '">conferir todos iguais (+' . $iguais . ')</button>';
     }
     return $out;
+}
+// quantas linhas em revisão têm cada código de alerta (para o "conferir todos iguais")
+$repeticoes = [];
+foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue; foreach (array_unique(array_map('cf_flag_codigo', cf_flags_alerta(json_decode((string)$l['flags'], true) ?: []))) as $c) $repeticoes[$c] = ($repeticoes[$c] ?? 0) + 1; }
+function cf_row_class(array $l, array $fl): string {
+    $al = cf_flags_alerta($fl); if (!$al || (int)$l['revisado']) return '';
+    foreach ($al as $f) if (cf_nivel_flag($f) === 'grave') return 'cf-tem-grave';
+    return 'cf-tem-leve';
 }
 $pagar = array_filter($linhas, fn($l) => $l['tipo'] === 'P');
 $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
@@ -124,12 +136,12 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <h2 class="cf-h2">Contas a pagar <small><?= count($pagar) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-tbl" id="tbl-pagar">
-<thead><tr><th>L</th><th>Data prevista</th><th>Favorecido (coluna C)</th><th>Pessoa (dicionário)</th><th>Chave Pix (destino)</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal</th><th>Condição</th><th>Alertas</th><th>Ok</th><th></th></tr></thead>
+<colgroup><col style="width:13%"><col style="width:9%"><col style="width:11%"><col style="width:14%"><col style="width:11%"><col style="width:7%"><col style="width:7%"><col style="width:11%"><col style="width:7%"><col style="width:8%"><col style="width:2%"></colgroup>
+<thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Favorecido (col. C)</th><th>Pessoa (dicionário)</th><th>Chave Pix</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal / condição</th><th></th></tr></thead>
 <tbody>
-<?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido';
-  $graves = (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')); ?>
-<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= $graves && !(int)$l['revisado'] ? 'cf-tem-grave' : '' ?>" data-id="<?= (int)$l['id'] ?>" data-cf="<?= h(CapaParser::key($l['cf_raw'])) ?>">
-  <td><?= (int)$l['linha_xlsx'] ?><br><?= cf_linha_diff($l, $antById) ?></td>
+<?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
+<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-cf="<?= h(CapaParser::key($l['cf_raw'])) ?>" data-cods="<?= h(implode(' ', array_unique(array_map('cf_flag_codigo', cf_flags_alerta($fl))))) ?>" data-rev="<?= (int)$l['revisado'] ?>">
+  <td class="cf-alertas"><?= cf_render_alertas($l, $fl, $antById, $editavel, $rem, $repeticoes) ?></td>
   <td>
     <?php if ($editavel && !$rem): ?><input type="date" class="cf-in" data-campo="data_prevista" value="<?= h((string)$l['data_prevista']) ?>">
     <?php else: ?><?= cf_data_br($l['data_prevista']) ?><?php endif; ?>
@@ -148,36 +160,33 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
         <optgroup label="Desligados"><?php foreach ($pessoas as $pid => $p): if ($p['ativo'] || ($p['tipo'] ?? 'equipe') === 'terceiro') continue; ?><option value="<?= $pid ?>" <?= (int)$l['pessoa_id'] === $pid ? 'selected' : '' ?>><?= h($p['nome']) ?> (desligado)</option><?php endforeach; ?></optgroup>
       </select>
       <?php if (!$l['pessoa_id']): ?><label class="cf-mini"><input type="checkbox" class="cf-salvar-alias" checked> salvar "<?= h($l['cf_raw']) ?>" como apelido</label><?php endif; ?>
-      <?php if ($graves && !(int)$l['revisado']): ?><button type="button" class="cf-ok-nome" title="marca o alerta grave desta linha como conferido (mesmo que o Ok da última coluna)">✔ Conferido, pode seguir</button><?php endif; ?>
     <?php else: ?><?= h($pessoas[(int)$l['pessoa_id']]['nome'] ?? '—') ?><?php endif; ?>
   </td>
-  <td class="cf-pix-cel"><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-pix" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" placeholder="CPF, CNPJ, e-mail, telefone…" autocomplete="off">
-      <?php if ($l['pessoa_id'] && empty($pessoas[(int)$l['pessoa_id']]['chave_pix'])): ?><label class="cf-mini"><input type="checkbox" class="cf-pix-salvar" checked> salvar como padrão da pessoa</label><?php endif; ?>
+  <td class="cf-pix-cel"><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-pix" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" placeholder="CPF, CNPJ, e-mail…" autocomplete="off">
+      <?php if ($l['pessoa_id'] && empty($pessoas[(int)$l['pessoa_id']]['chave_pix'])): ?><label class="cf-mini"><input type="checkbox" class="cf-pix-salvar" checked> salvar na pessoa</label><?php endif; ?>
       <?php else: ?><?= h((string)$l['chave_pix']) ?: '—' ?><?php endif; ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="funcao"><?php foreach (array_unique(array_merge($funcoes, [$l['funcao'] ?: 'CORRETOR'])) as $f): ?><option <?= $f === $l['funcao'] ? 'selected' : '' ?>><?= h($f) ?></option><?php endforeach; ?></select><?php else: ?><?= h((string)$l['funcao']) ?><?php endif; ?></td>
   <td><?php if ($editavel && !$rem): ?><select class="cf-in" data-campo="natureza"><option <?= $l['natureza'] === 'COMISSAO' ? 'selected' : '' ?>>COMISSAO</option><option <?= $l['natureza'] === 'BONUS' ? 'selected' : '' ?>>BONUS</option><option <?= $l['natureza'] === 'REPASSE' ? 'selected' : '' ?>>REPASSE</option></select><?php else: ?><?= h((string)$l['natureza']) ?><?php endif; ?></td>
   <td class="cf-cat"><?php if ($editavel && !$rem && $l['natureza'] === 'REPASSE'): ?><select class="cf-in" data-campo="categoria"><?php foreach (array_unique([$categorias['REPASSE'] ?? '', $categorias['REPASSE_FUTURO'] ?? '']) as $c): if ($c === '') continue; ?><option <?= $c === $l['categoria'] ? 'selected' : '' ?>><?= h($c) ?></option><?php endforeach; ?></select><?php else: ?><?= h((string)$l['categoria']) ?: '<span class="cf-tag cf-grave">sem categoria</span>' ?><?php endif; ?></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
-  <td><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-nf" maxlength="20" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>"><?php else: ?><?= h((string)$l['nota_fiscal']) ?><?php endif; ?></td>
-  <td><small><?= h((string)$l['condicao']) ?><?= $l['prefixo'] && $l['col_g'] && CapaParser::key($l['prefixo']) !== CapaParser::key($l['col_g']) ? '<br>G: ' . h($l['col_g']) . '<br>prefixo: ' . h($l['prefixo']) : '' ?></small></td>
-  <td class="cf-alertas"><?= cf_render_flags($fl) ?></td>
-  <td><?php if ($graves): ?><input type="checkbox" class="cf-in" data-campo="revisado" <?= (int)$l['revisado'] ? 'checked' : '' ?> <?= $editavel && !$rem ? '' : 'disabled' ?> title="alerta grave conferido"><?php endif; ?></td>
+  <td><?php if ($editavel && !$rem): ?><input type="text" class="cf-in cf-nf" maxlength="20" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>"><?php else: ?><?= h((string)$l['nota_fiscal']) ?><?php endif; ?>
+      <?php if ($l['condicao'] || $l['col_g']): ?><br><small class="cf-raw"><?= h((string)$l['condicao']) ?><?= $l['prefixo'] && $l['col_g'] && CapaParser::key($l['prefixo']) !== CapaParser::key($l['col_g']) ? ' · G: ' . h($l['col_g']) . ' · prefixo: ' . h($l['prefixo']) : '' ?></small><?php endif; ?></td>
   <td><?php if ($editavel): ?><button class="cf-x" data-acao="<?= $rem ? 'restaurar' : 'remover' ?>" title="<?= $rem ? 'restaurar' : 'remover esta linha' ?>"><?= $rem ? '↺' : '✕' ?></button><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
 </tbody>
-<tfoot><tr><td colspan="8">Total a pagar (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $pagar))) ?></td><td colspan="5"></td></tr></tfoot>
+<tfoot><tr><td colspan="8">Total a pagar (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $pagar))) ?></td><td colspan="2"></td></tr></tfoot>
 </table></div>
 
 <h2 class="cf-h2">Contas a receber <small><?= count($receber) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-tbl" id="tbl-receber">
-<thead><tr><th>L</th><th>Data prevista</th><th>Cliente (coluna C)</th><th>Parcela</th><th>Categoria Omie</th><th>Valor</th><th>Fluxo</th><th>Alertas</th><th>Ok</th><th></th></tr></thead>
+<colgroup><col style="width:16%"><col style="width:10%"><col style="width:22%"><col style="width:7%"><col style="width:20%"><col style="width:9%"><col style="width:13%"><col style="width:3%"></colgroup>
+<thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Cliente (col. C)</th><th>Parcela</th><th>Categoria Omie</th><th>Valor</th><th>Fluxo</th><th></th></tr></thead>
 <tbody>
-<?php foreach ($receber as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido';
-  $graves = (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')); ?>
-<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= $graves && !(int)$l['revisado'] ? 'cf-tem-grave' : '' ?>" data-id="<?= (int)$l['id'] ?>">
-  <td><?= (int)$l['linha_xlsx'] ?><br><?= cf_linha_diff($l, $antById) ?></td>
+<?php foreach ($receber as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
+<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-cods="<?= h(implode(' ', array_unique(array_map('cf_flag_codigo', cf_flags_alerta($fl))))) ?>" data-rev="<?= (int)$l['revisado'] ?>">
+  <td class="cf-alertas"><?= cf_render_alertas($l, $fl, $antById, $editavel, $rem, $repeticoes) ?></td>
   <td><?php if ($editavel && !$rem): ?><input type="date" class="cf-in" data-campo="data_prevista" value="<?= h((string)$l['data_prevista']) ?>"><?php else: ?><?= cf_data_br($l['data_prevista']) ?><?php endif; ?>
       <?php if ($l['data_raw'] && $l['data_raw'] !== $l['data_prevista']): ?><br><small class="cf-raw">na capa: <?= h($l['data_raw']) ?></small><?php endif; ?></td>
   <td><b><?= h($l['cf_raw']) ?></b></td>
@@ -189,13 +198,11 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       <?php else: ?><?= h((string)$l['categoria']) ?><?php endif; ?></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><small><?= h((string)$l['rotulo_fluxo']) ?></small></td>
-  <td class="cf-alertas"><?= cf_render_flags($fl) ?></td>
-  <td><?php if ($graves): ?><input type="checkbox" class="cf-in" data-campo="revisado" <?= (int)$l['revisado'] ? 'checked' : '' ?> <?= $editavel && !$rem ? '' : 'disabled' ?>><?php endif; ?></td>
   <td><?php if ($editavel): ?><button class="cf-x" data-acao="<?= $rem ? 'restaurar' : 'remover' ?>"><?= $rem ? '↺' : '✕' ?></button><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
 </tbody>
-<tfoot><tr><td colspan="5">Total a receber (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $receber))) ?></td><td colspan="4"></td></tr></tfoot>
+<tfoot><tr><td colspan="5">Total a receber (linhas ativas)</td><td class="cf-num"><?= cf_brl(array_sum(array_map(fn($l) => $l['status'] === 'removido' ? 0 : (float)$l['valor'], $receber))) ?></td><td colspan="2"></td></tr></tfoot>
 </table></div>
 
 <p class="cf-dica">Legenda: <?php foreach ($legenda as $k => $v): ?><span class="cf-tag"><?= $k ?></span> <?= $v ?> &nbsp; <?php endforeach; ?></p>
@@ -228,9 +235,16 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       otr.querySelectorAll('.cf-aplicar').forEach(x => x.remove()); });
   }
   function marcaRevisado(tr, j){
-    tr.classList.toggle('cf-tem-grave', !!j.tem_grave_pendente);
-    const ok = tr.querySelector('input[data-campo=revisado]'); if (ok) ok.checked = !j.tem_grave_pendente;
-    const b = tr.querySelector('.cf-ok-nome'); if (b && !j.tem_grave_pendente) b.remove();
+    if (!j.tem_grave_pendente) {
+      tr.classList.remove('cf-tem-grave', 'cf-tem-leve'); tr.dataset.rev = '1';
+      tr.querySelectorAll('.cf-ok-btn,.cf-ok-todos').forEach(b => b.remove());
+      tr.querySelectorAll('.cf-pill.cf-grave,.cf-pill.cf-leve').forEach(p => { p.className = 'cf-pill cf-ok'; if (!p.textContent.startsWith('✔')) p.textContent = '✔ ' + p.textContent; });
+    }
+  }
+  function conferir(ids){
+    return acao({acao:'revisar_varios', ids}).then(j => { if (!j) return null;
+      ids.forEach(id => { const tr = document.querySelector('tr[data-id="' + id + '"]'); if (tr) marcaRevisado(tr, {tem_grave_pendente:false}); });
+      atualizaPend(j); return j; });
   }
   function novaPessoaForm(el, tr){
     const id = +tr.dataset.id; const nomeCapa = tr.querySelector('td:nth-child(3) b').textContent.trim();
@@ -309,12 +323,16 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
       atualizaPend(j);
     });
   });
-  // "Conferido" logo abaixo da pessoa: mesma coisa que marcar o Ok da linha
-  document.querySelectorAll('.cf-ok-nome').forEach(b => b.addEventListener('click', async () => {
-    const tr = b.closest('tr'); const sel = tr.querySelector('.cf-pessoa');
-    if (sel && !sel.value) { toast('Escolha a pessoa antes de marcar como conferido'); sel.focus(); return; }
-    const j = await acao({acao:'editar', id: +tr.dataset.id, campo:'revisado', valor: 1}); if (!j) return;
-    marcaRevisado(tr, j); atualizaPend(j); toast('Linha conferida');
+  // Conferido (uma linha) e "conferir todos iguais" (todas as linhas pendentes que têm algum dos mesmos alertas)
+  document.querySelectorAll('.cf-ok-btn').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); const j = await conferir([+tr.dataset.id]); if (j) toast('Linha conferida');
+  }));
+  document.querySelectorAll('.cf-ok-todos').forEach(b => b.addEventListener('click', async () => {
+    const cods = b.dataset.cods.split(' ');
+    const ids = [...document.querySelectorAll('tr.cf-row[data-rev="0"]')].filter(tr => (tr.dataset.cods || '').split(' ').some(c => cods.includes(c))).map(tr => +tr.dataset.id);
+    if (!ids.length) return;
+    if (!confirm('Marcar como conferidas ' + ids.length + ' linha(s) com o mesmo tipo de alerta?')) return;
+    const j = await conferir(ids); if (j) toast(ids.length + ' linhas conferidas');
   }));
   document.querySelectorAll('.cf-x').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const j = await acao({acao: b.dataset.acao, id: +tr.dataset.id});
@@ -323,7 +341,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   const bc = document.getElementById('btn-confirmar');
   if (bc) bc.addEventListener('click', async () => {
     if (!confirm('Confirmar esta capa? Os lançamentos passam a valer para exportação e recibos.')) return;
-    const j = await acao({acao:'confirmar'}); if (j) location.reload();
+    const j = await acao({acao:'confirmar'}); if (j) location.href = '/capa-financeira/?ok=confirmada&id=' + capaId;
   });
   const bcod = document.getElementById('btn-cod');
   if (bcod) bcod.addEventListener('click', async () => { const j = await acao({acao:'editar_capa', campo:'cod', valor: document.getElementById('cf-cod').value}); if (j) location.reload(); });

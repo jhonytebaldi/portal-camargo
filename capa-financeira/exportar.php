@@ -168,11 +168,7 @@ portal_header('Exportar para o Omie', $u);
 <style>main.wrap{max-width:1680px}</style>
 <script src="/capa-financeira/pix.js?v=2"></script>
 <div class="cf-rev">
-<div class="cf-top">
-  <div><h1 class="home-titulo">Exportar para o Omie</h1>
-    <p class="home-sub">Planilha de importação (modelo oficial) com os lançamentos confirmados e ainda não exportados. Depois de importar no Omie, a linha fica marcada como exportada.</p></div>
-  <nav class="cf-nav"><a href="/capa-financeira/">← Capas</a><a href="/capa-financeira/pessoas.php">Pessoas</a><a href="/capa-financeira/configuracoes.php">Configurações</a></nav>
-</div>
+<?php cf_cabecalho('Exportar para o Omie', 'Planilha de importação (modelo oficial) com os lançamentos confirmados e ainda não exportados. Depois de importar no Omie, a linha fica marcada como exportada.', [['Capa Financeira', '/capa-financeira/'], ['Exportar para o Omie', null]], 'exportar'); ?>
 
 <div class="admin-tabs">
   <?php foreach ($empresas as $id => $e): ?><a class="<?= $id === $empresa ? 'on' : '' ?>" href="?empresa=<?= h($id) ?>&tipo=<?= $tipo ?>"><?= h($e['nome']) ?> <small>(<?= ($contagem[$id]['P'] ?? 0) ?> P / <?= ($contagem[$id]['R'] ?? 0) ?> R)</small></a><?php endforeach; ?>

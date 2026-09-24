@@ -60,10 +60,7 @@ $paraTexto = fn(array $m) => implode("\n", array_map(fn($k, $v) => "$k = $v", ar
 
 portal_header('Configurações — Capa Financeira', $u);
 ?>
-<div class="cf-top">
-  <div><h1 class="home-titulo">Configurações</h1><p class="home-sub">Dicionários usados na extração e na exportação. Os nomes de categoria e conta corrente têm que ser exatamente como estão no Omie.</p></div>
-  <nav class="cf-nav"><a href="/capa-financeira/">← Capas</a><a href="/capa-financeira/pessoas.php">Pessoas</a></nav>
-</div>
+<?php cf_cabecalho('Configurações', 'Dicionários usados na extração e na exportação. Os nomes de categoria e conta corrente têm que ser exatamente como estão no Omie.', [['Capa Financeira', '/capa-financeira/'], ['Configurações', null]], 'config'); ?>
 <?php if ($msg): ?><div class="ok-box"><?= h($msg) ?></div><?php endif; ?>
 <?php if ($erro): ?><div class="erro"><?= h($erro) ?></div><?php endif; ?>
 

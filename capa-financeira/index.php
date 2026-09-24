@@ -12,8 +12,8 @@ $filtro = (string)($_GET['status'] ?? '');
 
 $sql = "SELECT c.*, u.nome AS enviado_nome,
           (SELECT COUNT(*) FROM cf_lancamentos l WHERE l.capa_id = c.id AND l.status <> 'removido') AS n_linhas,
-          (SELECT COUNT(*) FROM cf_lancamentos l WHERE l.capa_id = c.id AND l.status = 'revisao' AND l.revisado = 0
-              AND (l.flags LIKE '%GRAVE:%' OR l.flags LIKE '%PESSOA_NAO_IDENTIFICADA%')) AS n_pendencias
+          (SELECT COUNT(*) FROM cf_lancamentos l WHERE l.capa_id = c.id AND l.status = 'revisao'
+              AND ((l.revisado = 0 AND l.flags <> '[]' AND l.flags NOT IN ('[\"PESSOA_NAO_IDENTIFICADA\"]', '[\"REPASSE (favorecido = terceiro; categoria de repasse)\"]')) OR (l.tipo = 'P' AND l.pessoa_id IS NULL))) AS n_pendencias
         FROM cf_capas c LEFT JOIN users u ON u.id = c.enviado_por";
 $args = [];
 if (in_array($filtro, ['revisao', 'confirmada', 'substituida', 'descartada'], true)) { $sql .= ' WHERE c.status = ?'; $args[] = $filtro; }
@@ -25,19 +25,9 @@ $nExportar = (int)$pdo->query("SELECT COUNT(*) FROM cf_lancamentos l JOIN cf_cap
 
 portal_header('Capa Financeira', $u);
 ?>
-<style>main.wrap{max-width:1400px}</style>
-<div class="cf-top">
-  <div>
-    <h1 class="home-titulo">Capa Financeira → Omie</h1>
-    <p class="home-sub">Envie a capa da venda, revise os lançamentos, confirme. Depois gere as planilhas do Omie e os recibos.</p>
-  </div>
-  <nav class="cf-nav">
-    <a href="/capa-financeira/exportar.php"><b>Exportar para o Omie</b><?= $nExportar ? ' <span class="cf-tag">' . $nExportar . '</span>' : '' ?></a>
-    <a href="/capa-financeira/recibos.php">Recibos</a>
-    <a href="/capa-financeira/pessoas.php">Pessoas (dicionário)</a>
-    <a href="/capa-financeira/configuracoes.php">Configurações</a>
-  </nav>
-</div>
+<style>main.wrap{max-width:1500px}</style>
+<?php cf_cabecalho('Capa Financeira → Omie', 'Envie a capa da venda, revise os lançamentos, confirme. Depois gere as planilhas do Omie e os recibos.', [['Capa Financeira', null]], 'capas'); ?>
+<?php if (($_GET['ok'] ?? '') === 'confirmada'): ?><div class="cf-sucesso">✔ Capa #<?= (int)($_GET['id'] ?? 0) ?> confirmada. Os lançamentos já aparecem em <a href="/capa-financeira/exportar.php">Exportar para o Omie</a><?= $nExportar ? ' (' . $nExportar . ' pendentes)' : '' ?> e em <a href="/capa-financeira/recibos.php">Recibos</a>.</div><?php endif; ?>
 
 <?php if ($nPessoas === 0): ?>
 <div class="aviso">O dicionário de pessoas está vazio. Cadastre a equipe em <a href="/capa-financeira/pessoas.php">Pessoas</a> (dá pra importar a planilha DADOS CORRETORES EQUIPE) — sem isso todo favorecido vai aparecer como "não identificado".</div>

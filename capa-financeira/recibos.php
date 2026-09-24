@@ -132,11 +132,7 @@ portal_header('Recibos', $u);
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
 <style>main.wrap{max-width:1500px}</style>
 <div class="cf-rev">
-<div class="cf-top">
-  <div><h1 class="home-titulo"><?= $gestor ? 'Recibos de comissão' : 'Meus recibos' ?></h1>
-    <p class="home-sub"><?= $gestor ? '"Declaração e Recibo" por lançamento a pagar confirmado. Gere antes do pagamento, baixe em PDF ou ZIP; o número do recibo é o código de integração.' : 'Recibos das suas comissões e bônus, gerados pelo financeiro.' ?></p></div>
-  <?php if ($gestor): ?><nav class="cf-nav"><a href="/capa-financeira/">← Capas</a><a href="/capa-financeira/exportar.php">Exportar</a><a href="/capa-financeira/pessoas.php">Pessoas</a></nav><?php endif; ?>
-</div>
+<?php cf_cabecalho($gestor ? 'Recibos de comissão' : 'Meus recibos', $gestor ? '"Declaração e Recibo" por lançamento a pagar confirmado. Gere antes do pagamento, baixe em PDF ou ZIP; o número do recibo é o código de integração.' : 'Recibos das suas comissões e bônus, gerados pelo financeiro.', $gestor ? [['Capa Financeira', '/capa-financeira/'], ['Recibos', null]] : [['Meus recibos', null]], 'recibos'); ?>
 
 <form method="get" class="cf-form" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
   <?php if ($gestor): ?>

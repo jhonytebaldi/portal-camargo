@@ -76,9 +76,8 @@ try {
         $q->execute([$anterior['id']]);
         foreach ($q->fetchAll() as $l) $antLinhas[$l['chave_estavel']] = $l;
     }
-    $qDup = $pdo->prepare("SELECT l.id, l.capa_id, c.cod, c.cliente FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id
-        WHERE l.capa_id <> ? AND (c.cod IS NULL OR c.cod <> ?) AND l.status IN ('confirmado','exportado','revisao')
-          AND l.tipo = ? AND l.valor = ? AND l.data_prevista <=> ? AND UPPER(l.cf_raw) = ? LIMIT 1");
+    // possível duplicata = mesma pessoa, valor e data repetidos DENTRO desta capa (entre capas os valores se repetem por natureza)
+    $vistosCapa = [];
 
     $ins = $pdo->prepare('INSERT INTO cf_lancamentos (capa_id, linha_xlsx, tipo, ordinal, chave_estavel, chave_exata, data_raw, cf_raw, favorecido_hist,
         funcao_raw, natureza_raw, clientes_hist, construtora_hist, unidade, status_imovel, data_venda_hist, col_g, prefixo, valor, parcela, total_parcelas,
@@ -108,10 +107,10 @@ try {
             }
             if ($a) { $dupDe = (int)$a['id']; $dupTipo = ($a['chave_exata'] === $l['chave_exata']) ? 'IGUAL' : 'ALTERADA'; $vistos[$a['id']] = true; }
             else $dupTipo = 'NOVA';
-        } else {
-            $qDup->execute([$capaId, (string)($capa['cod'] ?? ''), $tipo, $l['valor'], $l['data'], mb_strtoupper($l['cf'], 'UTF-8')]);
-            if ($d = $qDup->fetch()) { $dupTipo = 'POSSIVEL_DUPLICATA'; $dupDe = (int)$d['id']; $flags[] = "GRAVE:POSSIVEL_DUPLICATA (mesmo favorecido, valor e data na capa #{$d['capa_id']} {$d['cliente']})"; }
         }
+        $kd = $tipo . '|' . CapaParser::key($l['cf']) . '|' . number_format((float)$l['valor'], 2, '.', '') . '|' . ($l['data'] ?? '');
+        if (isset($vistosCapa[$kd])) { if ($dupTipo === null) $dupTipo = 'POSSIVEL_DUPLICATA'; $flags[] = "GRAVE:POSSIVEL_DUPLICATA (mesmo favorecido, valor e data na linha {$vistosCapa[$kd]} desta capa)"; }
+        else $vistosCapa[$kd] = $l['linha_xlsx'];
         $categoria = cf_categoria($tipo, $l['funcao'], $l['natureza'], $l['status_imovel']);
         $ins->execute([
             $capaId, $l['linha_xlsx'], $tipo, $ordinais[$gk], $l['chave_estavel'], $l['chave_exata'], $l['data_raw'], $l['cf'], $l['favorecido_hist'],

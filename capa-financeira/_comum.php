@@ -190,6 +190,48 @@ function cf_nivel_flag(string $f): string
 {
     return str_starts_with($f, 'GRAVE:') ? 'grave' : 'leve';
 }
+/** Flags que não são alerta para conferir (informativas ou resolvidas por outro campo). */
+const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE'];
+/** código curto do alerta (sem GRAVE:, sem detalhes) */
+function cf_flag_codigo(string $f): string
+{
+    $c = str_starts_with($f, 'GRAVE:') ? substr($f, 6) : $f;
+    return preg_replace('/[\s(].*$/', '', $c) ?? $c;
+}
+/** alertas que exigem conferência (exclui as informativas) */
+function cf_flags_alerta(array $fl): array
+{
+    return array_values(array_filter($fl, fn($f) => !in_array(cf_flag_codigo($f), CF_FLAGS_INFO, true)));
+}
+/** rótulo curto para a pílula na tabela; o texto completo vai no title */
+function cf_flag_curto(string $f): string
+{
+    $c = cf_flag_codigo($f);
+    $m = ['FAVORECIDO_DIVERGE' => 'nome ≠ histórico', 'FAVORECIDO_ABREVIADO' => 'nome abreviado', 'PARECE_BONUS' => 'parece bônus', 'ARRASTO_DE_ANO' => 'ano arrastado',
+          'ANO_ABSURDO' => 'ano absurdo', 'ANTERIOR_A_VENDA' => 'antes da venda', 'DATA_FORA_DE_SEQUENCIA' => 'data fora de ordem', 'SEM_DATA' => 'sem data', 'DATA_INVALIDA' => 'data inválida',
+          'CONDICAO_DIVERGE' => 'condição G ≠ prefixo', 'CLIENTES_HIST_DIFEREM_CAPA' => 'cliente ≠ capa', 'CONSTRUTORA_HIST_DIFERE_CAPA' => 'construtora ≠ capa', 'DATA_VENDA_HIST_DIFERE_G3' => 'data venda ≠ G3',
+          'COD_HIST_DIFERE_B6' => 'COD ≠ capa', 'TIPO_COLUNA_X_HISTORICO' => 'coluna ≠ histórico', 'HIST_NAO_RECONHECIDO' => 'histórico fora do padrão', 'POSSIVEL_DUPLICATA' => 'possível duplicata',
+          'FLUXO_NAO_PAREADO' => 'fluxo não pareado', 'VALOR_DIFERE_TOTAL' => 'valor ≠ total', 'REPASSE' => 'repasse'];
+    return $m[$c] ?? mb_strtolower(str_replace('_', ' ', $c));
+}
+
+/** Cabeçalho padrão das telas: trilha (esquerda), título, subtítulo e o menu do módulo (direita). */
+function cf_cabecalho(string $titulo, string $sub, array $trilha, string $atual = '', string $extra = ''): void
+{
+    $menu = ['capas' => ['/capa-financeira/', 'Capas'], 'exportar' => ['/capa-financeira/exportar.php', 'Exportar p/ Omie'], 'recibos' => ['/capa-financeira/recibos.php', 'Recibos'],
+             'recibos-omie' => ['/recibos-omie/', 'Recibos do Omie'], 'pessoas' => ['/capa-financeira/pessoas.php', 'Pessoas'], 'config' => ['/capa-financeira/configuracoes.php', 'Configurações']];
+    echo '<div class="cf-top"><div><nav class="cf-trilha"><a href="/">Portal</a>';
+    foreach ($trilha as $i => [$txt, $href]) echo ' <span>›</span> ' . ($href && $i < count($trilha) - 1 ? '<a href="' . h($href) . '">' . h($txt) . '</a>' : '<b>' . h($txt) . '</b>');
+    echo '</nav><h1 class="home-titulo">' . $titulo . '</h1>';
+    if ($sub !== '') echo '<p class="home-sub">' . $sub . '</p>';
+    echo $extra . '</div>';
+    if (user_has_tool('capa-financeira')) {   // corretor (só recibos) não vê o menu do módulo
+        echo '<nav class="cf-nav">';
+        foreach ($menu as $k => [$href, $txt]) echo '<a href="' . $href . '"' . ($k === $atual ? ' class="on"' : '') . '>' . $txt . '</a>';
+        echo '</nav>';
+    }
+    echo '</div>';
+}
 /** Texto amigável dos alertas. */
 function cf_flag_texto(string $f): string
 {

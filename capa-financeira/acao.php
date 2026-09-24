@@ -63,11 +63,10 @@ function cf_pendencias(PDO $pdo, array $capa): array
     foreach ($st->fetchAll() as $l) {
         $n++;
         $fl = json_decode((string)$l['flags'], true) ?: [];
-        $graves = array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:'));
         if ($l['tipo'] === 'P' && !$l['pessoa_id']) $p[] = "Linha {$l['linha_xlsx']}: favorecido não identificado";
         if (!$l['data_prevista']) $p[] = "Linha {$l['linha_xlsx']}: sem data prevista";
         if (!$l['categoria']) $p[] = "Linha {$l['linha_xlsx']}: sem categoria";
-        if ($graves && !(int)$l['revisado']) $p[] = "Linha {$l['linha_xlsx']}: alerta grave sem revisão";
+        if (cf_flags_alerta($fl) && !(int)$l['revisado']) $p[] = "Linha {$l['linha_xlsx']}: alerta sem conferir";
     }
     if ($n === 0) $p[] = 'Nenhum lançamento para confirmar';
     return $p;
@@ -81,7 +80,7 @@ function cf_linha(PDO $pdo, int $id, int $capaId): array
 function cf_tem_grave_pendente(array $l): bool
 {
     $fl = json_decode((string)$l['flags'], true) ?: [];
-    return (bool)array_filter($fl, fn($f) => str_starts_with($f, 'GRAVE:')) && !(int)$l['revisado'];
+    return (bool)cf_flags_alerta($fl) && !(int)$l['revisado'];
 }
 
 $resp = ['ok' => true];
@@ -159,6 +158,12 @@ case 'editar':
     }
     $l = cf_linha($pdo, (int)$l['id'], $capaId);
     $resp['tem_grave_pendente'] = cf_tem_grave_pendente($l);
+    $resp['pendencias'] = cf_pendencias($pdo, $capa);
+    break;
+
+case 'revisar_varios':
+    $ids = array_values(array_unique(array_map('intval', (array)($in['ids'] ?? []))));
+    if ($ids) $pdo->prepare("UPDATE cf_lancamentos SET revisado = 1 WHERE capa_id = ? AND status = 'revisao' AND id IN (" . implode(',', $ids) . ')')->execute([$capaId]);
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;
 
