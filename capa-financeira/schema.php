@@ -211,6 +211,11 @@ function cf_migrar(PDO $pdo): array
     }
     // categorias de repasse (acrescenta às existentes sem sobrescrever o que o usuário editou)
     $catAtual = json_decode((string)($pdo->query("SELECT valor FROM cf_config WHERE chave='categorias'")->fetchColumn() ?: '{}'), true) ?: [];
+    if ($catAtual && !isset($catAtual['ADM'])) {
+        $catAtual += ['ADM' => 'Ajuda de Custo', 'ADMINISTRATIVO' => 'Ajuda de Custo'];
+        $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='categorias'")->execute([json_encode($catAtual, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:categoria ADM';
+    }
     if ($catAtual && !isset($catAtual['REPASSE'])) {
         $catAtual += ['REPASSE' => 'Repasse a Terceiros', 'REPASSE_FUTURO' => 'Repasse a Terceiros Futuro', 'RECEBER_REPASSE' => 'Recebidos de repasse imediato', 'RECEBER_REPASSE_FUTURO' => 'Recebidos de repasse futuro'];
         $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='categorias'")->execute([json_encode($catAtual, JSON_UNESCAPED_UNICODE)]);
@@ -241,7 +246,7 @@ function cf_migrar(PDO $pdo): array
         'categorias' => json_encode([
             'CORRETOR' => 'Comissao de Corretor', 'CAPTADOR' => 'Comissao de Captador', 'DIRETOR' => 'Comissao de Diretor',
             'COORDENADOR' => 'Comissao de Gerente', 'INTEGRACAO' => 'Comissao de Gerente', 'PRE VENDA' => 'Comissao de Pre-venda',
-            'PRE-VENDA' => 'Comissao de Pre-venda', 'FINANCEIRO' => 'Ajuda de Custo', 'SAC' => 'Ajuda de Custo',
+            'PRE-VENDA' => 'Comissao de Pre-venda', 'FINANCEIRO' => 'Ajuda de Custo', 'SAC' => 'Ajuda de Custo', 'ADM' => 'Ajuda de Custo', 'ADMINISTRATIVO' => 'Ajuda de Custo',
             'BONUS' => 'Repasse de bonificaçao',
             'RECEBER_NOVO' => 'Comissao sobre venda de imovel novo', 'RECEBER_USADO' => 'Comissao sobre venda de imovel usado',
             'RECEBER_BONUS' => 'Recebidos de bonificaçao para repasse',

@@ -33,7 +33,7 @@ if ($capa['capa_anterior_id']) { $q = $pdo->prepare('SELECT id, versao, status, 
 $antById = [];
 if ($anterior) { $q = $pdo->prepare('SELECT * FROM cf_lancamentos WHERE capa_id = ?'); $q->execute([$anterior['id']]); foreach ($q->fetchAll() as $a) $antById[(int)$a['id']] = $a; }
 $editavel = $capa['status'] === 'revisao';
-$funcoes = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'FINANCEIRO', 'SAC'];
+$funcoes = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'FINANCEIRO', 'SAC', 'ADM'];
 
 // pendências
 $pend = [];
