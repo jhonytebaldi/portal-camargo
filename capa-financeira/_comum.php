@@ -203,16 +203,43 @@ function cf_flags_alerta(array $fl): array
 {
     return array_values(array_filter($fl, fn($f) => !in_array(cf_flag_codigo($f), CF_FLAGS_INFO, true)));
 }
-/** rótulo curto para a pílula na tabela; o texto completo vai no title */
+/** texto da pílula na tabela: descrição + o detalhe que importa (nomes, datas); o texto completo vai no title */
 function cf_flag_curto(string $f): string
 {
     $c = cf_flag_codigo($f);
-    $m = ['FAVORECIDO_DIVERGE' => 'nome ≠ histórico', 'FAVORECIDO_ABREVIADO' => 'nome abreviado', 'PARECE_BONUS' => 'parece bônus', 'ARRASTO_DE_ANO' => 'ano arrastado',
-          'ANO_ABSURDO' => 'ano absurdo', 'ANTERIOR_A_VENDA' => 'antes da venda', 'DATA_FORA_DE_SEQUENCIA' => 'data fora de ordem', 'SEM_DATA' => 'sem data', 'DATA_INVALIDA' => 'data inválida',
-          'CONDICAO_DIVERGE' => 'condição G ≠ prefixo', 'CLIENTES_HIST_DIFEREM_CAPA' => 'cliente ≠ capa', 'CONSTRUTORA_HIST_DIFERE_CAPA' => 'construtora ≠ capa', 'DATA_VENDA_HIST_DIFERE_G3' => 'data venda ≠ G3',
-          'COD_HIST_DIFERE_B6' => 'COD ≠ capa', 'TIPO_COLUNA_X_HISTORICO' => 'coluna ≠ histórico', 'HIST_NAO_RECONHECIDO' => 'histórico fora do padrão', 'POSSIVEL_DUPLICATA' => 'possível duplicata',
-          'FLUXO_NAO_PAREADO' => 'fluxo não pareado', 'VALOR_DIFERE_TOTAL' => 'valor ≠ total', 'REPASSE' => 'repasse'];
-    return $m[$c] ?? mb_strtolower(str_replace('_', ' ', $c));
+    $det = fn(string $prefix) => trim(substr($f, strlen($prefix)));
+    $q = fn(string $t) => trim(preg_replace(["/^\\(\\s*'?/u", "/'?\\s*\\)$/u"], '', $t));   // tira parênteses/aspas das pontas
+    switch ($c) {
+        case 'FAVORECIDO_DIVERGE': if (preg_match("/coluna C='(.*?)' × histórico='(.*?)'/u", $f, $m)) return "Favorecido ≠ histórico: {$m[1]} × {$m[2]}"; return 'Favorecido diferente do histórico';
+        case 'FAVORECIDO_ABREVIADO': if (preg_match("/histórico='(.*?)'/u", $f, $m)) return "Nome abreviado no histórico: {$m[1]}"; return 'Nome abreviado no histórico';
+        case 'CLIENTES_HIST_GRAFIA': return 'Cliente ≈ capa (grafia): ' . $q($det('CLIENTES_HIST_GRAFIA'));
+        case 'CLIENTES_HIST_DIFEREM_CAPA': return 'Cliente ≠ capa: ' . $q($det('CLIENTES_HIST_DIFEREM_CAPA'));
+        case 'CONSTRUTORA_HIST_GRAFIA': return 'Construtora ≈ capa (grafia): ' . $q($det('CONSTRUTORA_HIST_GRAFIA'));
+        case 'CONSTRUTORA_HIST_DIFERE_CAPA': return 'Construtora ≠ capa: ' . $q($det('CONSTRUTORA_HIST_DIFERE_CAPA'));
+        case 'DATA_VENDA_HIST_DIFERE_G3': return 'Data da venda no histórico ≠ capa: ' . $q($det('DATA_VENDA_HIST_DIFERE_G3'));
+        case 'COD_HIST_DIFERE_B6': return 'COD no histórico ≠ capa: ' . $q($det('COD_HIST_DIFERE_B6'));
+        case 'CONDICAO_DIVERGE': return 'Condição da coluna G ≠ prefixo: ' . str_replace(["G='", "prefixo='", "'"], ['G=', 'prefixo=', ''], $q($det('CONDICAO_DIVERGE')));
+        case 'POSSIVEL_DUPLICATA': if (preg_match('/linha (\d+)/', $f, $m)) return "Possível duplicata da linha {$m[1]} (mesmo favorecido, valor e data)"; return 'Possível duplicata nesta capa';
+        case 'PARECE_BONUS': return 'Está como COMISSAO mas parece BÔNUS (valor bate com o bloco de bônus / coluna G)';
+        case 'ARRASTO_DE_ANO': return 'Arrasto de ano: o ano sobe 1 a cada linha';
+        case 'ANO_ABSURDO': return 'Ano fora do razoável — confira a data';
+        case 'ANO_SUSPEITO': return 'Ano com poucos dígitos (ex.: 0202)';
+        case 'ANTERIOR_A_VENDA': return 'Data anterior à data da venda';
+        case 'DATA_FORA_DE_SEQUENCIA': return 'Data anterior à da linha anterior do mesmo grupo';
+        case 'SEM_DATA': return 'Sem data prevista';
+        case 'DATA_ILEGIVEL': return 'Data ilegível';
+        case 'TIPO_COLUNA_X_HISTORICO': return 'Coluna (pagar/receber) não combina com o histórico';
+        case 'HIST_TOKENS_INSUFICIENTES': return 'Histórico fora do padrão (faltam campos)';
+        case 'HIST_SEM_DATA_VENDA': return 'Histórico sem "VENDA: dd/mm/aaaa"';
+        case 'HIST_SEM_STATUS_IMOVEL': return 'Histórico sem PRONTO/PLANTA';
+        case 'FLUXO_NAO_PAREADO': return 'Recebimentos não batem com o bloco FLUXO DE PAGAMENTO';
+        case 'REPASSE': return 'Repasse a terceiro (não é comissão)';
+        case 'NF_CORTADA_20': return 'Nota Fiscal cortada em 20 caracteres';
+    }
+    if (str_starts_with($f, 'CONDICAO_DESCONHECIDA')) return 'Condição fora do dicionário: ' . substr($f, strpos($f, ':') + 1);
+    if (str_starts_with($f, 'FUNCAO_DESCONHECIDA')) return 'Função desconhecida: ' . substr($f, strpos($f, ':') + 1);
+    if (str_starts_with($f, 'NATUREZA_DESCONHECIDA')) return 'Natureza desconhecida: ' . substr($f, strpos($f, ':') + 1);
+    return cf_flag_texto($f);
 }
 
 /** Cabeçalho padrão das telas: trilha (esquerda), título, subtítulo e o menu do módulo (direita). */
@@ -254,6 +281,8 @@ function cf_flag_texto(string $f): string
     if (str_starts_with($f, 'GRAVE:FAVORECIDO_DIVERGE')) return 'Favorecido da coluna C é DIFERENTE do nome no histórico ' . substr($f, strlen('GRAVE:FAVORECIDO_DIVERGE '));
     if (str_starts_with($f, 'REPASSE')) return 'Repasse a terceiro (construtora): não é comissão — favorecido é a coluna C, sem função; confira a categoria (Repasse a Terceiros / Futuro)';
     if (str_starts_with($f, 'FAVORECIDO_ABREVIADO')) return 'Nome abreviado no histórico ' . substr($f, strlen('FAVORECIDO_ABREVIADO '));
+    if (str_starts_with($f, 'CLIENTES_HIST_GRAFIA')) return 'Cliente no histórico com grafia um pouco diferente da capa (letra trocada/a mais) — escolha qual nome vale ' . substr($f, strlen('CLIENTES_HIST_GRAFIA '));
+    if (str_starts_with($f, 'CONSTRUTORA_HIST_GRAFIA')) return 'Construtora no histórico com grafia um pouco diferente da capa — escolha qual nome vale ' . substr($f, strlen('CONSTRUTORA_HIST_GRAFIA '));
     if (str_starts_with($f, 'CLIENTES_HIST_DIFEREM_CAPA')) return 'Clientes no histórico diferem da capa ' . substr($f, strlen('CLIENTES_HIST_DIFEREM_CAPA '));
     if (str_starts_with($f, 'CONSTRUTORA_HIST_DIFERE_CAPA')) return 'Construtora no histórico difere da capa ' . substr($f, strlen('CONSTRUTORA_HIST_DIFERE_CAPA '));
     if (str_starts_with($f, 'DATA_VENDA_HIST_DIFERE_G3')) return 'Data da venda no histórico difere da capa (a capa vence) ' . substr($f, strlen('DATA_VENDA_HIST_DIFERE_G3 '));

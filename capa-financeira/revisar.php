@@ -72,6 +72,21 @@ portal_header('Revisar capa', $u);
   <input id="cf-cod" class="cf-in" placeholder="ex.: 1375" style="width:120px"> <button class="btn" id="btn-cod" type="button">Salvar COD</button></div>
 <?php endif; ?>
 <?php if ($capa['obs_capa']): ?><div class="aviso">Observação na capa (C8): <b><?= h($capa['obs_capa']) ?></b></div><?php endif; ?>
+<?php
+// nomes divergentes entre capa e histórico: oferece as opções para padronizar (vale para observação do Omie e recibo)
+$opcoes = ['cliente' => [], 'construtora' => []];
+if ($editavel) foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue;
+    foreach (json_decode((string)$l['flags'], true) ?: [] as $f) { $c = cf_flag_codigo($f);
+        if (in_array($c, ['CLIENTES_HIST_GRAFIA', 'CLIENTES_HIST_DIFEREM_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['cliente'][$m[1]] = ($opcoes['cliente'][$m[1]] ?? 0) + 1;
+        if (in_array($c, ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['construtora'][$m[1]] = ($opcoes['construtora'][$m[1]] ?? 0) + 1; } }
+foreach (['cliente' => 'Cliente', 'construtora' => 'Construtora'] as $campo => $rot): if (!$opcoes[$campo]) continue; ?>
+<div class="cf-escolha" data-campo="<?= $campo ?>"><b><?= $rot ?> escrito de formas diferentes na capa e no histórico.</b> Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):
+  <label><input type="radio" name="esc-<?= $campo ?>" value="<?= h((string)$capa[$campo]) ?>" checked> <b>Capa (B<?= $campo === 'cliente' ? 2 : 3 ?>):</b> <?= h((string)$capa[$campo]) ?></label>
+  <?php foreach ($opcoes[$campo] as $nome => $n): ?><label><input type="radio" name="esc-<?= $campo ?>" value="<?= h($nome) ?>"> <b>Histórico (<?= $n ?> linha<?= $n > 1 ? 's' : '' ?>):</b> <?= h($nome) ?></label><?php endforeach; ?>
+  <label><input type="radio" name="esc-<?= $campo ?>" value="__outro__"> Outro: <input type="text" class="cf-in" data-outro style="width:60%;max-width:420px" placeholder="digite o nome correto"></label>
+  <button type="button" class="btn cf-btn-sec cf-usar-nome">Usar este nome</button>
+</div>
+<?php endforeach; ?>
 
 <?php if ($editavel): ?>
 <div class="cf-barra">
@@ -136,7 +151,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <h2 class="cf-h2">Contas a pagar <small><?= count($pagar) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-tbl" id="tbl-pagar">
-<colgroup><col style="width:13%"><col style="width:9%"><col style="width:11%"><col style="width:14%"><col style="width:11%"><col style="width:7%"><col style="width:7%"><col style="width:11%"><col style="width:7%"><col style="width:8%"><col style="width:2%"></colgroup>
+<colgroup><col style="width:19%"><col style="width:9%"><col style="width:10%"><col style="width:13%"><col style="width:10%"><col style="width:7%"><col style="width:7%"><col style="width:10%"><col style="width:6%"><col style="width:7%"><col style="width:2%"></colgroup>
 <thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Favorecido (col. C)</th><th>Pessoa (dicionário)</th><th>Chave Pix</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal / condição</th><th></th></tr></thead>
 <tbody>
 <?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
@@ -181,7 +196,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <h2 class="cf-h2">Contas a receber <small><?= count($receber) ?> linha(s)</small></h2>
 <div class="cf-tbl-wrap">
 <table class="grid cf-tbl" id="tbl-receber">
-<colgroup><col style="width:16%"><col style="width:10%"><col style="width:22%"><col style="width:7%"><col style="width:20%"><col style="width:9%"><col style="width:13%"><col style="width:3%"></colgroup>
+<colgroup><col style="width:24%"><col style="width:10%"><col style="width:20%"><col style="width:6%"><col style="width:18%"><col style="width:8%"><col style="width:11%"><col style="width:3%"></colgroup>
 <thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Cliente (col. C)</th><th>Parcela</th><th>Categoria Omie</th><th>Valor</th><th>Fluxo</th><th></th></tr></thead>
 <tbody>
 <?php foreach ($receber as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
@@ -343,6 +358,12 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     if (!confirm('Confirmar esta capa? Os lançamentos passam a valer para exportação e recibos.')) return;
     const j = await acao({acao:'confirmar'}); if (j) location.href = '/capa-financeira/?ok=confirmada&id=' + capaId;
   });
+  document.querySelectorAll('.cf-usar-nome').forEach(b => b.addEventListener('click', async () => {
+    const box = b.closest('.cf-escolha'); const campo = box.dataset.campo;
+    let v = box.querySelector('input[type=radio]:checked').value; if (v === '__outro__') v = box.querySelector('[data-outro]').value.trim();
+    if (!v) { toast('Digite o nome'); return; }
+    const j = await acao({acao:'editar_capa', campo, valor: v}); if (j) { toast('Nome padronizado'); location.reload(); }
+  }));
   const bcod = document.getElementById('btn-cod');
   if (bcod) bcod.addEventListener('click', async () => { const j = await acao({acao:'editar_capa', campo:'cod', valor: document.getElementById('cf-cod').value}); if (j) location.reload(); });
   const bd = document.getElementById('btn-descartar');

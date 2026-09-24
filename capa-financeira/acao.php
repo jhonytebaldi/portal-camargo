@@ -178,10 +178,23 @@ case 'restaurar':
 
 case 'editar_capa':
     $campo = (string)($in['campo'] ?? '');
-    if ($campo !== 'cod') falha('campo inválido');
-    $v = preg_replace('/\D+/', '', (string)($in['valor'] ?? '')) ?: null;
-    $pdo->prepare('UPDATE cf_capas SET cod = ? WHERE id = ?')->execute([$v, $capaId]);
-    $capa['cod'] = $v;
+    if ($campo === 'cod') {
+        $v = preg_replace('/\D+/', '', (string)($in['valor'] ?? '')) ?: null;
+        $pdo->prepare('UPDATE cf_capas SET cod = ? WHERE id = ?')->execute([$v, $capaId]);
+        $capa['cod'] = $v;
+    } elseif ($campo === 'cliente' || $campo === 'construtora') {
+        $v = CapaParser::norm((string)($in['valor'] ?? '')); if ($v === '') falha('nome vazio');
+        $pdo->prepare("UPDATE cf_capas SET $campo = ? WHERE id = ?")->execute([$v, $capaId]);
+        // as linhas cujo único alerta era essa divergência ficam conferidas; as outras só perdem esse alerta
+        $cods = $campo === 'cliente' ? ['CLIENTES_HIST_GRAFIA', 'CLIENTES_HIST_DIFEREM_CAPA'] : ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'];
+        $q = $pdo->prepare("SELECT id, flags FROM cf_lancamentos WHERE capa_id = ? AND status = 'revisao'"); $q->execute([$capaId]);
+        $up = $pdo->prepare('UPDATE cf_lancamentos SET flags = ? WHERE id = ?');
+        foreach ($q->fetchAll() as $l) {
+            $fl = json_decode((string)$l['flags'], true) ?: [];
+            $novo = array_values(array_filter($fl, fn($f) => !in_array(cf_flag_codigo($f), $cods, true)));
+            if (count($novo) !== count($fl)) $up->execute([json_encode($novo, JSON_UNESCAPED_UNICODE), $l['id']]);
+        }
+    } else falha('campo inválido');
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;
 
