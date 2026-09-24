@@ -88,7 +88,7 @@ final class Titulo
         $novo = str_contains($obs, ' | ') && preg_match('/\b(RECIBO|FAVORECIDO|CLIENTE):/u', $obs);
         $partes = $novo ? preg_split('/\s*\|\s*/u', $obs) : preg_split('/\s*\n\s*/u', $obs);
         $o['padrao'] = $novo ? 'novo' : 'antigo';
-        $rot = ['RECIBO' => 'recibo', 'FAVORECIDO' => 'favorecido', 'FUNCAO' => 'funcao', 'FUNÇÃO' => 'funcao', 'CLIENTE' => 'cliente', 'CONSTRUTORA' => 'construtora', 'IMOVEL' => 'imovel', 'IMÓVEL' => 'imovel', 'ENDERECO' => 'imovel', 'ENDEREÇO' => 'imovel',
+        $rot = ['NATUREZA' => 'natureza_rot', 'RECIBO' => 'recibo', 'FAVORECIDO' => 'favorecido', 'FUNCAO' => 'funcao', 'FUNÇÃO' => 'funcao', 'CLIENTE' => 'cliente', 'CONSTRUTORA' => 'construtora', 'IMOVEL' => 'imovel', 'IMÓVEL' => 'imovel', 'ENDERECO' => 'imovel', 'ENDEREÇO' => 'imovel',
                 'STATUS' => 'status', 'VENDA' => 'venda', 'DATA DA VENDA' => 'venda', 'COD' => 'cod', 'CÓD' => 'cod', 'CODIGO' => 'cod', 'CÓDIGO' => 'cod', 'COND' => 'cond', 'CONDICAO' => 'cond', 'CONDIÇÃO' => 'cond', 'PARCELA' => 'parcela', 'FLUXO' => 'parcela'];
         $soltas = [];
         foreach ($partes as $p) {
@@ -96,6 +96,7 @@ final class Titulo
             if (preg_match('/^([A-ZÀ-Ú ]{3,15}):\s*(.*)$/u', $p, $m) && isset($rot[mb_strtoupper(trim($m[1]))])) {
                 $k = $rot[mb_strtoupper(trim($m[1]))]; $v = trim($m[2]);
                 if ($k === 'funcao') { if (preg_match('/\(?\s*B[ÔO]NUS\s*\)?/iu', $v)) { $o['natureza'] = 'BONUS'; $v = trim(preg_replace('/\(?\s*B[ÔO]NUS\s*\)?/iu', '', $v)); } }
+                if ($k === 'natureza_rot') { if (str_contains(mb_strtoupper($v), 'REPASSE')) $o['natureza'] = 'REPASSE'; continue; }
                 if ($k === 'cod') $v = preg_replace('/\D+/', '', $v);
                 if ($k === 'venda' && preg_match('/(\d{2})\/(\d{2})\/(\d{4})/', $v, $d)) $v = "$d[1]/$d[2]/$d[3]";
                 $o[$k] = $v !== '' ? $v : null;
