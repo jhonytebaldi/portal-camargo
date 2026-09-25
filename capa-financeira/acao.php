@@ -194,6 +194,21 @@ case 'editar_capa':
             $novo = array_values(array_filter($fl, fn($f) => !in_array(cf_flag_codigo($f), $cods, true)));
             if (count($novo) !== count($fl)) $up->execute([json_encode($novo, JSON_UNESCAPED_UNICODE), $l['id']]);
         }
+    } elseif ($campo === 'data_venda') {
+        // aceita dd/mm/aaaa ou aaaa-mm-dd; vale para observação/recibo e recalcula "data anterior à venda" nas linhas
+        $raw = trim((string)($in['valor'] ?? ''));
+        $dt = DateTimeImmutable::createFromFormat('!d/m/Y', $raw) ?: DateTimeImmutable::createFromFormat('!Y-m-d', $raw);
+        if (!$dt || $dt->format('Y') < 2000) falha('data inválida');
+        $v = $dt->format('Y-m-d');
+        $pdo->prepare('UPDATE cf_capas SET data_venda = ? WHERE id = ?')->execute([$v, $capaId]);
+        $q = $pdo->prepare("SELECT id, flags, data_prevista FROM cf_lancamentos WHERE capa_id = ? AND status = 'revisao'"); $q->execute([$capaId]);
+        $up = $pdo->prepare('UPDATE cf_lancamentos SET flags = ? WHERE id = ?');
+        foreach ($q->fetchAll() as $l) {
+            $fl = json_decode((string)$l['flags'], true) ?: [];
+            $novo = array_values(array_filter($fl, fn($f) => !in_array(cf_flag_codigo($f), ['DATA_VENDA_HIST_DIFERE_G3', 'ANTERIOR_A_VENDA'], true)));
+            if ($l['data_prevista'] && $l['data_prevista'] < $v) $novo[] = 'ANTERIOR_A_VENDA';
+            if ($novo !== $fl) $up->execute([json_encode($novo, JSON_UNESCAPED_UNICODE), $l['id']]);
+        }
     } else falha('campo inválido');
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;

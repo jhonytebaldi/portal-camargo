@@ -74,19 +74,25 @@ portal_header('Revisar capa', $u);
 <?php if ($capa['obs_capa']): ?><div class="aviso">Observação na capa (C8): <b><?= h($capa['obs_capa']) ?></b></div><?php endif; ?>
 <?php
 // nomes divergentes entre capa e histórico: oferece as opções para padronizar (vale para observação do Omie e recibo)
-$opcoes = ['cliente' => [], 'construtora' => []];
+$opcoes = ['cliente' => [], 'construtora' => [], 'data_venda' => []];
 if ($editavel) foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue;
     $fl = json_decode((string)$l['flags'], true) ?: [];
     if (in_array('TIPO_COLUNA_X_HISTORICO', array_map('cf_flag_codigo', $fl), true)) continue;   // histórico lido no layout errado: nomes não são confiáveis
     foreach ($fl as $f) { $c = cf_flag_codigo($f);
         if (in_array($c, ['CLIENTES_HIST_GRAFIA', 'CLIENTES_HIST_DIFEREM_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['cliente'][$m[1]] = ($opcoes['cliente'][$m[1]] ?? 0) + 1;
-        if (in_array($c, ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['construtora'][$m[1]] = ($opcoes['construtora'][$m[1]] ?? 0) + 1; } }
-foreach (['cliente' => 'Cliente', 'construtora' => 'Construtora'] as $campo => $rot): if (!$opcoes[$campo]) continue; ?>
-<div class="cf-escolha" data-campo="<?= $campo ?>"><b><?= $rot ?> escrito de formas diferentes na capa e no histórico.</b> Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):
-  <label><input type="radio" name="esc-<?= $campo ?>" value="<?= h((string)$capa[$campo]) ?>" checked> <b>Capa (B<?= $campo === 'cliente' ? 2 : 3 ?>):</b> <?= h((string)$capa[$campo]) ?></label>
-  <?php foreach ($opcoes[$campo] as $nome => $n): ?><label><input type="radio" name="esc-<?= $campo ?>" value="<?= h($nome) ?>"> <b>Histórico (<?= $n ?> linha<?= $n > 1 ? 's' : '' ?>):</b> <?= h($nome) ?></label><?php endforeach; ?>
-  <label><input type="radio" name="esc-<?= $campo ?>" value="__outro__"> Outro: <input type="text" class="cf-in" data-outro style="width:60%;max-width:420px" placeholder="digite o nome correto"></label>
-  <button type="button" class="btn cf-btn-sec cf-usar-nome">Usar este nome</button>
+        if (in_array($c, ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['construtora'][$m[1]] = ($opcoes['construtora'][$m[1]] ?? 0) + 1;
+        if ($c === 'DATA_VENDA_HIST_DIFERE_G3' && preg_match('/\((\d{1,2}\/\d{1,2}\/\d{2,4}) ×/u', $f, $m)) $opcoes['data_venda'][$m[1]] = ($opcoes['data_venda'][$m[1]] ?? 0) + 1; } }
+$escTxt = ['cliente' => ['Cliente', 'B2', 'escrito de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
+           'construtora' => ['Construtora', 'B3', 'escrita de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
+           'data_venda' => ['Data da venda', 'G3', 'diferente na capa e no histórico.', 'Escolha qual data vale (vai para a observação do Omie e para o recibo; os alertas de "data anterior à venda" são recalculados):', 'Usar esta data']];
+foreach ($escTxt as $campo => [$rot, $cel, $t1, $t2, $btn]): if (!$opcoes[$campo]) continue;
+    $valCapa = $campo === 'data_venda' ? cf_data_br($capa['data_venda']) : (string)$capa[$campo]; ?>
+<div class="cf-escolha" data-campo="<?= $campo ?>"><b><?= $rot ?> <?= $t1 ?></b> <?= $t2 ?>
+  <label><input type="radio" name="esc-<?= $campo ?>" value="<?= h($valCapa) ?>" checked> <b>Capa (<?= $cel ?>):</b> <?= h($valCapa) ?></label>
+  <?php foreach ($opcoes[$campo] as $v => $n): ?><label><input type="radio" name="esc-<?= $campo ?>" value="<?= h((string)$v) ?>"> <b>Histórico (<?= $n ?> linha<?= $n > 1 ? 's' : '' ?>):</b> <?= h((string)$v) ?></label><?php endforeach; ?>
+  <?php if ($campo === 'data_venda'): ?><label><input type="radio" name="esc-<?= $campo ?>" value="__outro__"> Outra: <input type="date" class="cf-in" data-outro style="width:160px"></label>
+  <?php else: ?><label><input type="radio" name="esc-<?= $campo ?>" value="__outro__"> Outro: <input type="text" class="cf-in" data-outro style="width:60%;max-width:420px" placeholder="digite o nome correto"></label><?php endif; ?>
+  <button type="button" class="btn cf-btn-sec cf-usar-nome"><?= $btn ?></button>
 </div>
 <?php endforeach; ?>
 
@@ -365,8 +371,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   document.querySelectorAll('.cf-usar-nome').forEach(b => b.addEventListener('click', async () => {
     const box = b.closest('.cf-escolha'); const campo = box.dataset.campo;
     let v = box.querySelector('input[type=radio]:checked').value; if (v === '__outro__') v = box.querySelector('[data-outro]').value.trim();
-    if (!v) { toast('Digite o nome'); return; }
-    const j = await acao({acao:'editar_capa', campo, valor: v}); if (j) { toast('Nome padronizado'); location.reload(); }
+    if (!v) { toast(campo === 'data_venda' ? 'Informe a data' : 'Digite o nome'); return; }
+    const j = await acao({acao:'editar_capa', campo, valor: v}); if (j) { toast(campo === 'data_venda' ? 'Data da venda padronizada' : 'Nome padronizado'); location.reload(); }
   }));
   const bcod = document.getElementById('btn-cod');
   if (bcod) bcod.addEventListener('click', async () => { const j = await acao({acao:'editar_capa', campo:'cod', valor: document.getElementById('cf-cod').value}); if (j) location.reload(); });
