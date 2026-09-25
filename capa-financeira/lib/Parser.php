@@ -144,7 +144,8 @@ final class CapaParser
         return $d > 0 && $d <= 4 && $d / $n <= 0.15;
     }
 
-    public function parseHist(mixed $hRaw): array
+    /** @param ?string $tipoCol 'PAGAR'|'RECEBER' — coluna em que a linha está; decide o layout quando falta o "RECIBO XXXX -" */
+    public function parseHist(mixed $hRaw, ?string $tipoCol = null): array
     {
         $h = self::norm($hRaw);
         $out = ['raw' => $h, 'prefixo' => null, 'recibo_marcador' => null, 'favorecido' => null, 'funcao' => null,
@@ -168,13 +169,20 @@ final class CapaParser
         $tipo = stripos($h, 'RECIBO') === 0 ? 'PAGAR' : 'RECEBER';
         $tok = [];
         foreach (preg_split('/\s+-\s*|\s*-\s+/u', $h) ?: [] as $t) { $t = self::norm($t); if ($t !== '') $tok[] = $t; }
+        $funcs = array_map([self::class, 'key'], self::FUNCOES);
+        // Linha em A PAGAR cujo histórico esqueceu o "RECIBO XXXX -": se o 2º campo é uma função conhecida,
+        // lê no layout de pagar mesmo assim (favorecido - função - natureza - cliente - construtora ...) e avisa.
+        if ($tipo === 'RECEBER' && $tipoCol === 'PAGAR' && count($tok) >= 2 && in_array(self::key($tok[1]), $funcs, true)) {
+            $tipo = 'PAGAR';
+            array_unshift($tok, null);
+            $flags[] = 'HIST_SEM_RECIBO';
+        }
         if ($tipo === 'PAGAR') {
             if (count($tok) < 6) { $flags[] = 'HIST_TOKENS_INSUFICIENTES'; return [$tipo, $out, $flags]; }
             $out['recibo_marcador'] = $tok[0]; $out['favorecido'] = $tok[1]; $out['funcao'] = self::key($tok[2]);
             $nat = str_replace('COMISSÃO', 'COMISSAO', self::key($tok[3]));
             $out['natureza'] = $nat;
             if (!in_array($nat, self::NATUREZAS, true)) $flags[] = 'NATUREZA_DESCONHECIDA:' . $tok[3];
-            $funcs = array_map([self::class, 'key'], self::FUNCOES);
             if (!in_array($out['funcao'], $funcs, true)) $flags[] = 'FUNCAO_DESCONHECIDA:' . $tok[2];
             $out['clientes'] = $tok[4]; $out['construtora'] = $tok[5]; $resto = array_slice($tok, 6);
         } else {
@@ -320,7 +328,7 @@ final class CapaParser
             if ($dflag) $flags[] = $dflag;
             $da = $data ? $this->dateAlert($data, $dataVenda) : null;
             if ($da) $flags[] = $da;
-            [$tipoH, $h, $hflags] = $this->parseHist($d);
+            [$tipoH, $h, $hflags] = $this->parseHist($d, $tipoCol);
             foreach ($hflags as $fl) $flags[] = $fl;
             if ($tipoH !== $tipoCol) $flags[] = 'TIPO_COLUNA_X_HISTORICO';
             $cf = self::norm($c);
