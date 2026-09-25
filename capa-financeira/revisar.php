@@ -76,7 +76,9 @@ portal_header('Revisar capa', $u);
 // nomes divergentes entre capa e histórico: oferece as opções para padronizar (vale para observação do Omie e recibo)
 $opcoes = ['cliente' => [], 'construtora' => []];
 if ($editavel) foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue;
-    foreach (json_decode((string)$l['flags'], true) ?: [] as $f) { $c = cf_flag_codigo($f);
+    $fl = json_decode((string)$l['flags'], true) ?: [];
+    if (in_array('TIPO_COLUNA_X_HISTORICO', array_map('cf_flag_codigo', $fl), true)) continue;   // histórico lido no layout errado: nomes não são confiáveis
+    foreach ($fl as $f) { $c = cf_flag_codigo($f);
         if (in_array($c, ['CLIENTES_HIST_GRAFIA', 'CLIENTES_HIST_DIFEREM_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['cliente'][$m[1]] = ($opcoes['cliente'][$m[1]] ?? 0) + 1;
         if (in_array($c, ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['construtora'][$m[1]] = ($opcoes['construtora'][$m[1]] ?? 0) + 1; } }
 foreach (['cliente' => 'Cliente', 'construtora' => 'Construtora'] as $campo => $rot): if (!$opcoes[$campo]) continue; ?>

@@ -229,6 +229,7 @@ function cf_flag_curto(string $f): string
         case 'SEM_DATA': return 'Sem data prevista';
         case 'DATA_ILEGIVEL': return 'Data ilegível';
         case 'TIPO_COLUNA_X_HISTORICO': return 'Coluna (pagar/receber) não combina com o histórico';
+        case 'HIST_SEM_RECIBO': return 'Histórico sem "RECIBO XXXX -" no início (lido mesmo assim; corrija na capa)';
         case 'HIST_TOKENS_INSUFICIENTES': return 'Histórico fora do padrão (faltam campos)';
         case 'HIST_SEM_DATA_VENDA': return 'Histórico sem "VENDA: dd/mm/aaaa"';
         case 'HIST_SEM_STATUS_IMOVEL': return 'Histórico sem PRONTO/PLANTA';
@@ -273,6 +274,7 @@ function cf_flag_texto(string $f): string
         'HIST_SEM_STATUS_IMOVEL' => 'Histórico sem PRONTO/PLANTA',
         'HIST_TOKENS_INSUFICIENTES' => 'Histórico fora do padrão (faltam campos)',
         'TIPO_COLUNA_X_HISTORICO' => 'Coluna (pagar/receber) não combina com o histórico',
+        'HIST_SEM_RECIBO' => 'Histórico sem "RECIBO XXXX -" no início — foi lido no layout de pagar mesmo assim; corrija na capa',
         'GRAVE:PARECE_BONUS (bate com bloco BONUS da capa ou coluna G)' => 'Está como COMISSAO, mas o valor bate com o bloco de BÔNUS da capa (ou a coluna G diz BONUS)',
         'GRAVE:ARRASTO_DE_ANO (ano aumenta 1 a cada linha)' => 'Arrasto de ano na planilha (o ano sobe de 1 em 1 a cada linha)',
         'NF_CORTADA_20' => 'Nota Fiscal cortada em 20 caracteres',
