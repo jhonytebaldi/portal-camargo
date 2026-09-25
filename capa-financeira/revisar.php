@@ -132,15 +132,16 @@ function cf_render_alertas(array $l, array $fl, array $antById, bool $editavel, 
     }
     if ($al && !$rev && $editavel && !$rem) {
         $out .= '<button type="button" class="cf-ok-btn" title="' . h(implode(' | ', array_map('cf_flag_texto', $al))) . '">✔ Conferido</button>';
-        $cods = array_unique(array_map('cf_flag_codigo', $al)); $iguais = 0;
-        foreach ($cods as $c) $iguais = max($iguais, ($repeticoes[$c] ?? 1) - 1);
-        if ($iguais > 0) $out .= '<button type="button" class="cf-ok-todos" data-cods="' . h(implode(' ', $cods)) . '">conferir todos iguais (+' . $iguais . ')</button>';
+        // "iguais" = outras linhas cujos alertas (com os mesmos detalhes, ex.: mesmo par de nomes) estão todos entre os desta linha
+        $iguais = 0;
+        foreach ($repeticoes as $id => $alOutra) if ($id !== (int)$l['id'] && !array_diff($alOutra, $al)) $iguais++;
+        if ($iguais > 0) $out .= '<button type="button" class="cf-ok-todos" data-al="' . h(json_encode(array_values($al), JSON_UNESCAPED_UNICODE)) . '">conferir todos iguais (+' . $iguais . ')</button>';
     }
     return $out;
 }
 // quantas linhas em revisão têm cada código de alerta (para o "conferir todos iguais")
 $repeticoes = [];
-foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue; foreach (array_unique(array_map('cf_flag_codigo', cf_flags_alerta(json_decode((string)$l['flags'], true) ?: []))) as $c) $repeticoes[$c] = ($repeticoes[$c] ?? 0) + 1; }
+foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)$l['revisado']) continue; $a = array_values(array_unique(cf_flags_alerta(json_decode((string)$l['flags'], true) ?: []))); if ($a) $repeticoes[(int)$l['id']] = $a; }   // id => alertas (linhas ainda não conferidas)
 function cf_row_class(array $l, array $fl): string {
     $al = cf_flags_alerta($fl); if (!$al || (int)$l['revisado']) return '';
     foreach ($al as $f) if (cf_nivel_flag($f) === 'grave') return 'cf-tem-grave';
@@ -157,7 +158,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Favorecido (col. C)</th><th>Pessoa (dicionário)</th><th>Chave Pix</th><th>Função</th><th>Natureza</th><th>Categoria Omie</th><th>Valor</th><th>Nota Fiscal / condição</th><th></th></tr></thead>
 <tbody>
 <?php foreach ($pagar as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
-<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-cf="<?= h(CapaParser::key($l['cf_raw'])) ?>" data-cods="<?= h(implode(' ', array_unique(array_map('cf_flag_codigo', cf_flags_alerta($fl))))) ?>" data-rev="<?= (int)$l['revisado'] ?>">
+<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-cf="<?= h(CapaParser::key($l['cf_raw'])) ?>" data-al="<?= h(json_encode(array_values(cf_flags_alerta($fl)), JSON_UNESCAPED_UNICODE)) ?>" data-rev="<?= (int)$l['revisado'] ?>">
   <td class="cf-alertas"><?= cf_render_alertas($l, $fl, $antById, $editavel, $rem, $repeticoes) ?></td>
   <td>
     <?php if ($editavel && !$rem): ?><input type="date" class="cf-in" data-campo="data_prevista" value="<?= h((string)$l['data_prevista']) ?>">
@@ -202,7 +203,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 <thead><tr><th>Linha · alertas</th><th>Data prevista</th><th>Cliente (col. C)</th><th>Parcela</th><th>Categoria Omie</th><th>Valor</th><th>Fluxo</th><th></th></tr></thead>
 <tbody>
 <?php foreach ($receber as $l): $fl = json_decode((string)$l['flags'], true) ?: []; $rem = $l['status'] === 'removido'; ?>
-<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-cods="<?= h(implode(' ', array_unique(array_map('cf_flag_codigo', cf_flags_alerta($fl))))) ?>" data-rev="<?= (int)$l['revisado'] ?>">
+<tr class="cf-row <?= $rem ? 'cf-removida' : '' ?> <?= cf_row_class($l, $fl) ?>" data-id="<?= (int)$l['id'] ?>" data-al="<?= h(json_encode(array_values(cf_flags_alerta($fl)), JSON_UNESCAPED_UNICODE)) ?>" data-rev="<?= (int)$l['revisado'] ?>">
   <td class="cf-alertas"><?= cf_render_alertas($l, $fl, $antById, $editavel, $rem, $repeticoes) ?></td>
   <td><?php if ($editavel && !$rem): ?><input type="date" class="cf-in" data-campo="data_prevista" value="<?= h((string)$l['data_prevista']) ?>"><?php else: ?><?= cf_data_br($l['data_prevista']) ?><?php endif; ?>
       <?php if ($l['data_raw'] && $l['data_raw'] !== $l['data_prevista']): ?><br><small class="cf-raw">na capa: <?= h($l['data_raw']) ?></small><?php endif; ?></td>
@@ -345,10 +346,11 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     const tr = b.closest('tr'); const j = await conferir([+tr.dataset.id]); if (j) toast('Linha conferida');
   }));
   document.querySelectorAll('.cf-ok-todos').forEach(b => b.addEventListener('click', async () => {
-    const cods = b.dataset.cods.split(' ');
-    const ids = [...document.querySelectorAll('tr.cf-row[data-rev="0"]')].filter(tr => (tr.dataset.cods || '').split(' ').some(c => cods.includes(c))).map(tr => +tr.dataset.id);
+    const al = JSON.parse(b.dataset.al || '[]');
+    // só linhas cujos alertas estão TODOS entre os desta linha (mesmo texto, mesmos nomes/detalhes)
+    const ids = [...document.querySelectorAll('tr.cf-row[data-rev="0"]')].filter(tr => { const o = JSON.parse(tr.dataset.al || '[]'); return o.length && o.every(f => al.includes(f)); }).map(tr => +tr.dataset.id);
     if (!ids.length) return;
-    if (!confirm('Marcar como conferidas ' + ids.length + ' linha(s) com o mesmo tipo de alerta?')) return;
+    if (!confirm('Marcar como conferidas ' + ids.length + ' linha(s) que têm só estes mesmos alertas (mesmos nomes/detalhes)?')) return;
     const j = await conferir(ids); if (j) toast(ids.length + ' linhas conferidas');
   }));
   document.querySelectorAll('.cf-x').forEach(b => b.addEventListener('click', async () => {
