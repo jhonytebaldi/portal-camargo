@@ -190,6 +190,9 @@ try {
     // ---- Recibos do Omie (recibos-omie/schema.php) -----
     require_once dirname(__DIR__) . '/recibos-omie/schema.php';
     foreach (ro_migrar($pdo) as $f) $feitos[] = 'recibos-omie: ' . $f;
+    // ---- Listas 3C (listas-3c/schema.php): tabelas + botão na home -----
+    require_once dirname(__DIR__) . '/listas-3c/schema.php';
+    foreach (l3c_migrar($pdo) as $f) $feitos[] = 'listas-3c: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
