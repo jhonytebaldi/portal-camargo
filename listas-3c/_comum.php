@@ -2,7 +2,8 @@
 /* =====================================================================
    listas-3c/_comum.php: base do módulo Listas 3C.
 
-   Nível 1: exige a ferramenta 'listas-3c' (registrada por admin/migrar.php).
+   Nível 1: exige a ferramenta 'listas-3c'. Ela se registra sozinha na
+   primeira visita de um admin (schema.php), sem admin/migrar.php.
    CSRF reaproveita admin/comum.php, como a Capa Financeira.
    ===================================================================== */
 declare(strict_types=1);
@@ -10,6 +11,12 @@ require_once __DIR__ . '/../lib/layout.php';
 require_once __DIR__ . '/../lib/blocklist.php';
 require_once __DIR__ . '/../admin/comum.php';     // csrf_token() / csrf_check()
 require_once __DIR__ . '/lib/Montador.php';
+require_once __DIR__ . '/schema.php';
+
+// Antes de qualquer require_tool: se um admin abrir /listas-3c/ direto
+// (link recebido, favorito) antes de passar pela home, as tabelas e o
+// registro da ferramenta nascem aqui, e o require_tool já o deixa entrar.
+l3c_instalar_se_preciso();
 
 // Datas da tela e do cron no fuso da Camargo (a hospedagem pode estar em UTC).
 date_default_timezone_set('America/Sao_Paulo');

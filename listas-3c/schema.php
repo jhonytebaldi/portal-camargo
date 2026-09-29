@@ -1,7 +1,9 @@
 <?php
 /* =====================================================================
    listas-3c/schema.php: tabelas da ferramenta "Listas 3C".
-   Chamado por admin/migrar.php (idempotente), como os outros módulos.
+   Idempotente. Roda sozinho (l3c_instalar_se_preciso) na primeira visita
+   de um admin à home do portal ou ao módulo: o Jhony não precisa abrir
+   admin/migrar.php (que continua chamando l3c_migrar, como os outros).
 
    A lista é montada em LOTES (a Hostinger corta a requisição web em ~60 s
    e uma lista antiga pode pedir dezenas de páginas ao Robust). Então tudo
@@ -10,6 +12,38 @@
    Qualquer requisição curta ou o cron continua de onde a anterior parou.
    ===================================================================== */
 declare(strict_types=1);
+
+/* Sobe quando l3c_migrar ganhar coisa nova: a sessão de cada admin roda a
+   migração de novo uma vez e grava esta versão. */
+const L3C_SCHEMA_VERSAO = 1;
+
+/**
+ * Instala o módulo sem ninguém abrir admin/migrar.php.
+ * Só para ADMIN (criar tabela e registrar ferramenta é decisão de quem
+ * administra o portal; um corretor nunca dispara DDL). Depois da primeira
+ * vez na sessão, custa zero consultas: a versão fica guardada na sessão.
+ * No cron (CLI) não há sessão nem usuário, então roda direto: são duas
+ * consultas ao information_schema a cada 5 min, desprezível.
+ * Devolve true se criou alguma coisa agora (a home recarrega os botões).
+ */
+function l3c_instalar_se_preciso(): bool
+{
+    if (PHP_SAPI !== 'cli') {
+        if (!is_admin()) return false;
+        if (($_SESSION['l3c_schema'] ?? 0) === L3C_SCHEMA_VERSAO) return false;
+    }
+    try {
+        $feitos = l3c_migrar(db());
+    } catch (Throwable $e) {
+        // Sem permissão de DDL ou banco fora: não derruba a home do portal.
+        // O módulo mostra o erro quando for aberto; admin/migrar.php segue
+        // como caminho manual.
+        error_log('listas-3c: instalação automática falhou: ' . $e->getMessage());
+        return false;
+    }
+    if (PHP_SAPI !== 'cli') $_SESSION['l3c_schema'] = L3C_SCHEMA_VERSAO;
+    return (bool)$feitos;
+}
 
 function l3c_migrar(PDO $pdo): array
 {

@@ -4,27 +4,33 @@ Monta a lista de ligação a partir do Robust, trata os contatos, mostra a prév
 para aprovar e sobe numa campanha do 3C. Pedido do Jhony na reunião de 24/09:
 tirar do trabalho manual de exportar do Robust, tratar na IA e subir no 3C.
 
-## Instalação
+## Instalação (nenhum passo técnico)
 
-1. `admin/migrar.php` cria as tabelas `l3c_*` e registra a ferramenta
-   `listas-3c` (o botão aparece na home para admin; libere para o Guilherme em
-   Admin → Usuários).
-2. No `~/portal-config/config.php` (fora da web e do Git), acrescente:
-
-   ```php
-   define('ROBUST_NICKNAME', 'imobcamargo');
-   define('ROBUST_API_KEY',  '...');            // a mesma chave da Busca
-   define('TRESC_BASE_URL',  'https://camargogestao.3c.plus/api/v1');
-   define('TRESC_API_TOKEN', '...');            // token de serviço do 3C
-   // Opcional: trava de campanhas. Com ela, só estas aparecem e só nelas
-   // o módulo sobe lista. Sem ela, todas as campanhas do 3C aparecem.
-   // define('L3C_CAMPANHAS_PERMITIDAS', [316173]);
-   ```
-
-3. Cron do hPanel (Avançado → Cron Jobs), a cada 5 minutos:
-   `php /home/USUARIO/public_html/dados/listas-3c/bin/processar.php`
+1. **Publicar**: o merge no `main` basta. A Hostinger publica o `main` sozinha
+   (todo arquivo servido em portal.imobcamargo.com.br tem a data de
+   modificação segundos depois do último commit).
+2. **Tabelas**: nada a fazer. Na primeira vez que um admin abre a home do
+   portal (ou `/listas-3c/`), `schema.php` cria as tabelas `l3c_*` e registra
+   a ferramenta; o botão "Listas 3C" já aparece nessa mesma visita. É
+   idempotente e, depois da primeira vez na sessão, não consulta nada.
+   `admin/migrar.php` continua funcionando, para quem preferir.
+3. **Chaves**: Listas 3C → **Configurar integrações** (só admin).
+   - Robust: se a Busca de Imóveis já sincroniza, a tela mostra
+     "Funcionando · a mesma da Busca" e não há o que fazer.
+   - 3C: colar o token e clicar em **Testar e salvar**. A tela testa contra a
+     API e só grava se funcionar. Ali também se marcam as campanhas liberadas.
+   - As chaves ficam no MySQL cifradas (AES-256-GCM, chave derivada da senha
+     do banco do `config.php`; riscos e escolha em `lib/Integracoes.php`).
+   - O `config.php` continua valendo como alternativa (`ROBUST_NICKNAME`,
+     `ROBUST_API_KEY`, `TRESC_BASE_URL`, `TRESC_API_TOKEN`,
+     `L3C_CAMPANHAS_PERMITIDAS`). Ordem: tela, depois config.php, depois a
+     chave da Busca (só Robust).
+4. **Cron (opcional)**: hPanel → Avançado → Cron Jobs, a cada 5 minutos:
+   `php /home/USUARIO/domains/portal.imobcamargo.com.br/public_html/listas-3c/bin/processar.php`
    A tela monta a lista sozinha enquanto está aberta; o cron só garante que a
    lista continua se a aba for fechada no meio.
+5. Liberar para o Guilherme: Admin → Usuários, marcar "Listas 3C". Quem não é
+   admin usa o módulo, mas não vê nem abre a tela de integrações.
 
 ## Os 4 modelos
 

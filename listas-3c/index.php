@@ -68,9 +68,25 @@ portal_header('Listas 3C', $u);
 
 <div class="l3-top">
   <h1 class="home-titulo">Listas 3C</h1>
-  <a href="modelos.php" style="color:var(--moss);font-weight:600;text-decoration:none">Editar modelos</a>
+  <span style="display:flex;gap:18px">
+    <a href="modelos.php" style="color:var(--moss);font-weight:600;text-decoration:none">Editar modelos</a>
+    <?php if (is_admin($u)): /* chave de API é assunto de admin; o link some para quem só usa */ ?>
+      <a href="integracoes.php" style="color:var(--moss);font-weight:600;text-decoration:none">Configurar integrações</a>
+    <?php endif; ?>
+  </span>
 </div>
 <p class="home-sub">Monta a lista a partir do Robust, trata os contatos, você aprova e ela sobe na campanha do 3C.</p>
+
+<?php
+// Aviso logo na entrada quando falta chave: sem isso a pessoa só descobre
+// depois de montar a lista inteira (Robust) ou na hora de aprovar (3C).
+$falta = [];
+if (!L3cIntegracoes::valor('robust_api_key')['valor']) $falta[] = 'Robust';
+if (!L3cIntegracoes::valor('tresc_api_token')['valor']) $falta[] = '3C';
+if ($falta): ?>
+  <div class="aviso">Falta cadastrar a chave do <?= h(implode(' e do ', $falta)) ?>.
+    <?= is_admin($u) ? '<a href="integracoes.php">Configurar integrações</a>' : 'Peça a um administrador do portal.' ?></div>
+<?php endif; ?>
 
 <?php if (!$id): ?>
   <div class="l3-card">

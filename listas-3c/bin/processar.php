@@ -9,7 +9,8 @@
    tela trabalhem na mesma lista ao mesmo tempo.
 
    hPanel → Avançado → Cron Jobs, a cada 5 minutos:
-     php /home/USUARIO/public_html/dados/listas-3c/bin/processar.php
+     php /home/USUARIO/domains/portal.imobcamargo.com.br/public_html/listas-3c/bin/processar.php
+   É OPCIONAL: sem ele a lista só anda com a tela aberta.
    ===================================================================== */
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(403); exit('Só pelo cron.'); }

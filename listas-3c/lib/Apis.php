@@ -2,11 +2,11 @@
 /* =====================================================================
    listas-3c/lib/Apis.php: clientes HTTP do Robust (leitura) e do 3C.
 
-   Credenciais vêm do config.php FORA da web (mesmo lugar do DB_* e do
-   GHL_TOKEN): ROBUST_NICKNAME, ROBUST_API_KEY, TRESC_BASE_URL,
-   TRESC_API_TOKEN. Ver listas-3c/LEIA.md.
+   Credenciais: ver lib/Integracoes.php (tela "Configurar integrações",
+   depois config.php, depois a chave que a Busca já usa, no caso do Robust).
    ===================================================================== */
 declare(strict_types=1);
+require_once __DIR__ . '/Integracoes.php';
 
 final class L3cRobust
 {
@@ -17,11 +17,14 @@ final class L3cRobust
 
     public static function doConfig(): self
     {
-        portal_load_config();
-        if (!defined('ROBUST_NICKNAME') || !defined('ROBUST_API_KEY') || ROBUST_API_KEY === '') {
-            throw new RuntimeException('ROBUST_NICKNAME / ROBUST_API_KEY não configurados no config.php do portal.');
+        // A mensagem fala com quem está na tela (não com quem mexe no
+        // servidor): o caminho de conserto agora é a tela de integrações.
+        $nick = L3cIntegracoes::valor('robust_nickname');
+        $chave = L3cIntegracoes::valor('robust_api_key');
+        if (!$chave['valor'] || !$nick['valor']) {
+            throw new RuntimeException($chave['problema'] ?? 'A chave do Robust ainda não foi cadastrada. Um admin abre Listas 3C → Configurar integrações.');
         }
-        return new self((string)ROBUST_NICKNAME, (string)ROBUST_API_KEY);
+        return new self((string)$nick['valor'], (string)$chave['valor']);
     }
 
     /**
@@ -77,41 +80,50 @@ final class L3cTresC
 
     public static function doConfig(): self
     {
-        portal_load_config();
-        if (!defined('TRESC_API_TOKEN') || TRESC_API_TOKEN === '') {
-            throw new RuntimeException('TRESC_API_TOKEN não configurado no config.php do portal.');
+        $tok = L3cIntegracoes::valor('tresc_api_token');
+        if (!$tok['valor']) {
+            throw new RuntimeException($tok['problema'] ?? 'O token do 3C ainda não foi cadastrado. Um admin abre Listas 3C → Configurar integrações.');
         }
-        $base = defined('TRESC_BASE_URL') ? (string)TRESC_BASE_URL : 'https://camargogestao.3c.plus/api/v1';
-        return new self(rtrim($base, '/'), (string)TRESC_API_TOKEN);
+        $base = (string)L3cIntegracoes::valor('tresc_base_url')['valor'];
+        return new self(rtrim($base, '/'), (string)$tok['valor']);
     }
 
     /**
-     * Campanhas que este portal pode usar. Se o config.php definir
-     * L3C_CAMPANHAS_PERMITIDAS (array de ids), só elas: é a trava que
-     * deixa testar na campanha de teste sem risco de cair numa real.
+     * Campanhas que este portal pode usar. Se a tela de integrações (ou o
+     * config.php, L3C_CAMPANHAS_PERMITIDAS) tiver uma lista de ids, só elas:
+     * é a trava que deixa testar na campanha de teste sem risco de cair
+     * numa real. Vazio = todas as campanhas do 3C.
      */
     public static function permitidas(): ?array
     {
-        portal_load_config();
-        return defined('L3C_CAMPANHAS_PERMITIDAS') ? array_map('intval', (array)L3C_CAMPANHAS_PERMITIDAS) : null;
+        $v = L3cIntegracoes::valor('campanhas_permitidas')['valor'];
+        return $v ? array_values(array_map('intval', (array)$v)) : null;
     }
 
     public static function exigePermitida(int $campanhaId): void
     {
         $p = self::permitidas();
         if ($p !== null && !in_array($campanhaId, $p, true)) {
-            throw new RuntimeException("Campanha $campanhaId não está em L3C_CAMPANHAS_PERMITIDAS.");
+            throw new RuntimeException("Campanha $campanhaId não está entre as campanhas permitidas (Configurar integrações).");
         }
     }
 
     /** [id => nome] das campanhas do 3C (filtradas pela trava, se houver). */
     public function campanhas(): array
     {
+        $out = $this->todasCampanhas();
+        $p = self::permitidas();
+        if ($p !== null) $out = array_intersect_key($out, array_flip($p));
+        return $out;
+    }
+
+    /** Todas as campanhas do 3C, sem a trava: a tela de integrações mostra
+     *  a lista inteira para o admin escolher quais liberar. */
+    public function todasCampanhas(): array
+    {
         $j = $this->req('GET', '/campaigns', ['per_page' => 100]);
         $out = [];
         foreach (($j['data'] ?? []) as $c) $out[(int)$c['id']] = (string)$c['name'];
-        $p = self::permitidas();
-        if ($p !== null) $out = array_intersect_key($out, array_flip($p));
         return $out;
     }
 
