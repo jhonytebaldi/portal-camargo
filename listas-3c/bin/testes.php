@@ -52,7 +52,7 @@ igual($T::origemDeCorretor('Telefone da Imobiliária', L3cModelos::ORIGENS_CORRE
 // Resumo curto, datas no fuso do Robust e teto de tamanho.
 $r = $T::resumo(['stage' => 1, 'criado_em' => '2026-09-11T23:30:00-03:00', 'encerrado_em' => '2026-09-20T10:00:00-03:00',
                  'motivo' => 'Sem retorno após todas as tentativas', 'atendente' => 'Fulano', 'obs' => "cliente\nquer 2 quartos"]);
-igual($r, 'Etapa Atendimento; entrou 11/09/26; encerrado 20/09/26 (Sem retorno após todas as tentativas); corretor Fulano. Obs: cliente quer 2 quartos', 'resumo');
+igual($r, 'Etapa Atendimento; entrou 11/09/26; encerrado 20/09/26 (Sem retorno após todas as tentativas); corretor Fulano. Obs. do atendimento no Robust: cliente quer 2 quartos', 'resumo');
 igual(mb_strlen($T::resumo(['stage' => 0, 'obs' => str_repeat('x', 900)])), 280, 'resumo cortado em 280');
 igual($T::canal('site'), 'Site', 'canal com caixa');
 igual($T::canal('0 - Não selecionou origem'), 'Sem origem', 'canal vazio');
@@ -60,6 +60,20 @@ igual($T::canal('0 - Não selecionou origem'), 'Sem origem', 'canal vazio');
 // Máscara de demonstração não deixa passar dígito do assinante.
 igual($T::mascarar('47988887777', 'telefone'), '(47) •••••-••••', 'máscara de telefone');
 igual(str_contains($T::mascarar('Maria Silva', 'nome'), 'aria'), false, 'máscara de nome');
+// A observação some no modo demonstração, mas com uma frase que se explica.
+$mr = $T::mascararResumo($r);
+igual(str_contains($mr, '2 quartos'), false, 'máscara tira a observação');
+igual(str_contains($mr, 'escondida no modo demonstração'), true, 'máscara diz o que escondeu');
+igual($T::mascararResumo('Etapa Lead; entrou 11/09/26'), 'Etapa Lead; entrou 11/09/26', 'resumo sem observação fica igual');
+
+// Nome da lista no padrão da Campanha Padrão do 3C.
+igual($T::nomePadrao($pad['encerrados_recentes'], '2026-09-15', '2026-09-25'), '[15-09 a 25-09] L.A.A ENCERRADOS MOTIVOS PORTAL', 'nome: encerrados recentes');
+igual($T::nomePadrao($pad['encerrados_antigos'], '2026-03-01', '2026-03-31'), '[01-03 a 31-03] L.A.A.V ENCERRADOS MOTIVOS PORTAL', 'nome: encerrados antigos com visita');
+igual($T::nomePadrao($pad['primeiras_etapas'], '2026-09-10', '2026-09-18'), '[10-09 a 18-09] L.A.A ATIVOS PORTAL', 'nome: primeiras etapas');
+igual($T::nomePadrao($pad['agendamento_vencido'], '2026-09-01', '2026-09-04'), '[01-09 a 04-09] AGENDAMENTO VENCIDO PORTAL', 'nome: agendamento vencido');
+
+// Telefone no formato que o filtro de ligações do 3C casa (55 + DDD + número).
+igual($T::telefone3c('47988887777'), '5547988887777', 'telefone com 55 para o 3C');
 
 // Modelos: proposta e negociado nunca entram, mesmo editados.
 $ed = L3cModelos::todos(['primeiras_etapas' => ['etapas' => [0, 1, 4, 5]]]);

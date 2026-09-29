@@ -356,6 +356,22 @@ final class L3cMontador
         $id = (int)$l['id'];
         $campanha = (int)$l['campanha_id'];
         L3cTresC::exigePermitida($campanha);
+        // Antes de criar a lista no 3C: tira quem já está na campanha de
+        // destino. Pedido do Jhony (29/09): na Campanha Padrão as listas são
+        // feitas à mão e é lá que dá para conferir duplicata. Só roda uma vez
+        // por lista (dup_ok no cursor) e nunca depois que a lista do 3C existe.
+        if (!$l['tresc_lista_id']) {
+            $cur = json_decode((string)$l['cursor_json'], true) ?: [];
+            if (empty($cur['dup_ok']) && !$this->conferirDuplicatas($l, $cur, $orcamento)) return;
+            $dups = $this->contarDuplicatas($id);
+            $sobra = (int)$this->pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND descarte IS NULL")->fetchColumn();
+            if ($sobra === 0) {
+                // Lista vazia no 3C só confunde quem opera a campanha: não cria.
+                $this->pdo->prepare("UPDATE l3c_listas SET status='enviada', progresso=100, progresso_txt=? WHERE id=?")
+                    ->execute(["Nenhum contato novo: todos já estavam na campanha ($dups repetidos). Nenhuma lista foi criada no 3C.", $id]);
+                return;
+            }
+        }
         if (!$l['tresc_lista_id']) {
             // Grava o id da lista NA HORA: o 3C não deduplica por nome, então
             // criar de novo depois de uma queda faria uma segunda lista.
@@ -395,10 +411,83 @@ final class L3cMontador
         if ($falta === 0) {
             $incertos = (int)$this->pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND enviado=2")->fetchColumn();
             $l2 = $this->lista($id);
+            $dups = $this->contarDuplicatas($id);
             $txt = 'No 3C: ' . $l2['importados'] . ' de ' . $l2['enviados'] . ' importados na lista ' . $l2['tresc_lista_id']
+                 . ($dups ? "; $dups já estavam na campanha e não subiram de novo" : '')
                  . ($incertos ? " ($incertos em voo quando a conexão caiu: confira no 3C)" : '');
             $this->pdo->prepare("UPDATE l3c_listas SET status='enviada', progresso=100, progresso_txt=? WHERE id=?")->execute([$txt, $id]);
         }
+    }
+
+    // ---- duplicatas na campanha de destino -----------------------------
+    public const DESCARTE_DUP_PORTAL = 'já subiu por este portal nesta campanha';
+    public const DESCARTE_DUP_3C     = 'já recebeu ligação nesta campanha (últimos 60 dias)';
+    private const DUP_POR_CONSULTA = 25;
+    // O 3C aceita no máximo 31 dias por consulta de ligações; duas janelas
+    // de 30 dias cobrem os últimos 60 (as listas à mão da Campanha Padrão
+    // mais antigas são de 25/09/2026, medido em 29/09).
+    private const DUP_JANELAS = [[60, 31], [30, 0]];
+
+    /**
+     * Duas fontes, porque nenhuma sozinha enxerga tudo:
+     *  1. o histórico do portal: telefone que este portal já subiu na mesma
+     *     campanha (pega também quem ainda não foi discado);
+     *  2. o 3C: telefone que já recebeu ligação nessa campanha (pega as
+     *     listas feitas à mão). Ver L3cTresC::numerosJaLigados.
+     * Quem ficou numa lista à mão e ainda não foi discado não aparece em
+     * nenhuma das duas: a API do 3C não mostra o conteúdo de lista.
+     * Trabalha por lotes e grava onde parou, como o montador.
+     */
+    private function conferirDuplicatas(array $l, array $cur, float $orcamento): bool
+    {
+        $id = (int)$l['id'];
+        $campanha = (int)$l['campanha_id'];
+        if (empty($cur['dup_hist'])) {
+            $this->pdo->prepare("UPDATE l3c_itens i JOIN (
+                    SELECT DISTINCT x.telefone FROM l3c_itens x JOIN l3c_listas y ON y.id = x.lista_id
+                    WHERE y.campanha_id = ? AND y.id <> ? AND x.enviado IN (1,2) AND x.telefone <> '') h ON h.telefone = i.telefone
+                SET i.descarte = ? WHERE i.lista_id = ? AND i.descarte IS NULL AND i.enviado = 0")
+                ->execute([$campanha, $id, self::DESCARTE_DUP_PORTAL, $id]);
+            $cur['dup_hist'] = 1;
+            $cur['dup'] = 0;
+            $cur['dup_n'] = 0;
+            // Guardado uma vez: o total muda à medida que as duplicatas saem.
+            $cur['dup_total'] = (int)$this->pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND descarte IS NULL AND enviado=0")->fetchColumn();
+        }
+        $total = (int)($cur['dup_total'] ?? 0);
+        $upd = $this->pdo->prepare('UPDATE l3c_itens SET descarte=? WHERE lista_id=? AND telefone=? AND descarte IS NULL AND enviado=0');
+        while (!$this->estourou($orcamento)) {
+            $st = $this->pdo->prepare('SELECT atendimento_id, telefone FROM l3c_itens WHERE lista_id=? AND descarte IS NULL AND enviado=0 AND atendimento_id > ?
+                                       ORDER BY atendimento_id LIMIT ' . self::DUP_POR_CONSULTA);
+            $st->execute([$id, (int)($cur['dup'] ?? 0)]);
+            $lote = $st->fetchAll();
+            if (!$lote) { $cur['dup_ok'] = 1; break; }
+            $porNumero = [];
+            foreach ($lote as $r) $porNumero[L3cTratamento::telefone3c((string)$r['telefone'])] = (string)$r['telefone'];
+            $achados = [];
+            foreach (self::DUP_JANELAS as [$desde, $ate]) {
+                $faltam = array_diff(array_keys($porNumero), $achados);
+                if (!$faltam) break;
+                $achados = array_merge($achados, $this->tresc->numerosJaLigados($campanha,
+                    array_values($faltam), date('Y-m-d', strtotime("-$desde days")), date('Y-m-d', strtotime("-$ate days"))));
+            }
+            foreach (array_unique($achados) as $n) if (isset($porNumero[$n])) $upd->execute([self::DESCARTE_DUP_3C, $id, $porNumero[$n]]);
+            $cur['dup'] = (int)end($lote)['atendimento_id'];
+            $cur['dup_n'] = (int)($cur['dup_n'] ?? 0) + count($lote);
+            $feitos = $cur['dup_n'];
+            $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=?, progresso=?, progresso_txt=? WHERE id=?')
+                ->execute([json_encode($cur), min(99, 100 * $feitos / max(1, $total)),
+                           'Conferindo quem já está na campanha ' . ($l['campanha_nome'] ?? $campanha) . ": $feitos de $total", $id]);
+        }
+        $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=? WHERE id=?')->execute([json_encode($cur), $id]);
+        return !empty($cur['dup_ok']);
+    }
+
+    private function contarDuplicatas(int $id): int
+    {
+        $st = $this->pdo->prepare('SELECT COUNT(*) FROM l3c_itens WHERE lista_id=? AND descarte IN (?,?)');
+        $st->execute([$id, self::DESCARTE_DUP_PORTAL, self::DESCARTE_DUP_3C]);
+        return (int)$st->fetchColumn();
     }
 
     private function lista(int $id): array

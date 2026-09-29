@@ -94,13 +94,13 @@ if ($falta): ?>
       <label>Modelo
         <select name="modelo" id="l3-modelo">
           <?php foreach ($modelos as $slug => $m): ?>
-            <option value="<?= h($slug) ?>" data-desc="<?= h($m['descricao']) ?>"><?= h($m['nome']) ?></option>
+            <option value="<?= h($slug) ?>" data-desc="<?= h($m['descricao']) ?>" data-sufixo="<?= h(L3cTratamento::sufixoNome($m)) ?>"><?= h($m['nome']) ?></option>
           <?php endforeach; ?>
         </select>
       </label>
       <label><span id="l3-rot-de">Cadastro de</span><input type="date" name="de" value="<?= h(date('Y-m-d', strtotime('-14 days'))) ?>" required></label>
       <label>até<input type="date" name="ate" value="<?= h(date('Y-m-d', strtotime('-1 day'))) ?>" required></label>
-      <label>Nome da lista (opcional)<input type="text" name="nome" maxlength="160" placeholder="gerado pelo modelo e período"></label>
+      <label>Nome da lista (opcional)<input type="text" name="nome" id="l3-nome" maxlength="160" placeholder="no padrão do 3C"></label>
       <button class="l3-btn" type="submit">Montar lista</button>
     </form>
     <p class="l3-desc" id="l3-modelo-desc"></p>
@@ -167,11 +167,22 @@ if ($falta): ?>
     <?php else: ?>
     <form class="l3-form" id="l3-aprovar">
       <label>Campanha
-        <select name="campanha"><?php foreach ($campanhas as $cid => $cn): ?><option value="<?= (int)$cid ?>"><?= h($cn) ?> (<?= (int)$cid ?>)</option><?php endforeach; ?></select>
+        <?php
+        // A Campanha Padrão vem marcada: é onde o time sobe as listas feitas
+        // à mão e onde o Jhony quer a conferência de duplicata (29/09). A
+        // Clicou Ligou fica de fora da escolha automática de propósito.
+        $padrao = null;
+        foreach ($campanhas as $cid => $cn) if (L3cTratamento::semAcento(mb_strtolower(trim($cn), 'UTF-8')) === 'campanha padrao') $padrao = $cid;
+        ?>
+        <select name="campanha"><?php foreach ($campanhas as $cid => $cn): ?><option value="<?= (int)$cid ?>"<?= $cid === $padrao ? ' selected' : '' ?>><?= h($cn) ?> (<?= (int)$cid ?>)</option><?php endforeach; ?></select>
       </label>
-      <button class="l3-btn" type="submit">Aprovar <?= count($itens) ?> contatos e subir</button>
+      <button class="l3-btn" type="submit">Aprovar e subir</button>
     </form>
-    <p class="l3-desc">Cria uma lista nova com o nome acima dentro da campanha escolhida. As tentativas por status e a reciclagem ficam na configuração da campanha no 3C.</p>
+    <p class="l3-desc">Nada sobe sem este clique. Ao aprovar, o portal primeiro tira quem já está na campanha escolhida
+      (quem este portal já subiu nela e quem já recebeu ligação nela nos últimos 60 dias) e só então cria a lista
+      "<?= h($lista['nome']) ?>" dentro dela. O número final aparece em "Quem ficou de fora e por quê".
+      Limite: contato de lista feita à mão que ainda não foi discado não dá para ver pela API do 3C.
+      As tentativas por status e a reciclagem continuam na configuração da campanha no 3C.</p>
     <?php endif; ?>
   </div>
   <?php endif; ?>
@@ -180,7 +191,7 @@ if ($falta): ?>
   <div class="l3-card">
     <div class="l3-top">
       <h2 style="font-size:16px;margin:0">Prévia tratada<?= count($itens) >= 300 ? ' (primeiros 300)' : '' ?></h2>
-      <a href="?id=<?= (int)$lista['id'] ?><?= $mascara ? '' : '&mascara=1' ?>" style="color:var(--moss);font-size:13px"><?= $mascara ? 'Mostrar dados' : 'Ocultar dados pessoais' ?></a>
+      <a href="?id=<?= (int)$lista['id'] ?><?= $mascara ? '' : '&mascara=1' ?>" style="color:var(--moss);font-size:13px"><?= $mascara ? 'Sair do modo demonstração' : 'Modo demonstração (para gravar ou mostrar em reunião)' ?></a>
     </div>
     <div class="l3-tbl-wrap"><table class="l3-tbl">
       <tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Canal</th><th>Resumo do atendimento</th></tr>
@@ -190,7 +201,7 @@ if ($falta): ?>
           <td><?= h($mk($it['email'], 'email')) ?></td>
           <td style="white-space:nowrap"><?= h($mascara ? L3cTratamento::mascarar($it['telefone'], 'telefone') : '(' . substr($it['telefone'], 0, 2) . ') ' . substr($it['telefone'], 2)) ?></td>
           <td><?= h($it['canal']) ?></td>
-          <td class="l3-res"><?= h($mascara ? preg_replace('/Obs: .*/u', 'Obs: •••', $it['resumo']) : $it['resumo']) ?></td>
+          <td class="l3-res"><?= h($mascara ? L3cTratamento::mascararResumo($it['resumo']) : $it['resumo']) ?></td>
         </tr>
       <?php endforeach; ?>
     </table></div>
@@ -211,8 +222,14 @@ if (sel) {
     const o = sel.selectedOptions[0];
     document.getElementById('l3-modelo-desc').textContent = o.dataset.desc;
     document.getElementById('l3-rot-de').textContent = sel.value === 'agendamento_vencido' ? 'Agendamento de' : 'Cadastro de';
+    // Mostra o nome que a lista vai ganhar no 3C se o campo ficar vazio
+    // (mesma regra de L3cTratamento::nomePadrao).
+    const f = document.getElementById('l3-nova');
+    const dm = v => v ? v.slice(8, 10) + '-' + v.slice(5, 7) : '';
+    document.getElementById('l3-nome').placeholder = '[' + dm(f.de.value) + ' a ' + dm(f.ate.value) + '] ' + o.dataset.sufixo;
   };
   sel.addEventListener('change', desc); desc();
+  document.querySelectorAll('#l3-nova input[type=date]').forEach(i => i.addEventListener('change', desc));
   document.getElementById('l3-nova').addEventListener('submit', async ev => {
     ev.preventDefault();
     const f = new FormData(ev.target); ev.submitter.disabled = true;

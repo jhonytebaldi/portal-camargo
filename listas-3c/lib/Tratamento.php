@@ -22,6 +22,36 @@ final class L3cTratamento
     /** Etapas do Robust (jornada 1), como aparecem na tela dele. */
     public const ETAPAS = [0 => 'Lead', 1 => 'Atendimento', 2 => 'Agendamento', 3 => 'Visita', 4 => 'Proposta', 5 => 'Negociado'];
 
+    /** Como a observação do atendimento aparece no resumo (e o que a máscara procura). */
+    public const ROTULO_OBS = 'Obs. do atendimento no Robust:';
+
+    /**
+     * Nome da lista no padrão que o time já usa à mão na Campanha Padrão do
+     * 3C (lido em 29/09/2026 por GET nas 15 listas dela): período entre
+     * colchetes, as iniciais das etapas (L.A.A = Lead, Atendimento,
+     * Agendamento) e o tipo, em caixa alta. Ex.: "[15-09 a 25-09] L.A.A
+     * ENCERRADOS MOTIVOS". O Jhony pediu isso "pra gente não confundir".
+     * O sufixo " PORTAL" separa, na mesma campanha, a lista que o portal
+     * montou da que foi montada à mão (as duas convivem na Campanha Padrão).
+     */
+    public static function nomePadrao(array $modelo, string $de, string $ate): string
+    {
+        return '[' . date('d-m', strtotime($de)) . ' a ' . date('d-m', strtotime($ate)) . '] ' . self::sufixoNome($modelo);
+    }
+
+    /** A parte do nome que não depende do período (a tela usa para o exemplo). */
+    public static function sufixoNome(array $modelo): string
+    {
+        $tipo = (string)($modelo['tipo'] ?? '');
+        if ($tipo === 'agendamento_vencido') return 'AGENDAMENTO VENCIDO PORTAL';
+        $sigla = ['L', 'A', 'A', 'V'];
+        $etapas = array_values(array_unique(array_map('intval', (array)($modelo['etapas'] ?? []))));
+        sort($etapas);
+        $ini = implode('.', array_map(fn($e) => $sigla[$e] ?? (string)$e, $etapas));
+        $resto = $tipo === 'encerrados' ? 'ENCERRADOS MOTIVOS' : 'ATIVOS';
+        return trim($ini . ' ' . $resto) . ' PORTAL';
+    }
+
     /**
      * Chave de comparação de um motivo de encerramento.
      * O Robust grava o motivo como texto livre dentro do andamento
@@ -73,6 +103,12 @@ final class L3cTratamento
         $assinante = substr($d, 2);
         if (strlen($assinante) === 9) return preg_match('/^9\d{8}$/', $assinante) ? $d : null;
         return preg_match('/^[2-5]\d{7}$/', $assinante) ? $d : null;
+    }
+
+    /** O 3C guarda o número da ligação como 55 + DDD + número (medido em /calls). */
+    public static function telefone3c(string $nacional): string
+    {
+        return '55' . $nacional;
     }
 
     /**
@@ -156,7 +192,10 @@ final class L3cTratamento
         if (!empty($it['atendente']))    $p[] = 'corretor ' . $it['atendente'];
         $txt = implode('; ', $p);
         $obs = trim(preg_replace('/\s+/u', ' ', (string)($it['obs'] ?? '')) ?? '');
-        if ($obs !== '') $txt .= '. Obs: ' . $obs;
+        // Rótulo por extenso: o Jhony viu "Obs: ***" no vídeo e não soube de
+        // onde vinha. É o campo de observação do atendimento no Robust
+        // (texto livre do corretor), e o SDR precisa reconhecer isso no 3C.
+        if ($obs !== '') $txt .= '. ' . self::ROTULO_OBS . ' ' . $obs;
         if (mb_strlen($txt, 'UTF-8') > $max) $txt = rtrim(mb_substr($txt, 0, $max - 1, 'UTF-8')) . '…';
         return $txt;
     }
@@ -179,6 +218,18 @@ final class L3cTratamento
         $out = [];
         foreach (explode(' ', $s) as $p) $out[] = mb_substr($p, 0, 1, 'UTF-8') . str_repeat('•', max(2, min(6, mb_strlen($p, 'UTF-8') - 1)));
         return implode(' ', $out);
+    }
+
+    /**
+     * Resumo no modo demonstração. A observação é texto livre do corretor e
+     * às vezes traz nome ou telefone, por isso some; mas no lugar vai uma
+     * frase que se explica, não "•••" (que ninguém entendeu no vídeo).
+     */
+    public static function mascararResumo(string $resumo): string
+    {
+        $p = mb_strpos($resumo, self::ROTULO_OBS, 0, 'UTF-8');
+        if ($p === false) return $resumo;
+        return mb_substr($resumo, 0, $p, 'UTF-8') . self::ROTULO_OBS . ' (escondida no modo demonstração; na lista real ela vai inteira)';
     }
 
     public static function semAcento(string $s): string

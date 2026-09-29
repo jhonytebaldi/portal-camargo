@@ -155,10 +155,56 @@ final class L3cTresC
         return (int)($j['imported_lines'] ?? 0);
     }
 
+    /**
+     * Dos telefones pedidos (formato 55DDDNUMERO), quais já receberam ligação
+     * nesta campanha entre $de e $ate (no máximo 31 dias: o 3C recusa janela
+     * maior com 422). Só leitura (GET /calls).
+     *
+     * Por que ligações e não o conteúdo das listas: a API do 3C não tem rota
+     * que devolva os contatos de uma lista (GET em .../lists/{l}/mailing dá
+     * 405, medido em 29/09/2026). O que ela devolve é o histórico de
+     * ligações filtrado por número e campanha. Então quem está numa lista da
+     * campanha mas ainda não foi discado NÃO aparece aqui; esse buraco é
+     * coberto pelo histórico do próprio portal (Montador::conferirDuplicatas).
+     *
+     * Cuidado que custou um teste: os filtros têm de ir como numbers[]= sem
+     * índice. Com numbers[0]= (o que o http_build_query do PHP gera) o 3C
+     * IGNORA o filtro e devolve ligações de qualquer número, o que marcaria
+     * a lista inteira como duplicada. Por isso a query é montada à mão e,
+     * por garantia, só conta número que foi pedido.
+     */
+    public function numerosJaLigados(int $campanhaId, array $telefones, string $de, string $ate): array
+    {
+        $pedidos = array_fill_keys(array_map('strval', $telefones), true);
+        if (!$pedidos) return [];
+        $achados = [];
+        for ($pagina = 1; $pagina <= 20; $pagina++) {
+            $qs = 'campaigns%5B%5D=' . $campanhaId
+                . '&start_date=' . rawurlencode($de . ' 00:00:00') . '&end_date=' . rawurlencode($ate . ' 23:59:59')
+                . '&per_page=100&simple_paginate=true&page=' . $pagina;
+            foreach (array_keys($pedidos) as $t) $qs .= '&numbers%5B%5D=' . rawurlencode((string)$t);
+            $j = $this->reqQs('GET', '/calls', $qs);
+            $dados = (array)($j['data'] ?? []);
+            foreach ($dados as $c) {
+                $n = (string)($c['number'] ?? '');
+                if (isset($pedidos[$n]) && (int)($c['campaign_id'] ?? $campanhaId) === $campanhaId) $achados[$n] = true;
+            }
+            // Um número pode ter 20+ ligações (rediscagem); página cheia = pode haver mais.
+            if (count($dados) < 100 || count($achados) === count($pedidos)) break;
+        }
+        // Chave numérica vira int no PHP: devolve texto, como foi pedido.
+        return array_map('strval', array_keys($achados));
+    }
+
     private function req(string $metodo, string $caminho, array $q = [], ?array $corpo = null, bool $json = false): array
     {
-        $q['api_token'] = $this->token;
-        $ch = curl_init($this->base . $caminho . '?' . http_build_query($q));
+        return $this->reqQs($metodo, $caminho, http_build_query($q), $corpo, $json);
+    }
+
+    private function reqQs(string $metodo, string $caminho, string $qs, ?array $corpo = null, bool $json = false): array
+    {
+        $qs = ($qs !== '' ? $qs . '&' : '') . 'api_token=' . rawurlencode($this->token);
+        $ch = curl_init($this->base . $caminho . '?' . $qs);
         $h = ['Accept: application/json'];
         $opts = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 40, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_CUSTOMREQUEST => $metodo];
         if ($corpo !== null) {

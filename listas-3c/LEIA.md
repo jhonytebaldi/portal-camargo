@@ -80,6 +80,26 @@ entre chamadas e trata 429 esperando o Retry-After.
 
 ## Subida no 3C
 
+**Nada sobe sozinho.** Montar a lista só lê o Robust e para em "Pronta para
+aprovar". Ela só vai para o 3C quando alguém escolhe a campanha e clica em
+**Aprovar e subir**. A Campanha Padrão vem marcada por padrão (é onde o time
+sobe as listas feitas à mão).
+
+**Nome:** se o campo ficar vazio, a lista ganha o padrão das listas feitas à mão
+na Campanha Padrão (lido por GET em 29/09/2026): `[15-09 a 25-09] L.A.A
+ENCERRADOS MOTIVOS PORTAL`. Período, iniciais das etapas (Lead, Atendimento,
+Agendamento, Visita), tipo e `PORTAL` no fim para separar da lista feita à mão.
+
+**Duplicatas:** antes de criar a lista, o portal tira quem já está na campanha
+escolhida, por duas fontes: (1) telefone que este portal já subiu nela;
+(2) telefone que já recebeu ligação nela nos últimos 60 dias
+(`GET /calls?campaigns[]=&numbers[]=`, em janelas de 30 dias, porque o 3C
+recusa mais de 31). A API do 3C não tem rota que devolva o conteúdo de uma
+lista (`GET .../lists/{l}/mailing` dá 405), então contato de lista feita à mão
+que ainda não foi discado não é visto. Atenção: `numbers[0]=` (o que o
+`http_build_query` gera) faz o 3C ignorar o filtro; tem de ser `numbers[]=`.
+Se todos já estiverem na campanha, nenhuma lista é criada.
+
 Aprovar cria uma lista nova na campanha escolhida (`POST /campaigns/{c}/lists`)
 e grava o id na hora (o 3C não deduplica por nome), depois sobe em lotes de 100
 (`POST .../lists/{l}/mailing`) com as colunas identifier, phone, nome, email,
@@ -92,5 +112,7 @@ campanha descartam número na importação e o 3C ainda responde 200.
 `php listas-3c/bin/testes.php` roda as regras puras (nome, telefone, motivo,
 resumo, máscara) sem banco nem rede.
 
-Na tela da lista, **Ocultar dados pessoais** mascara nome, e-mail, telefone e
-observação (para mostrar em reunião ou gravar a tela).
+Na tela da lista, **Modo demonstração** mascara nome, e-mail, telefone e a
+observação do atendimento (texto livre do corretor no Robust, que às vezes traz
+nome ou telefone), para mostrar em reunião ou gravar a tela. Fora desse modo,
+e no 3C, a observação vai inteira, com o rótulo "Obs. do atendimento no Robust".
