@@ -42,8 +42,13 @@ final class Exportacao
                 $c['C'] = ['s' => $forn];
             }
         } else {
+            // cliente: o que foi digitado em "cliente Omie" > CPF do 1º comprador (modelo de capa 09/2026) > nome do 1º comprador
             $cli = trim((string)($l['cliente_omie'] ?? ''));
-            if ($cli === '') $cli = self::clientePadrao((string)$capa['cliente']);
+            if ($cli === '') {
+                $cpf = self::cpfPrimeiroComprador($capa);
+                if ($cpf !== '') $cli = $cpf;
+                else { $cli = self::clientePadrao((string)$capa['cliente']); if ($cli !== '') $avisos[] = 'cliente por nome (capa sem CPF) — pode dar ambiguidade no Omie'; }
+            }
             if ($cli === '') $erros[] = 'sem cliente (informe o nome/CPF como está no Omie)';
             $c['C'] = ['s' => $cli];
         }
@@ -124,6 +129,15 @@ final class Exportacao
     }
 
     /** primeiro comprador da capa ("A E B", "A, B") */
+    /** CPF (formatado) do primeiro comprador da capa, ou '' se a capa não tem. $capa['compradores'] = JSON ou array. */
+    public static function cpfPrimeiroComprador(array $capa): string
+    {
+        $cp = $capa['compradores'] ?? null;
+        if (is_string($cp)) $cp = json_decode($cp, true);
+        $d = preg_replace('/\D+/', '', (string)($cp[0]['cpf'] ?? ''));
+        return strlen($d) === 11 ? preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $d) : '';
+    }
+
     public static function clientePadrao(string $clientes): string
     {
         $partes = preg_split('/\s+E\s+|\s*,\s*|\s*\/\s*/u', trim($clientes)) ?: [];
