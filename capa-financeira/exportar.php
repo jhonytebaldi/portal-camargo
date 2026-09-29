@@ -13,6 +13,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
 require_once __DIR__ . '/lib/OmieXlsx.php';
 require_once __DIR__ . '/lib/Exportacao.php';
+require_once __DIR__ . '/../recibos-omie/lib/OmieApi.php';
 
 $u = require_tool('capa-financeira');
 $pdo = db();
@@ -34,7 +35,7 @@ if (isset($_GET['baixar'])) {
 function cf_exp_candidatas(PDO $pdo, string $empresa, string $tipo, ?array $ids = null): array
 {
     $sql = "SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, c.construtora AS capa_construtora, c.bairro AS capa_bairro, c.unidade AS capa_unidade,
-                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, c.versao AS capa_versao
+                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, c.versao AS capa_versao, c.compradores AS capa_compradores
             FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id
             WHERE l.status = 'confirmado' AND c.status = 'confirmada' AND c.empresa = ? AND l.tipo = ?";
     $args = [$empresa, $tipo];
@@ -46,7 +47,53 @@ function cf_exp_candidatas(PDO $pdo, string $empresa, string $tipo, ?array $ids 
 function cf_exp_capa(array $l): array
 {
     return ['cod' => $l['capa_cod'], 'cliente' => $l['capa_cliente'], 'construtora' => $l['capa_construtora'], 'bairro' => $l['capa_bairro'],
-            'unidade' => $l['capa_unidade'], 'data_venda' => $l['capa_data_venda']];
+            'unidade' => $l['capa_unidade'], 'data_venda' => $l['capa_data_venda'], 'compradores' => $l['capa_compradores'] ?? null];
+}
+
+/**
+ * Confere no Omie (API) se os clientes das contas a receber existem: por CPF/CNPJ e, se não achar, pelo nome.
+ * $clientes = ['texto da coluna Cliente' => 'nome do comprador (para busca por nome)']
+ * Devolve [texto => ['status' => 'ok'|'so_nome'|'varios'|'nao'|'erro', 'msg' => ...]]
+ */
+function cf_exp_conferir_clientes(string $empresa, array $clientes): array
+{
+    $out = [];
+    foreach ($clientes as $txt => $nome) {
+        $txt = (string)$txt; $dig = preg_replace('/\D+/', '', $txt); $porDoc = in_array(strlen($dig), [11, 14], true);
+        try {
+            $achou = null;
+            if ($porDoc) {
+                try {
+                    $r = OmieApi::call($empresa, 'geral/clientes/', 'ListarClientes', ['pagina' => 1, 'registros_por_pagina' => 5, 'apenas_importado_api' => 'N', 'clientesFiltro' => ['cnpj_cpf' => $txt]]);
+                    foreach ($r['clientes_cadastro'] ?? [] as $c) if (preg_replace('/\D+/', '', (string)($c['cnpj_cpf'] ?? '')) === $dig) { $achou = $c; break; }
+                } catch (RuntimeException $e) { if (!preg_match('/n[ãa]o existem registros|SOAP-ENV:Client-5113|n[ãa]o (foi )?(encontrad|localizad)/iu', $e->getMessage())) throw $e; }
+                if ($achou) { $out[$txt] = ['status' => 'ok', 'msg' => 'cadastrado no Omie: ' . ($achou['razao_social'] ?? $achou['nome_fantasia'] ?? '') . ' (cód. ' . ($achou['codigo_cliente_omie'] ?? '?') . ')']; continue; }
+            }
+            // por nome (o texto da coluna, quando é nome; ou o nome do comprador, quando o texto é o CPF que não achou)
+            $busca = $porDoc ? (string)$nome : $txt;
+            $lista = [];
+            if ($busca !== '') {
+                try { $r = OmieApi::call($empresa, 'geral/clientes/', 'ListarClientes', ['pagina' => 1, 'registros_por_pagina' => 50, 'apenas_importado_api' => 'N', 'clientesFiltro' => ['razao_social' => $busca]]); $lista = $r['clientes_cadastro'] ?? []; }
+                catch (RuntimeException $e) { if (!preg_match('/n[ãa]o existem registros|SOAP-ENV:Client-5113/iu', $e->getMessage())) throw $e; }   // "Não existem registros para a página" = lista vazia
+                $k = CapaParser::key($busca);
+                $exatos = array_values(array_filter($lista, fn($c) => CapaParser::key((string)($c['razao_social'] ?? '')) === $k));
+                if ($exatos) $lista = $exatos;
+            }
+            if (count($lista) === 1) {
+                $c = $lista[0]; $doc = preg_replace('/\D+/', '', (string)($c['cnpj_cpf'] ?? ''));
+                $out[$txt] = $porDoc
+                    ? ['status' => 'so_nome', 'msg' => 'CPF não está no Omie, mas existe cadastro com esse nome: ' . ($c['razao_social'] ?? '') . ' (cód. ' . ($c['codigo_cliente_omie'] ?? '?') . ($doc ? ', CPF/CNPJ ' . $c['cnpj_cpf'] : ', sem CPF') . ') — corrija o CPF no cadastro do Omie ou use o nome']
+                    : ['status' => 'ok', 'msg' => 'cadastrado no Omie: ' . ($c['razao_social'] ?? '') . ' (cód. ' . ($c['codigo_cliente_omie'] ?? '?') . ($doc ? ', CPF/CNPJ ' . $c['cnpj_cpf'] : ', sem CPF') . ')'];
+            } elseif (count($lista) > 1) {
+                $out[$txt] = ['status' => 'varios', 'msg' => count($lista) . ' cadastros com esse nome no Omie — informe o CPF em "cliente Omie" para não dar ambiguidade'];
+            } else {
+                $out[$txt] = ['status' => 'nao', 'msg' => 'NÃO encontrado no Omie' . ($porDoc ? ' (nem pelo CPF nem pelo nome)' : ' (pelo nome)') . ' — cadastre o cliente com CPF antes de importar'];
+            }
+        } catch (Throwable $e) {
+            $out[$txt] = ['status' => 'erro', 'msg' => 'não deu para conferir: ' . $e->getMessage()];
+        }
+    }
+    return $out;
 }
 
 /* ---------- ações JSON ---------- */
@@ -85,6 +132,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cf_config_set('empresas', $emp);
             exit(json_encode(['ok' => true, 'valor' => $valor]));
         }
+        if ($acao === 'verificar_clientes') {
+            $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'R');
+            if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            if ($tipo !== 'R') $falha('só para contas a receber');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            $ids = array_values(array_unique(array_map('intval', (array)($in['ids'] ?? []))));
+            $pessoas = cf_pessoas(false); $clientes = []; $porLinha = [];
+            foreach (cf_exp_candidatas($pdo, $empresa, $tipo, $ids ?: null) as $l) {
+                $capa = cf_exp_capa($l);
+                $m = Exportacao::montar($l, $capa, null, $empresas[$empresa], ['data_registro' => date('Y-m-d'), 'emissao' => 'venda']);
+                $txt = $m['cols']['C']['s'] ?? ''; if ($txt === '') continue;
+                $clientes[$txt] = Exportacao::clientePadrao((string)$capa['cliente']); $porLinha[(int)$l['id']] = $txt;
+            }
+            $res = cf_exp_conferir_clientes($empresa, $clientes);
+            exit(json_encode(['ok' => true, 'clientes' => $res, 'linhas' => $porLinha], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'gerar') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
             if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos');
@@ -101,12 +164,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $m = Exportacao::montar($l, cf_exp_capa($l), $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null, $empresas[$empresa], $opts);
                 if ($m['erros']) { $erros[] = $l['codigo_integracao'] . ': ' . implode('; ', $m['erros']); continue; }
                 foreach ($m['avisos'] as $a) $avisosPor[$a][] = $l['codigo_integracao'];
-                if ($tipo === 'R') $clientes[$m['cols']['C']['s']] = true;
+                if ($tipo === 'R') $clientes[$m['cols']['C']['s']] = Exportacao::clientePadrao((string)cf_exp_capa($l)['cliente']);
                 $rows[] = $m['cols']; $total += (float)$l['valor'];
             }
             if ($erros) $falha('Corrija antes de gerar: ' . implode(' | ', array_slice($erros, 0, 6)));
             foreach ($avisosPor as $a => $cods) $avisos[] = ucfirst($a) . ' — ' . count($cods) . ' linha(s): ' . implode(', ', array_slice($cods, 0, 12)) . (count($cods) > 12 ? '…' : '');
-            if ($tipo === 'R' && $clientes) $avisos[] = 'Clientes das contas a receber — confira se existem no Omie (senão cadastre com CPF e data de nascimento): ' . implode(', ', array_keys($clientes));
+            if ($tipo === 'R' && $clientes) {
+                if (OmieApi::disponivel() && isset(OmieApi::contas()[$empresa])) {
+                    // confere na API antes de gerar: cliente que não existe bloqueia (a não ser que o usuário force)
+                    $conf = cf_exp_conferir_clientes($empresa, $clientes); $faltam = []; $duvida = [];
+                    foreach ($conf as $txt => $r) {
+                        if ($r['status'] === 'nao') $faltam[] = "$txt: {$r['msg']}";
+                        elseif ($r['status'] !== 'ok') $duvida[] = "$txt: {$r['msg']}";
+                    }
+                    if ($faltam && empty($in['forcar'])) exit(json_encode(['ok' => false, 'erro' => 'Cliente(s) não encontrado(s) no Omie — cadastre antes de importar, ou gere mesmo assim:' . "\n- " . implode("\n- ", $faltam), 'pode_forcar' => true], JSON_UNESCAPED_UNICODE));
+                    foreach (array_merge($faltam, $duvida) as $d) $avisos[] = 'Cliente no Omie — ' . $d;
+                } else {
+                    $avisos[] = 'Clientes das contas a receber — confira se existem no Omie (API não configurada; senão cadastre com CPF e data de nascimento): ' . implode(', ', array_keys($clientes));
+                }
+            }
 
             $pdo->beginTransaction();
             $pdo->prepare('INSERT INTO cf_exportacoes (tipo, empresa, arquivo_nome, arquivo_path, n_linhas, total, data_registro, avisos, gerado_por) VALUES (?,?,?,?,?,?,?,?,?)')
@@ -190,7 +266,7 @@ portal_header('Exportar para o Omie', $u);
     <datalist id="contas-omie"><?php foreach ((array)(cf_config('contas_omie', [])[$empresa] ?? []) as $c): ?><option value="<?= h($c) ?>"></option><?php endforeach; ?></datalist>
     <span class="cf-dica" style="margin:0">Vencimento e Previsão = data prevista da linha. Nº Documento = código de integração. Observações levam cliente, construtora, imóvel, venda, COD, recibo, função e condição.</span>
   </div>
-  <div class="cf-acoes"><button class="btn" id="btn-gerar">Gerar planilha (<span id="exp-n">0</span> linhas · <span id="exp-total">R$ 0,00</span>)</button></div>
+  <div class="cf-acoes"><?php if ($tipo === 'R' && OmieApi::disponivel() && isset(OmieApi::contas()[$empresa])): ?><button class="btn cf-btn-sec" id="btn-conferir" title="consulta a API do Omie: primeiro pelo CPF/CNPJ, depois pelo nome">Conferir clientes no Omie</button> <?php endif; ?><button class="btn" id="btn-gerar">Gerar planilha (<span id="exp-n">0</span> linhas · <span id="exp-total">R$ 0,00</span>)</button></div>
 </div>
 
 <?php if ($tipo === 'P'): ?>
@@ -222,14 +298,14 @@ portal_header('Exportar para o Omie', $u);
   <td><input type="checkbox" class="exp-sel" <?= $ok ? 'checked' : 'disabled' ?>></td>
   <td><a href="/capa-financeira/revisar.php?id=<?= (int)$l['capa_id'] ?>"><?= h((string)$l['capa_cod']) ?></a><br><small class="cf-raw"><?= h(mb_substr((string)$l['capa_cliente'], 0, 40)) ?></small></td>
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['cf_raw']) ?></small></td>
-  <td><input type="text" class="cf-in exp-edit" data-campo="cliente_omie" value="<?= h((string)$l['cliente_omie']) ?>" placeholder="<?= h($m['cols']['C']['s'] ?? '') ?>" maxlength="60" title="vazio = primeiro comprador da capa"></td>
+  <td><input type="text" class="cf-in exp-edit" data-campo="cliente_omie" value="<?= h((string)$l['cliente_omie']) ?>" placeholder="<?= h($m['cols']['C']['s'] ?? '') ?>" maxlength="60" title="vazio = CPF do 1º comprador da capa (ou o nome, se a capa não tem CPF)"></td>
   <td><?= h((string)$l['categoria']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" list="contas-omie" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40"></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><div class="exp-omie"></div></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -266,6 +342,9 @@ portal_header('Exportar para o Omie', $u);
 <script>
 (function(){
   const csrf = document.querySelector('meta[name=csrf]').content, empresa = <?= json_encode($empresa) ?>, tipo = <?= json_encode($tipo) ?>;
+  async function postRaw(body){ body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
+    const r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    try { return await r.json(); } catch(e) { return {ok:false, erro:'erro ' + r.status}; } }
   async function post(body){ body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
     const r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     let j = null; try { j = await r.json(); } catch(e) {}
@@ -296,13 +375,32 @@ portal_header('Exportar para o Omie', $u);
     const j = await post({acao:'conta_padrao', valor: v}); if (!j) return;
     toast(v ? 'Conta padrão salva — recarregando' : 'Conta padrão removida — recarregando'); setTimeout(() => location.reload(), 600);
   });
+  const bconf = document.getElementById('btn-conferir');
+  if (bconf) bconf.addEventListener('click', async () => {
+    bconf.disabled = true; bconf.textContent = 'Consultando o Omie…';
+    const j = await post({acao:'verificar_clientes'});
+    bconf.disabled = false; bconf.textContent = 'Conferir clientes no Omie';
+    if (!j) return;
+    const cls = {ok:'cf-ok', so_nome:'cf-leve', varios:'cf-leve', nao:'cf-grave', erro:'cf-leve'};
+    let nOk = 0, nProb = 0;
+    document.querySelectorAll('#tbl-exp tr.cf-row').forEach(tr => {
+      const txt = j.linhas[tr.dataset.id]; const r = txt ? j.clientes[txt] : null; const box = tr.querySelector('.exp-omie'); if (!box) return;
+      if (!r) { box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="cf-flag ' + (cls[r.status] || 'cf-leve') + '">Omie: ' + r.msg.replace(/</g, '&lt;') + '</div>';
+      r.status === 'ok' ? nOk++ : nProb++;
+    });
+    toast(nOk + ' linha(s) com cliente cadastrado' + (nProb ? ', ' + nProb + ' com pendência' : ''));
+  });
   const bg = document.getElementById('btn-gerar');
   if (bg) bg.addEventListener('click', async () => {
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
     if (!ids.length) return;
     if (!confirm('Gerar a planilha do Omie com ' + ids.length + ' linha(s)? Elas passam a "exportado" (dá pra desfazer se a importação falhar).')) return;
     bg.disabled = true;
-    const j = await post({acao:'gerar', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+    const body = {acao:'gerar', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value};
+    let j = await postRaw(body);
+    if (j && !j.ok && j.pode_forcar) { if (confirm(j.erro + '\n\nGerar mesmo assim?')) { body.forcar = 1; j = await postRaw(body); } else j = null; }
+    if (j && !j.ok) { alert(j.erro || 'erro'); j = null; }
     if (!j) { bg.disabled = false; return; }
     if (j.avisos && j.avisos.length) alert('Planilha gerada (' + j.n + ' linhas). Avisos:\n\n- ' + j.avisos.join('\n- '));
     location.href = '/capa-financeira/exportar.php?baixar=' + j.exportacao_id;
