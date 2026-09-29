@@ -32,6 +32,8 @@ final class CapaParser
         'SE ENTREGAR IMOVEL'         => 'ENTREGA IMOVEL',
         'SE ENTREGAR AS CHAVES'      => 'ENTREGA CHAVES',
         'SE ENTREGAR A CHAVE'        => 'ENTREGA CHAVES',
+        'ENTREGA CHAVES'             => 'ENTREGA CHAVES',
+        'ENTREGA IMOVEL'             => 'ENTREGA IMOVEL',
         'AGUARDAR APROVACAO'         => 'AGUARDA APROVACAO',
         'RESERVA 50%'                => 'RESERVA 50%',
         'RESERVA 50% (FALTA ALVARA)' => 'RESERVA 50% ALVARA',
@@ -250,14 +252,28 @@ final class CapaParser
         }
         $val = fn(string $k, int $col = 2) => isset($lab[$k]) ? $ws->cell($lab[$k], $col) : null;
         $cod = $val('COD');
-        $g3 = $ws->ref('G3');
-        if ($g3 !== null) [$dataVenda, , $dvFlag] = self::parseDateCell($g3);
+        // Modelo 09/2026: compradores em linhas "COMPRADOR 01/02" (B nome, C nascimento, D CPF) e data da venda
+        // ao lado do rótulo "DATA DA VENDA". Modelo antigo: "CLIENTE" em B2 e data em G3 (sem rótulo).
+        $compradores = [];
+        for ($r = 1; $r < 10; $r++) if (str_starts_with(self::key($ws->cell($r, 1)), 'COMPRADOR')) {   // o rótulo pode repetir ("COMPRADOR 01" duas vezes)
+            $nome = self::norm($ws->cell($r, 2)); if ($nome === '') continue;
+            $cpf = preg_replace('/\D+/', '', (string)$ws->cell($r, 4));
+            $nasc = $ws->cell($r, 3) !== null ? self::parseDateCell($ws->cell($r, 3))[0] : null;
+            $compradores[] = ['nome' => $nome, 'cpf' => $cpf !== '' ? $cpf : null, 'nascimento' => $nasc];
+        }
+        $cliente = $compradores ? implode(' E ', array_column($compradores, 'nome')) : self::norm($val('CLIENTE'));
+        $dvCell = null;
+        for ($r = 1; $r < 10 && $dvCell === null; $r++) for ($c = 1; $c < 12; $c++) {
+            if (str_starts_with(self::key($ws->cell($r, $c)), 'DATA DA VENDA')) { $dvCell = $ws->cell($r, $c + 1); break; }
+        }
+        if ($dvCell === null) $dvCell = $ws->ref('G3');
+        if ($dvCell !== null) [$dataVenda, , $dvFlag] = self::parseDateCell($dvCell);
         else { $dataVenda = null; $dvFlag = 'SEM_DATA_VENDA'; }
         $codOut = null;
         if (is_int($cod) || is_float($cod)) $codOut = (int)$cod;
         elseif ($cod !== null) { $n = self::norm($cod); $codOut = $n !== '' ? $n : null; }
         return [[
-            'cliente' => self::norm($val('CLIENTE')),
+            'cliente' => $cliente, 'compradores' => $compradores,
             'construtora' => self::norm($val('CONTRUTORA') ?? $val('CONSTRUTORA')),
             'bairro' => self::norm($val('OBRA/BAIRRO')),
             'unidade' => self::norm($val('GEMINADO') ?? $val('UNIDADE')),
