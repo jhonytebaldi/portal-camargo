@@ -71,6 +71,10 @@ portal_header('Revisar capa', $u);
 <div class="aviso"><b>Capa sem COD do imóvel.</b> Informe o código do imóvel no Robust para continuar:
   <input id="cf-cod" class="cf-in" placeholder="ex.: 1375" style="width:120px"> <button class="btn" id="btn-cod" type="button">Salvar COD</button></div>
 <?php endif; ?>
+<?php $compradores = json_decode((string)($capa['compradores'] ?? ''), true) ?: [];
+if ($compradores): ?><div class="aviso" style="background:#f4f6f8"><b>Compradores (capa):</b>
+  <?php foreach ($compradores as $i => $cp): ?><?= $i ? ' · ' : '' ?><?= h($cp['nome']) ?><?= $cp['cpf'] ? ' — CPF ' . h(cf_fmt_doc($cp['cpf'])) : ' — <i>sem CPF</i>' ?><?= $cp['nascimento'] ? ' — nasc. ' . h(cf_data_br($cp['nascimento'])) : '' ?><?php endforeach; ?></div>
+<?php endif; ?>
 <?php if ($capa['obs_capa']): ?><div class="aviso">Observação na capa (C8): <b><?= h($capa['obs_capa']) ?></b></div><?php endif; ?>
 <?php
 // nomes divergentes entre capa e histórico: oferece as opções para padronizar (vale para observação do Omie e recibo)
@@ -82,9 +86,9 @@ if ($editavel) foreach ($linhas as $l) { if ($l['status'] !== 'revisao' || (int)
         if (in_array($c, ['CLIENTES_HIST_GRAFIA', 'CLIENTES_HIST_DIFEREM_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['cliente'][$m[1]] = ($opcoes['cliente'][$m[1]] ?? 0) + 1;
         if (in_array($c, ['CONSTRUTORA_HIST_GRAFIA', 'CONSTRUTORA_HIST_DIFERE_CAPA'], true) && preg_match("/\('(.*)'\)$/u", $f, $m)) $opcoes['construtora'][$m[1]] = ($opcoes['construtora'][$m[1]] ?? 0) + 1;
         if ($c === 'DATA_VENDA_HIST_DIFERE_G3' && preg_match('/\((\d{1,2}\/\d{1,2}\/\d{2,4}) ×/u', $f, $m)) $opcoes['data_venda'][$m[1]] = ($opcoes['data_venda'][$m[1]] ?? 0) + 1; } }
-$escTxt = ['cliente' => ['Cliente', 'B2', 'escrito de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
-           'construtora' => ['Construtora', 'B3', 'escrita de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
-           'data_venda' => ['Data da venda', 'G3', 'diferente na capa e no histórico.', 'Escolha qual data vale (vai para a observação do Omie e para o recibo; os alertas de "data anterior à venda" são recalculados):', 'Usar esta data']];
+$escTxt = ['cliente' => ['Cliente', $compradores ? 'compradores' : 'B2', 'escrito de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
+           'construtora' => ['Construtora', $compradores ? 'B4' : 'B3', 'escrita de formas diferentes na capa e no histórico.', 'Escolha qual grafia vale (vai para a observação do Omie e para o recibo; as linhas ficam conferidas):', 'Usar este nome'],
+           'data_venda' => ['Data da venda', $compradores ? 'G4' : 'G3', 'diferente na capa e no histórico.', 'Escolha qual data vale (vai para a observação do Omie e para o recibo; os alertas de "data anterior à venda" são recalculados):', 'Usar esta data']];
 foreach ($escTxt as $campo => [$rot, $cel, $t1, $t2, $btn]): if (!$opcoes[$campo]) continue;
     $valCapa = $campo === 'data_venda' ? cf_data_br($capa['data_venda']) : (string)$capa[$campo]; ?>
 <div class="cf-escolha" data-campo="<?= $campo ?>"><b><?= $rot ?> <?= $t1 ?></b> <?= $t2 ?>

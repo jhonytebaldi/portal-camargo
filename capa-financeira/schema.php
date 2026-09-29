@@ -160,6 +160,11 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN conta_corrente VARCHAR(60) NULL AFTER chave_pix, ADD COLUMN cliente_omie VARCHAR(60) NULL AFTER conta_corrente");
         $feitos[] = 'cf_lancamentos.conta_corrente/cliente_omie';
     }
+    // modelo de capa 09/2026: compradores (nome, CPF, nascimento) vêm da capa
+    if (!$colExiste('cf_capas', 'compradores')) {
+        $pdo->exec("ALTER TABLE cf_capas ADD COLUMN compradores JSON NULL AFTER cliente");
+        $feitos[] = 'cf_capas.compradores';
+    }
     if (!$colExiste('cf_lancamentos', 'snapshot_exp')) {
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN snapshot_exp JSON NULL AFTER exportacao_id");
         $feitos[] = 'cf_lancamentos.snapshot_exp';
@@ -215,6 +220,13 @@ function cf_migrar(PDO $pdo): array
         $catAtual += ['ADM' => 'Ajuda de Custo', 'ADMINISTRATIVO' => 'Ajuda de Custo'];
         $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='categorias'")->execute([json_encode($catAtual, JSON_UNESCAPED_UNICODE)]);
         $feitos[] = 'config:categoria ADM';
+    }
+    // condições novas do modelo 09/2026 (escritas já na forma curta) — acrescenta sem mexer no que o usuário editou
+    $nfAtual = json_decode((string)($pdo->query("SELECT valor FROM cf_config WHERE chave='nf_dict'")->fetchColumn() ?: '{}'), true) ?: [];
+    if ($nfAtual && !isset($nfAtual['ENTREGA CHAVES'])) {
+        $nfAtual += ['ENTREGA CHAVES' => 'ENTREGA CHAVES', 'ENTREGA IMOVEL' => 'ENTREGA IMOVEL'];
+        $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='nf_dict'")->execute([json_encode($nfAtual, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:nf_dict ENTREGA CHAVES/IMOVEL';
     }
     if ($catAtual && !isset($catAtual['REPASSE'])) {
         $catAtual += ['REPASSE' => 'Repasse a Terceiros', 'REPASSE_FUTURO' => 'Repasse a Terceiros Futuro', 'RECEBER_REPASSE' => 'Recebidos de repasse imediato', 'RECEBER_REPASSE_FUTURO' => 'Recebidos de repasse futuro'];

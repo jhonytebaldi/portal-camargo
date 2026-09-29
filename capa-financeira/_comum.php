@@ -260,6 +260,14 @@ function cf_cabecalho(string $titulo, string $sub, array $trilha, string $atual 
     }
     echo '</div>';
 }
+/** CPF/CNPJ só dígitos → com pontuação (outros tamanhos voltam como estão). */
+function cf_fmt_doc(?string $d): string
+{
+    $d = preg_replace('/\D+/', '', (string)$d);
+    if (strlen($d) === 11) return preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $d);
+    if (strlen($d) === 14) return preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $d);
+    return $d;
+}
 /** Texto amigável dos alertas. */
 function cf_flag_texto(string $f): string
 {
