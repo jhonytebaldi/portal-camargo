@@ -151,6 +151,30 @@ tr.clk{cursor:pointer}tr.clk:hover{background:#1d222c}
 .foot{color:var(--mut);font-size:12px;margin-top:8px}
 .back{color:var(--acc);cursor:pointer;font-size:13px}
 .mut{color:var(--mut)}
+/* ===== Painel flutuante Top 5 (performance do período) ===== */
+#perfpanel{position:fixed;top:112px;right:14px;width:264px;z-index:60;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 34px rgba(0,0,0,.5);font-size:13px;overflow:hidden}
+#perfpanel .pp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 13px;border-bottom:1px solid var(--line);background:#141824}
+#perfpanel .pp-title{font-weight:700;font-size:13px}
+#perfpanel .pp-sub{color:var(--mut);font-size:11px;font-weight:400}
+#perfpanel .pp-min{cursor:pointer;color:var(--mut);background:none;border:none;font-size:17px;line-height:1;padding:2px 5px}
+#perfpanel .pp-min:hover{color:var(--tx)}
+#perfpanel .pp-body{max-height:calc(100vh - 168px);overflow:auto;padding:6px 9px}
+.pp-row{display:flex;align-items:center;gap:9px;padding:8px 6px}
+.pp-row+.pp-row{border-top:1px solid var(--line)}
+.pp-row.top1{background:linear-gradient(90deg,rgba(240,190,60,.13),transparent);border-radius:9px}
+.pp-pos{width:24px;text-align:center;font-weight:700;font-size:15px;flex:none;color:var(--mut)}
+.pp-info{flex:1;min-width:0}
+.pp-nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-chips{color:var(--mut);font-size:10.6px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-score{flex:none;font-weight:800;font-size:19px;color:var(--acc);min-width:30px;text-align:right}
+.pp-row.top1 .pp-score{color:var(--warn)}
+.pp-empty{color:var(--mut);padding:16px 8px;text-align:center;font-size:12.5px}
+#perfpanel .pp-foot{color:var(--mut);font-size:10.3px;padding:8px 12px 11px;line-height:1.45;border-top:1px solid var(--line)}
+#perfpanel.min{width:auto}
+#perfpanel.min .pp-body,#perfpanel.min .pp-foot,#perfpanel.min .pp-sub{display:none}
+#perfpanel.min .pp-head{border-bottom:none;background:none}
+@media(min-width:1560px){ body.perf-on .wrap{margin-right:300px} }
+@media(max-width:820px){ #perfpanel{display:none} }
 .aviso{background:#211a12;border:1px solid #6a5320;color:#ffcf8f;padding:16px 18px;border-radius:12px;margin-top:20px;font-size:14px}
 .alertcard{border-left:3px solid var(--bad)}
 .al-row{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -276,6 +300,7 @@ tr.off td{color:#6f7684}
 <div id="view"></div>
 <div class="foot" id="genlbl"></div>
 </div>
+<div id="perfpanel" hidden></div>
 <script>
 /* Watchdog: se a inicialização não terminar (resposta cortada durante uma
    coleta, erro de JS, etc.), a tela ficaria só com os controles e sem dados.
@@ -327,7 +352,8 @@ AD.forEach(d=>{const t=d.label+" "+d.wd;
   let o1=document.createElement('option');o1.value=d.key;o1.textContent=t;fsel.appendChild(o1);
   let o2=document.createElement('option');o2.value=d.key;o2.textContent=t;tsel.appendChild(o2);});
 let state={broker:"__all__",from:AD[0].key,to:AD[AD.length-1].key,sortKey:'aten',sortDir:-1,
-           tab:'geral',filaSort:'wait',filaDir:-1,rtMode:'mean'};   // rtMode: 'mean' (padrão) | 'med'
+           tab:'geral',filaSort:'wait',filaDir:-1,rtMode:'mean',
+           perfMin:(window.innerWidth<1400)};   // Top 5: minimizado por padrão em telas menores
 // Valor de "tempo de resposta" conforme o seletor: média simples ou mediana.
 const rtVal=s=>state.rtMode==='mean'?s.rtMean:s.rtMed;
 const rtWord=()=>state.rtMode==='mean'?'média':'mediana';
@@ -719,10 +745,56 @@ function buildTabs(){
 
 function render(){
   const ctrl=document.getElementById('ctrl');
-  if(state.tab==='fila'){if(ctrl)ctrl.style.display='none';renderFila();return;}
+  if(state.tab==='fila'){if(ctrl)ctrl.style.display='none';renderFila();renderPerf(null);return;}
   if(ctrl)ctrl.style.display='';
   const days=rangeDays();
   if(state.broker==='__all__')renderOverview(days);else renderBroker(byId[state.broker],days);
+  renderPerf(days);
+}
+/* ===== Top 5 performance do período (painel flutuante) ===== */
+function ppActiveHours(b,days){let n=0;days.forEach(d=>{const r=b.days[d.key];if(r&&r.mh)for(let h=0;h<24;h++)if(r.mh[h]>0)n++;});return n;}
+function ppTop5(days){
+  const arr=ACT.map(b=>{const s=stats(b,days);
+    return {name:b.name,msg:s.n,conv:s.conversasI,cob:ppActiveHours(b,days),sl1:s.sl1,rtN:s.rtN};
+  }).filter(x=>x.msg>0);                                  // só quem ENVIOU mensagem no período
+  if(!arr.length)return [];
+  const maxMsg=Math.max(...arr.map(x=>Math.sqrt(x.msg)))||1;
+  const maxConv=Math.max(...arr.map(x=>x.conv),1);
+  const maxCob=Math.max(...arr.map(x=>x.cob),1);
+  arr.forEach(x=>{
+    x.nMsg=Math.sqrt(x.msg)/maxMsg; x.nConv=x.conv/maxConv; x.nCob=x.cob/maxCob;
+    x.agi=(x.sl1!=null?x.sl1/100:0)*Math.min(1,x.rtN/RT_MINN);   // agilidade travada por volume
+    x.score=Math.round(100*(0.20*x.nMsg+0.40*x.nConv+0.15*x.nCob+0.25*x.agi));
+  });
+  arr.sort((a,b)=>b.score-a.score||b.conv-a.conv||b.msg-a.msg);
+  return arr.slice(0,5);
+}
+function renderPerf(days){
+  const el=document.getElementById('perfpanel'); if(!el)return;
+  const show=(state.tab==='geral'&&state.broker==='__all__');   // só na visão geral
+  if(!show){el.hidden=true;document.body.classList.remove('perf-on');return;}
+  el.hidden=false;
+  const min=!!state.perfMin;
+  el.classList.toggle('min',min);
+  document.body.classList.toggle('perf-on',!min);
+  if(min){
+    el.innerHTML=`<div class="pp-head"><span class="pp-title">🏆 Top 5</span><button class="pp-min" title="Expandir">‹</button></div>`;
+  }else{
+    const last=AD[AD.length-1].key;
+    const per=(state.from===last&&state.to===last)?'de hoje':(state.from===state.to?'do dia':'do período');
+    const medal=['🥇','🥈','🥉','4º','5º'];
+    const top=ppTop5(days||rangeDays());
+    let body;
+    if(!top.length) body=`<div class="pp-empty">Ainda sem atividade suficiente ${per}.</div>`;
+    else body=top.map((x,i)=>{
+      const chips=`${x.msg} msg · ${x.conv} c/ resp · ${x.cob}h`+((x.sl1!=null&&x.rtN>=RT_MINN)?` · ${x.sl1}% ≤10m`:'');
+      const tip=`Nota ${x.score}/100 — de ${x.msg} msg enviadas, ${x.conv} conversas com resposta, ${x.cob}h com atividade`+((x.sl1!=null)?`, ${x.sl1}% respondidos em ≤10min (${x.rtN} respostas)`:'')+`. Pesos: 20% mensagens (pela raiz, p/ não inflar no enter) · 40% conversas c/ resposta · 15% cobertura · 25% agilidade.`;
+      return `<div class="pp-row ${i===0?'top1':''}" title="${escAttr(tip)}"><div class="pp-pos">${medal[i]}</div><div class="pp-info"><div class="pp-nm">${x.name}</div><div class="pp-chips">${chips}</div></div><div class="pp-score">${x.score}</div></div>`;
+    }).join('');
+    el.innerHTML=`<div class="pp-head"><div class="pp-title">🏆 Top 5 <span class="pp-sub">· performance ${per}</span></div><button class="pp-min" title="Minimizar">›</button></div><div class="pp-body">${body}</div>`
+      +(top.length?`<div class="pp-foot">Nota = 20% msgs (√) · 40% conversas c/ resposta · 15% cobertura do período · 25% agilidade (≤10min, exige mínimo de respostas). Acompanha o período do topo.</div>`:'');
+  }
+  const mb=el.querySelector('.pp-min'); if(mb)mb.onclick=()=>{state.perfMin=!state.perfMin;saveState();renderPerf(rangeDays());};
 }
 bsel.onchange=()=>{state.broker=bsel.value;render();};
 fsel.onchange=()=>{state.from=fsel.value;render();};
@@ -734,7 +806,7 @@ const SS_KEY='painelCorretores:'+<?= json_encode($selMonth) ?>;
 function saveState(){try{sessionStorage.setItem(SS_KEY,JSON.stringify({
   broker:state.broker,from:state.from,to:state.to,sortKey:state.sortKey,sortDir:state.sortDir,
   tab:state.tab,filaSort:state.filaSort,filaDir:state.filaDir,filaQ:state.filaQ||'',filaResp:state.filaResp||'',
-  rtMode:state.rtMode,y:Math.round(window.scrollY)}));}catch(e){}}
+  rtMode:state.rtMode,perfMin:state.perfMin,y:Math.round(window.scrollY)}));}catch(e){}}
 function loadState(){try{const s=JSON.parse(sessionStorage.getItem(SS_KEY)||'null');if(!s)return null;
   const keys=new Set(AD.map(d=>d.key));
   if(!keys.has(s.from))s.from=AD[0].key;
@@ -742,6 +814,7 @@ function loadState(){try{const s=JSON.parse(sessionStorage.getItem(SS_KEY)||'nul
   if(s.broker!=='__all__'&&!byId[s.broker])s.broker='__all__';
   if(s.tab==='fila'&&!(EH_MES_CORRENTE&&AGUARDANDO))s.tab='geral';
   if(s.rtMode!=='mean'&&s.rtMode!=='med')s.rtMode='mean';   // padrão média
+  s.perfMin=!!s.perfMin;
   return s;}catch(e){return null;}}
 
 const _s=loadState();
