@@ -51,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cf_config_set('empresas', $emp);
             cf_config_set('corretor_baixa_recibo', !empty($_POST['corretor_baixa_recibo']) ? '1' : '0');
             cf_config_set('cidade_recibo', CapaParser::norm((string)($_POST['cidade_recibo'] ?? 'Joinville')));
+            cf_config_set('omie_pix_modo', in_array($_POST['omie_pix_modo'] ?? '', ['TRA', 'PIX', 'NENHUM'], true) ? $_POST['omie_pix_modo'] : 'TRA');
             $msg = 'Empresas salvas.';
         }
     } catch (Throwable $e) { $erro = $e->getMessage(); }
@@ -101,6 +102,13 @@ portal_header('Configurações — Capa Financeira', $u);
   <div class="cf-grid2">
     <label>Cidade no recibo<input name="cidade_recibo" value="<?= h((string)cf_config('cidade_recibo', 'Joinville')) ?>"></label>
     <label class="cf-mini"><input type="checkbox" name="corretor_baixa_recibo" <?= cf_config('corretor_baixa_recibo', '1') === '1' ? 'checked' : '' ?>> corretor pode baixar o próprio recibo</label>
+    <label>Chave Pix no envio pela API (contas a pagar)
+      <?php $pm = (string)cf_config('omie_pix_modo', 'TRA'); ?>
+      <select name="omie_pix_modo">
+        <option value="TRA" <?= $pm === 'TRA' ? 'selected' : '' ?>>Transferência bancária → finalidade "Transferência por chave PIX" (como no lançamento manual)</option>
+        <option value="PIX" <?= $pm === 'PIX' ? 'selected' : '' ?>>Pagamento PIX QR-Code com a chave no campo do QR Code (como a importação por planilha faz)</option>
+        <option value="NENHUM" <?= $pm === 'NENHUM' ? 'selected' : '' ?>>Não preencher forma de pagamento (a chave vai só na observação)</option>
+      </select></label>
   </div>
   <button class="btn">Salvar empresas</button>
   </form>

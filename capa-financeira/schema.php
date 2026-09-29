@@ -160,6 +160,36 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN conta_corrente VARCHAR(60) NULL AFTER chave_pix, ADD COLUMN cliente_omie VARCHAR(60) NULL AFTER conta_corrente");
         $feitos[] = 'cf_lancamentos.conta_corrente/cliente_omie';
     }
+    // envio direto pela API do Omie (alternativa à planilha)
+    if (!$colExiste('cf_exportacoes', 'modo')) {
+        $pdo->exec("ALTER TABLE cf_exportacoes ADD COLUMN modo ENUM('planilha','api') NOT NULL DEFAULT 'planilha' AFTER empresa");
+        $feitos[] = 'cf_exportacoes.modo';
+    }
+    if (!$colExiste('cf_lancamentos', 'omie_id')) {
+        $pdo->exec("ALTER TABLE cf_lancamentos ADD COLUMN omie_id BIGINT UNSIGNED NULL AFTER exportacao_id, ADD COLUMN omie_erro TEXT NULL AFTER omie_id");
+        $feitos[] = 'cf_lancamentos.omie_id/omie_erro';
+    }
+    if (!$tem('cf_envios_omie')) {
+        $pdo->exec("CREATE TABLE cf_envios_omie (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            exportacao_id INT UNSIGNED NULL,
+            lancamento_id INT UNSIGNED NOT NULL,
+            empresa VARCHAR(20) NOT NULL,
+            tipo CHAR(1) NOT NULL,
+            codigo_integracao VARCHAR(20) NOT NULL,
+            acao ENUM('incluir','excluir') NOT NULL,
+            status ENUM('ok','erro','recusado') NOT NULL,
+            omie_id BIGINT UNSIGNED NULL,
+            pedido JSON NULL,
+            resposta JSON NULL,
+            mensagem TEXT NULL,
+            verificado TINYINT(1) NOT NULL DEFAULT 0,
+            por INT UNSIGNED NULL,
+            quando DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY ix_ceo_lanc (lancamento_id), KEY ix_ceo_exp (exportacao_id), KEY ix_ceo_cod (codigo_integracao)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela cf_envios_omie';
+    }
     // modelo de capa 09/2026: compradores (nome, CPF, nascimento) vêm da capa
     if (!$colExiste('cf_capas', 'compradores')) {
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN compradores JSON NULL AFTER cliente");

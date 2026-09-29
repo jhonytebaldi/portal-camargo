@@ -7,13 +7,15 @@
    alterações feitas depois de exportar (ajuste manual no Omie).
    GET  ?empresa=&tipo=P|R            tela
    GET  ?baixar=ID                    download do .xlsx gerado
-   POST JSON acao: editar | gerar | desfazer | ajustado
+   POST JSON acao: editar | gerar | desfazer | ajustado | verificar_clientes
+                   | conferir_api | enviar_api | desfazer_linha | atualizar_catalogo
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
 require_once __DIR__ . '/lib/OmieXlsx.php';
 require_once __DIR__ . '/lib/Exportacao.php';
 require_once __DIR__ . '/../recibos-omie/lib/OmieApi.php';
+require_once __DIR__ . '/lib/OmieEnvio.php';
 
 $u = require_tool('capa-financeira');
 $pdo = db();
@@ -96,6 +98,30 @@ function cf_exp_conferir_clientes(string $empresa, array $clientes): array
     return $out;
 }
 
+/** monta a linha (regras da planilha) e confere para a API; devolve [montada, conferida] */
+function cf_exp_conferir_api(PDO $pdo, string $empresa, string $tipo, array $l, array $pessoas, array $emp, array $opts, array $cat, string $porQuem): array
+{
+    $p = $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null;
+    $m = Exportacao::montar($l, cf_exp_capa($l), $p, $emp, $opts);
+    return OmieEnvio::conferir($empresa, $tipo, $l, cf_exp_capa($l), $p, $emp, $m, $opts, $cat, $porQuem);
+}
+function cf_exp_log_envio(PDO $pdo, ?int $expId, array $l, string $empresa, string $tipo, string $acao, string $status, ?int $omieId, ?array $pedido, ?array $resposta, ?string $msg, int $por, bool $verificado = false): void
+{
+    $pdo->prepare('INSERT INTO cf_envios_omie (exportacao_id, lancamento_id, empresa, tipo, codigo_integracao, acao, status, omie_id, pedido, resposta, mensagem, verificado, por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$expId, (int)$l['id'], $empresa, $tipo, (string)$l['codigo_integracao'], $acao, $status, $omieId,
+                   $pedido !== null ? json_encode($pedido, JSON_UNESCAPED_UNICODE) : null, $resposta !== null ? json_encode($resposta, JSON_UNESCAPED_UNICODE) : null, $msg, $verificado ? 1 : 0, $por]);
+}
+/** exclui no Omie o título de uma linha exportada pela API e devolve a linha para 'confirmado'. @return array{ok:bool,msg:string} */
+function cf_exp_desfazer_linha(PDO $pdo, array $l, string $empresa, int $por): array
+{
+    $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
+    try { $r = OmieEnvio::excluir($empresa, $tipo, (string)$l['codigo_integracao']); }
+    catch (Throwable $e) { $r = ['ok' => false, 'msg' => 'erro ao excluir no Omie: ' . $e->getMessage()]; }
+    cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipo, 'excluir', $r['ok'] ? 'ok' : 'recusado', $l['omie_id'] ? (int)$l['omie_id'] : null, null, null, $r['msg'], $por);
+    if ($r['ok']) $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL, omie_id = NULL, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([(int)$l['id']]);
+    return $r;
+}
+
 /* ---------- ações JSON ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -147,6 +173,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $res = cf_exp_conferir_clientes($empresa, $clientes);
             exit(json_encode(['ok' => true, 'clientes' => $res, 'linhas' => $porLinha], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'atualizar_catalogo') {
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            $cat = OmieEnvio::catalogo($empresa, true);
+            exit(json_encode(['ok' => true, 'contas' => count($cat['contas']), 'categorias' => count($cat['categorias']), 'departamentos' => count($cat['departamentos']), 'projetos' => count($cat['projetos'])]));
+        }
+        if ($acao === 'conferir_api' || $acao === 'enviar_api') {
+            $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
+            if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            $ids = array_values(array_unique(array_map('intval', (array)($in['ids'] ?? []))));
+            if ($acao === 'enviar_api' && !$ids) $falha('nenhuma linha selecionada');
+            $reg = (string)($in['data_registro'] ?? date('Y-m-d')); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $reg)) $reg = date('Y-m-d');
+            $opts = ['data_registro' => $reg, 'emissao' => in_array($in['emissao'] ?? '', ['venda', 'registro', 'prevista'], true) ? $in['emissao'] : 'venda'];
+            $pessoas = cf_pessoas(false); $cat = OmieEnvio::catalogo($empresa);
+            $linhas = cf_exp_candidatas($pdo, $empresa, $tipo, $ids ?: null);
+            if ($acao === 'enviar_api' && count($linhas) !== count($ids)) $falha('alguma linha selecionada já foi exportada ou não está confirmada — recarregue a página');
+            $porQuem = (string)($u['nome'] ?? $u['login'] ?? 'portal');
+            if ($acao === 'conferir_api') {
+                $res = [];
+                foreach ($linhas as $l) { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null]; }
+                exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
+            }
+            // enviar: linha a linha; cada uma independente (o Omie não tem transação entre títulos)
+            $pdo->prepare("INSERT INTO cf_exportacoes (tipo, empresa, modo, arquivo_nome, arquivo_path, n_linhas, total, data_registro, avisos, gerado_por) VALUES (?,?,'api','(envio pela API)','',0,0,?,'[]',?)")
+                ->execute([$tipo, $empresa, $reg, $u['id']]);
+            $expId = (int)$pdo->lastInsertId();
+            $enviadas = []; $falhas = []; $avisos = []; $total = 0.0;
+            foreach ($linhas as $l) {
+                $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem);
+                $cod = (string)$l['codigo_integracao'];
+                foreach ($r['avisos'] as $a) $avisos[] = "$cod: $a";
+                if ($r['erros']) {
+                    $msg = implode(' | ', $r['erros']);
+                    $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = ? WHERE id = ?')->execute([$msg, (int)$l['id']]);
+                    cf_exp_log_envio($pdo, null, $l, $empresa, $tipo, 'incluir', 'recusado', null, $r['pedido'], null, $msg, (int)$u['id']);
+                    $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => $msg]; continue;
+                }
+                try {
+                    $resp = OmieEnvio::incluir($empresa, $tipo, $r['pedido']);
+                    $omieId = (int)($resp['codigo_lancamento_omie'] ?? 0);
+                    if (($resp['codigo_status'] ?? '0') !== '0' || !$omieId) throw new RuntimeException('Omie respondeu: ' . ($resp['descricao_status'] ?? json_encode($resp)));
+                    // confere de volta
+                    $ver = OmieEnvio::consultar($empresa, $tipo, $cod); $okVer = $ver && abs((float)($ver['valor_documento'] ?? 0) - (float)$l['valor']) < 0.005;
+                    $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
+                    cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $resp, $okVer ? null : 'incluído, mas a consulta de conferência não bateu', (int)$u['id'], $okVer);
+                    if (!$okVer) $avisos[] = "$cod: incluído (cód. $omieId), mas a consulta de conferência não bateu — confira no Omie";
+                    $enviadas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'omie_id' => $omieId]; $total += (float)$l['valor'];
+                } catch (Throwable $e) {
+                    $msg = 'erro no envio: ' . $e->getMessage();
+                    // se o Omie chegou a criar, não deixar órfão: tenta localizar pelo código de integração
+                    try { $ex = OmieEnvio::consultar($empresa, $tipo, $cod); } catch (Throwable $e2) { $ex = null; }
+                    if ($ex && !empty($ex['codigo_lancamento_omie'])) {
+                        $omieId = (int)$ex['codigo_lancamento_omie'];
+                        $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
+                        cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $ex, 'resposta com erro, mas o título existe no Omie: ' . $e->getMessage(), (int)$u['id'], true);
+                        $enviadas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'omie_id' => $omieId]; $total += (float)$l['valor'];
+                        $avisos[] = "$cod: o Omie respondeu erro mas o título foi criado (cód. $omieId)"; continue;
+                    }
+                    $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = ? WHERE id = ?')->execute([$msg, (int)$l['id']]);
+                    cf_exp_log_envio($pdo, null, $l, $empresa, $tipo, 'incluir', 'erro', null, $r['pedido'], null, $msg, (int)$u['id']);
+                    $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => $msg];
+                }
+            }
+            $resumo = array_merge(array_map(fn($f) => 'ERRO ' . $f['codigo'] . ': ' . $f['msg'], $falhas), $avisos);
+            if ($enviadas) $pdo->prepare('UPDATE cf_exportacoes SET n_linhas = ?, total = ?, avisos = ? WHERE id = ?')->execute([count($enviadas), $total, json_encode($resumo, JSON_UNESCAPED_UNICODE), $expId]);
+            else $pdo->prepare('DELETE FROM cf_exportacoes WHERE id = ?')->execute([$expId]);
+            exit(json_encode(['ok' => true, 'exportacao_id' => $enviadas ? $expId : null, 'enviadas' => $enviadas, 'falhas' => $falhas, 'avisos' => $avisos, 'total' => $total], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'desfazer_linha') {
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.status = 'exportado' AND l.omie_id IS NOT NULL AND c.empresa = ?"); $st->execute([(int)($in['id'] ?? 0), $empresa]);
+            if (!($l = $st->fetch())) $falha('linha não foi enviada pela API (ou já foi desfeita)');
+            $r = cf_exp_desfazer_linha($pdo, $l, $empresa, (int)$u['id']);
+            if (!$r['ok']) $falha($r['msg']);
+            exit(json_encode(['ok' => true, 'msg' => $r['msg']], JSON_UNESCAPED_UNICODE));
         }
         if ($acao === 'gerar') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
@@ -202,7 +305,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'desfazer') {
             $id = (int)($in['id'] ?? 0);
             $st = $pdo->prepare("SELECT * FROM cf_exportacoes WHERE id = ? AND status = 'gerada'"); $st->execute([$id]);
-            if (!$st->fetch()) $falha('exportação não encontrada ou já desfeita');
+            if (!($ex = $st->fetch())) $falha('exportação não encontrada ou já desfeita');
+            if (($ex['modo'] ?? 'planilha') === 'api') {
+                // exclui título a título no Omie; o que já tem baixa fica e é reportado
+                $q = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE exportacao_id = ? AND status = 'exportado'"); $q->execute([$id]);
+                $okN = 0; $recusas = [];
+                foreach ($q->fetchAll() as $l) { $r = cf_exp_desfazer_linha($pdo, $l, (string)$ex['empresa'], (int)$u['id']); if ($r['ok']) $okN++; else $recusas[] = $l['codigo_integracao'] . ': ' . $r['msg']; }
+                $q = $pdo->prepare("SELECT COUNT(*) FROM cf_lancamentos WHERE exportacao_id = ? AND status = 'exportado'"); $q->execute([$id]); $restam = (int)$q->fetchColumn();
+                $av = json_decode((string)$ex['avisos'], true) ?: [];
+                foreach ($recusas as $rc) $av[] = 'DESFAZER — ' . $rc;
+                $pdo->prepare('UPDATE cf_exportacoes SET status = ?, avisos = ?, n_linhas = ? WHERE id = ?')->execute([$restam ? 'gerada' : 'desfeita', json_encode($av, JSON_UNESCAPED_UNICODE), $restam, $id]);
+                exit(json_encode(['ok' => true, 'excluidos' => $okN, 'recusas' => $recusas], JSON_UNESCAPED_UNICODE));
+            }
             $pdo->beginTransaction();
             $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL WHERE exportacao_id = ? AND status = 'exportado'")->execute([$id]);
             $pdo->prepare("UPDATE cf_exportacoes SET status = 'desfeita' WHERE id = ?")->execute([$id]);
@@ -235,6 +349,10 @@ foreach ($linhas as $l) $montadas[(int)$l['id']] = Exportacao::montar($l, cf_exp
 $st = $pdo->prepare("SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, e.arquivo_nome FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_exportacoes e ON e.id = l.exportacao_id
                      WHERE l.alteracao_pos_exportacao = 1 AND l.status IN ('exportado','removido') AND c.empresa = ? ORDER BY l.id DESC LIMIT 100");
 $st->execute([$empresa]); $alteradas = $st->fetchAll();
+$apiOk = OmieApi::disponivel() && isset(OmieApi::contas()[$empresa]);
+$st = $pdo->prepare("SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, e.gerado_em FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_exportacoes e ON e.id = l.exportacao_id
+                     WHERE l.status = 'exportado' AND l.omie_id IS NOT NULL AND c.empresa = ? AND l.tipo = ? ORDER BY l.id DESC LIMIT 60");
+$st->execute([$empresa, $tipo]); $enviadosApi = $st->fetchAll();
 $st = $pdo->prepare('SELECT e.*, u.nome AS por FROM cf_exportacoes e LEFT JOIN users u ON u.id = e.gerado_por WHERE e.empresa = ? ORDER BY e.id DESC LIMIT 20');
 $st->execute([$empresa]); $historico = $st->fetchAll();
 
@@ -244,7 +362,7 @@ portal_header('Exportar para o Omie', $u);
 <style>main.wrap{max-width:1680px}</style>
 <script src="/capa-financeira/pix.js?v=2"></script>
 <div class="cf-rev">
-<?php cf_cabecalho('Exportar para o Omie', 'Planilha de importação (modelo oficial) com os lançamentos confirmados e ainda não exportados. Depois de importar no Omie, a linha fica marcada como exportada.', [['Capa Financeira', '/capa-financeira/'], ['Exportar para o Omie', null]], 'exportar'); ?>
+<?php cf_cabecalho('Exportar para o Omie', 'Lançamentos confirmados e ainda não enviados. Envie direto pela API (conferido antes, linha a linha, reversível) ou gere a planilha de importação (modelo oficial).', [['Capa Financeira', '/capa-financeira/'], ['Exportar para o Omie', null]], 'exportar'); ?>
 
 <div class="admin-tabs">
   <?php foreach ($empresas as $id => $e): ?><a class="<?= $id === $empresa ? 'on' : '' ?>" href="?empresa=<?= h($id) ?>&tipo=<?= $tipo ?>"><?= h($e['nome']) ?> <small>(<?= ($contagem[$id]['P'] ?? 0) ?> P / <?= ($contagem[$id]['R'] ?? 0) ?> R)</small></a><?php endforeach; ?>
@@ -266,7 +384,13 @@ portal_header('Exportar para o Omie', $u);
     <datalist id="contas-omie"><?php foreach ((array)(cf_config('contas_omie', [])[$empresa] ?? []) as $c): ?><option value="<?= h($c) ?>"></option><?php endforeach; ?></datalist>
     <span class="cf-dica" style="margin:0">Vencimento e Previsão = data prevista da linha. Nº Documento = código de integração. Observações levam cliente, construtora, imóvel, venda, COD, recibo, função e condição.</span>
   </div>
-  <div class="cf-acoes"><?php if ($tipo === 'R' && OmieApi::disponivel() && isset(OmieApi::contas()[$empresa])): ?><button class="btn cf-btn-sec" id="btn-conferir" title="consulta a API do Omie: primeiro pelo CPF/CNPJ, depois pelo nome">Conferir clientes no Omie</button> <?php endif; ?><button class="btn" id="btn-gerar">Gerar planilha (<span id="exp-n">0</span> linhas · <span id="exp-total">R$ 0,00</span>)</button></div>
+  <div class="cf-acoes" style="flex-wrap:wrap;gap:8px">
+    <?php if ($apiOk): ?>
+    <button class="btn cf-btn-sec" id="btn-conferir-api" title="confere na API do Omie tudo o que a importação recusaria: fornecedor/cliente, categoria, conta corrente, departamento, projeto, datas, duplicidade">Conferir para envio</button>
+    <button class="btn" id="btn-enviar" title="inclui os títulos direto no Omie pela API (linha a linha; dá pra desfazer)">Enviar pro Omie (API) (<span class="exp-n">0</span>)</button>
+    <?php endif; ?>
+    <button class="btn <?= $apiOk ? 'cf-btn-sec' : '' ?>" id="btn-gerar">Gerar planilha (<span class="exp-n">0</span> linhas · <span id="exp-total">R$ 0,00</span>)</button>
+  </div>
 </div>
 
 <?php if ($tipo === 'P'): ?>
@@ -285,7 +409,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
   <td class="cf-pix-cel"><input type="text" class="cf-in cf-pix exp-edit" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" autocomplete="off"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?></div><?php endif; ?><div class="exp-omie"></div></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -305,7 +429,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><div class="exp-omie"></div></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?></div><?php endif; ?><div class="exp-omie"></div></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -326,16 +450,27 @@ portal_header('Exportar para o Omie', $u);
 <p class="cf-dica">Na importação por planilha o Omie identifica o título por Categoria + Nota Fiscal + Fornecedor + Valor + Parcela + Vencimento — reimportar uma linha alterada criaria um título novo. Por isso estas ficam para ajuste manual (busque pelo Nº Documento = código de integração). Com a API isso passa a ser automático.</p>
 <?php endif; ?>
 
+<?php if ($enviadosApi): ?>
+<h2 class="cf-h2">Enviados pela API <small>últimos <?= count($enviadosApi) ?> · <?= $tipo === 'P' ? 'contas a pagar' : 'contas a receber' ?></small></h2>
+<div class="cf-tbl-wrap"><table class="grid cf-tbl">
+<thead><tr><th>Código</th><th>Capa</th><th>Favorecido/Cliente</th><th>Valor</th><th>Vencimento</th><th>Cód. Omie</th><th>Enviado em</th><th></th></tr></thead>
+<tbody><?php foreach ($enviadosApi as $a): ?>
+<tr data-id="<?= (int)$a['id'] ?>"><td><b><?= h((string)$a['codigo_integracao']) ?></b></td><td><a href="/capa-financeira/revisar.php?id=<?= (int)$a['capa_id'] ?>"><?= h((string)$a['capa_cod']) ?></a> <?= h(mb_substr((string)$a['capa_cliente'], 0, 30)) ?></td>
+<td><?= h((string)$a['cf_raw']) ?></td><td class="cf-num"><?= cf_brl($a['valor']) ?></td><td><?= cf_data_br($a['data_prevista']) ?></td><td><?= (int)$a['omie_id'] ?></td><td><small><?= h(substr((string)$a['gerado_em'], 0, 16)) ?></small></td>
+<td><button type="button" class="cf-x exp-desfazer-linha" title="exclui este título no Omie (se ainda não foi baixado) e devolve a linha para 'confirmado'">↩ excluir do Omie</button></td></tr>
+<?php endforeach; ?></tbody></table></div>
+<?php endif; ?>
+
 <h2 class="cf-h2">Exportações anteriores <small><?= h($emp['nome']) ?></small></h2>
 <?php if (!$historico): ?><p class="home-sub">Nenhuma ainda.</p><?php else: ?>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl">
 <thead><tr><th>#</th><th>Quando</th><th>Tipo</th><th>Linhas</th><th>Total</th><th>Arquivo</th><th>Avisos</th><th>Status</th><th></th></tr></thead>
 <tbody><?php foreach ($historico as $e): $av = json_decode((string)$e['avisos'], true) ?: []; ?>
 <tr data-id="<?= (int)$e['id'] ?>"><td><?= (int)$e['id'] ?></td><td><?= h(substr((string)$e['gerado_em'], 0, 16)) ?><br><small><?= h((string)$e['por']) ?></small></td><td><?= $e['tipo'] === 'P' ? 'Pagar' : 'Receber' ?></td>
-<td><?= (int)$e['n_linhas'] ?></td><td class="cf-num"><?= cf_brl($e['total']) ?></td><td><a href="?baixar=<?= (int)$e['id'] ?>">⬇ <?= h($e['arquivo_nome']) ?></a></td>
+<td><?= (int)$e['n_linhas'] ?></td><td class="cf-num"><?= cf_brl($e['total']) ?></td><td><?php if (($e['modo'] ?? 'planilha') === 'api'): ?><span class="cf-tag">API</span><?php else: ?><a href="?baixar=<?= (int)$e['id'] ?>">⬇ <?= h($e['arquivo_nome']) ?></a><?php endif; ?></td>
 <td><?php if ($av): ?><details><summary><?= count($av) ?> aviso(s)</summary><ul class="cf-flags"><?php foreach ($av as $x): ?><li><?= h($x) ?></li><?php endforeach; ?></ul></details><?php endif; ?></td>
 <td><span class="cf-status cf-st-<?= $e['status'] === 'gerada' ? 'confirmada' : 'descartada' ?>"><?= h($e['status']) ?></span></td>
-<td><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" title="a importação no Omie falhou: devolve as linhas para 'confirmado' e gera de novo">↩ desfazer</button><?php endif; ?></td></tr>
+<td><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" data-modo="<?= h((string)($e['modo'] ?? 'planilha')) ?>" title="<?= ($e['modo'] ?? '') === 'api' ? 'exclui os títulos no Omie (os já baixados ficam) e devolve as linhas para confirmado' : 'a importação no Omie falhou: devolve as linhas para confirmado e gera de novo' ?>">↩ desfazer</button><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <?php endif; ?>
 
@@ -352,7 +487,8 @@ portal_header('Exportar para o Omie', $u);
   function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   function soma(){ let n = 0, t = 0; document.querySelectorAll('.exp-sel:checked').forEach(c => { n++; t += parseFloat(c.closest('tr').dataset.valor) || 0; });
-    const en = document.getElementById('exp-n'); if (en) { en.textContent = n; document.getElementById('exp-total').textContent = brl(t); document.getElementById('btn-gerar').disabled = n === 0; } }
+    document.querySelectorAll('.exp-n').forEach(en => en.textContent = n); const et = document.getElementById('exp-total'); if (et) et.textContent = brl(t);
+    ['btn-gerar','btn-enviar'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = n === 0; }); }
   soma();
   document.querySelectorAll('.exp-sel').forEach(c => c.addEventListener('change', soma));
   const todos = document.getElementById('exp-todos');
@@ -407,10 +543,56 @@ portal_header('Exportar para o Omie', $u);
     setTimeout(() => location.href = '/capa-financeira/exportar.php?empresa=' + empresa + '&tipo=' + tipo, 1500);
   });
   document.querySelectorAll('.exp-desfazer').forEach(b => b.addEventListener('click', async () => {
-    const id = +b.closest('tr').dataset.id;
-    if (!confirm('Desfazer a exportação #' + id + '? As linhas voltam para "confirmado" e aparecem de novo para exportar. Só faça isso se a planilha NÃO foi importada no Omie.')) return;
-    const j = await post({acao:'desfazer', id}); if (j) location.reload();
+    const id = +b.closest('tr').dataset.id; const api = b.dataset.modo === 'api';
+    if (!confirm(api ? 'Desfazer o envio #' + id + '? Os títulos serão EXCLUÍDOS no Omie (os que já tiverem baixa ficam e são avisados) e as linhas voltam para "confirmado".'
+                     : 'Desfazer a exportação #' + id + '? As linhas voltam para "confirmado" e aparecem de novo para exportar. Só faça isso se a planilha NÃO foi importada no Omie.')) return;
+    b.disabled = true; const j = await post({acao:'desfazer', id}); if (!j) { b.disabled = false; return; }
+    if (api) alert('Excluídos no Omie: ' + j.excluidos + (j.recusas.length ? '\n\nNão excluídos:\n- ' + j.recusas.join('\n- ') : ''));
+    location.reload();
   }));
+  document.querySelectorAll('.exp-desfazer-linha').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); const cod = tr.querySelector('b').textContent;
+    if (!confirm('Excluir o título ' + cod + ' no Omie e devolver a linha para "confirmado"?')) return;
+    b.disabled = true; const j = await post({acao:'desfazer_linha', id: +tr.dataset.id}); if (!j) { b.disabled = false; return; }
+    toast(j.msg); setTimeout(() => location.reload(), 800);
+  }));
+  function mostraConferencia(linhas){
+    let nOk = 0, nErr = 0;
+    document.querySelectorAll('#tbl-exp tr.cf-row').forEach(tr => {
+      const r = linhas[tr.dataset.id]; const box = tr.querySelector('.exp-omie'); if (!box) return;
+      if (!r) { box.innerHTML = ''; return; }
+      let html = '';
+      r.erros.forEach(e => html += '<div class="cf-flag cf-grave">API: ' + e.replace(/</g, '&lt;') + '</div>');
+      r.avisos.forEach(a => html += '<div class="cf-flag cf-leve">API: ' + a.replace(/</g, '&lt;') + '</div>');
+      if (!r.erros.length) html += '<div class="cf-flag cf-ok">API: pronto para enviar' + (r.fornecedor ? ' (cód. ' + r.fornecedor + ')' : '') + '</div>';
+      box.innerHTML = html;
+      const sel = tr.querySelector('.exp-sel'); if (r.erros.length) { sel.checked = false; nErr++; } else nOk++;
+    });
+    soma(); return {nOk, nErr};
+  }
+  const bca = document.getElementById('btn-conferir-api');
+  if (bca) bca.addEventListener('click', async () => {
+    bca.disabled = true; bca.textContent = 'Conferindo no Omie…';
+    const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
+    const j = await post({acao:'conferir_api', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+    bca.disabled = false; bca.textContent = 'Conferir para envio';
+    if (!j) return;
+    const r = mostraConferencia(j.linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
+  });
+  const be = document.getElementById('btn-enviar');
+  if (be) be.addEventListener('click', async () => {
+    const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
+    if (!ids.length) return;
+    if (!confirm('Enviar ' + ids.length + ' título(s) para o Omie pela API? Cada linha é conferida antes; as que passarem são incluídas no Omie na hora (dá pra desfazer enquanto não forem baixadas).')) return;
+    be.disabled = true; be.textContent = 'Enviando…';
+    const j = await post({acao:'enviar_api', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+    if (!j) { be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; return; }
+    let msg = 'Enviados: ' + j.enviadas.length + ' título(s) (' + brl(j.total) + ')';
+    if (j.enviadas.length) msg += '\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id).join('\n');
+    if (j.falhas.length) msg += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
+    if (j.avisos.length) msg += '\n\nAvisos:\n' + j.avisos.map(a => '  ' + a).join('\n');
+    alert(msg); location.reload();
+  });
   document.querySelectorAll('.exp-ajustado').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const j = await post({acao:'ajustado', id: +tr.dataset.id}); if (j) tr.remove();
   }));
