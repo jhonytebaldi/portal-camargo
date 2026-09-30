@@ -272,14 +272,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $t = OmieEnvio::consultar((string)$ex['empresa'], $ex['tipo'] === 'R' ? 'R' : 'P', (string)$l['codigo_integracao']);
                     if (!$t) $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => false, 'msg' => 'NÃO está no Omie (nenhum título com este código de integração)'];
                     else {
-                        $bate = abs((float)$t['valor_documento'] - (float)$l['valor']) < 0.005 && OmieEnvio::br((string)$l['data_prevista']) === (string)$t['data_vencimento'];
-                        $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => $bate, 'omie_id' => (int)$t['codigo_lancamento_omie'],
-                                  'msg' => ($bate ? 'ok' : 'DIVERGE') . ' — cód. Omie ' . $t['codigo_lancamento_omie'] . ', ' . number_format((float)$t['valor_documento'], 2, ',', '.') . ' venc. ' . $t['data_vencimento'] . ', status ' . ($t['status_titulo'] ?? '')];
+                        $vOmie = (float)$t['valor_documento']; $vNosso = (float)$l['valor']; $dOmie = (string)$t['data_vencimento']; $dNosso = OmieEnvio::br((string)$l['data_prevista']);
+                        $dif = [];
+                        if (abs($vOmie - $vNosso) >= 0.005) $dif[] = 'valor: portal R$ ' . number_format($vNosso, 2, ',', '.') . ' × Omie R$ ' . number_format($vOmie, 2, ',', '.');
+                        if ($dOmie !== $dNosso) $dif[] = "vencimento: portal $dNosso × Omie $dOmie";
+                        $bate = !$dif;
+                        $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => $bate, 'existe' => true, 'omie_id' => (int)$t['codigo_lancamento_omie'],
+                                  'msg' => $bate ? 'ok — cód. Omie ' . $t['codigo_lancamento_omie'] . ', R$ ' . number_format($vOmie, 2, ',', '.') . ' venc. ' . $dOmie . ', status ' . ($t['status_titulo'] ?? '')
+                                                 : 'está no Omie (cód. ' . $t['codigo_lancamento_omie'] . ', status ' . ($t['status_titulo'] ?? '') . ') mas com dados diferentes do portal — ' . implode('; ', $dif) . '. Se o Omie está certo, vincule; se o portal está certo, ajuste no Omie'];
                         if ($bate && !$l['omie_id']) $pdo->prepare('UPDATE cf_lancamentos SET omie_id = ? WHERE id = ?')->execute([(int)$t['codigo_lancamento_omie'], (int)$l['id']]);
                     }
                 } catch (Throwable $e) { $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => false, 'msg' => 'não deu para conferir: ' . $e->getMessage()]; }
             }
             exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'vincular_linha') {
+            // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
+            $id = (int)($in['id'] ?? 0); $omieId = (int)($in['omie_id'] ?? 0);
+            if (!$id || !$omieId) $falha('dados incompletos');
+            $pdo->prepare("UPDATE cf_lancamentos SET omie_id = ?, omie_erro = NULL WHERE id = ? AND status = 'exportado'")->execute([$omieId, $id]);
+            exit(json_encode(['ok' => true]));
         }
         if ($acao === 'devolver_linha') {
             // linha "exportada" por planilha que não chegou no Omie: volta para confirmado para enviar de novo (pela API ou nova planilha)
@@ -623,9 +635,14 @@ portal_header('Exportar para o Omie', $u);
     b.disabled = false; b.textContent = '✔ conferir no Omie';
     if (!j) return;
     const falt = j.linhas.filter(l => !l.ok);
-    let html = '<div class="cf-flags" style="margin-top:6px">' + j.linhas.map(l => '<div class="cf-flag ' + (l.ok ? 'cf-ok' : 'cf-grave') + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;') + (l.ok ? '' : ' <button type="button" class="cf-x exp-devolver" data-id="' + l.id + '">↩ devolver p/ confirmado</button>') + '</div>').join('') + '</div>';
+    let html = '<div class="cf-flags" style="margin-top:6px">' + j.linhas.map(l => '<div class="cf-flag ' + (l.ok ? 'cf-ok' : (l.existe ? 'cf-leve' : 'cf-grave')) + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;')
+      + (l.ok ? '' : (l.existe ? ' <button type="button" class="cf-x exp-vincular" data-id="' + l.id + '" data-omie="' + l.omie_id + '" title="guarda o vínculo com este título do Omie como está (não altera nada no Omie)">✔ vincular como está no Omie</button>'
+                               : ' <button type="button" class="cf-x exp-devolver" data-id="' + l.id + '" title="a linha volta para a fila e pode ser enviada de novo">↩ devolver p/ confirmado</button>')) + '</div>').join('') + '</div>';
     let cel = tr.querySelector('.exp-conf-res'); if (!cel) { cel = document.createElement('div'); cel.className = 'exp-conf-res'; tr.querySelector('td:nth-child(7)').appendChild(cel); }
     cel.innerHTML = html;
+    cel.querySelectorAll('.exp-vincular').forEach(d => d.addEventListener('click', async () => {
+      const r = await post({acao:'vincular_linha', id: +d.dataset.id, omie_id: +d.dataset.omie}); if (r) { toast('Vinculado'); d.remove(); }
+    }));
     cel.querySelectorAll('.exp-devolver').forEach(d => d.addEventListener('click', async () => {
       if (!confirm('Devolver esta linha para "confirmado" para enviar de novo (pela API ou nova planilha)?')) return;
       const r = await post({acao:'devolver_linha', id: +d.dataset.id}); if (r) { toast('Linha devolvida'); d.remove(); }
