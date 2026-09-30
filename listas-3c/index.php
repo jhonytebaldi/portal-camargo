@@ -19,7 +19,7 @@ $id = (int)($_GET['id'] ?? 0);
 $mascara = !empty($_GET['mascara']);
 $mk = fn(string $s, string $t) => $mascara ? L3cTratamento::mascarar($s, $t) : $s;
 
-$lista = null; $itens = []; $descartes = []; $campanhas = []; $erro3c = '';
+$lista = null; $itens = []; $descartes = []; $jaSubiram = []; $campanhas = []; $erro3c = '';
 if ($id) {
     $st = $pdo->prepare('SELECT * FROM l3c_listas WHERE id=?'); $st->execute([$id]);
     $lista = $st->fetch() ?: null;
@@ -31,6 +31,7 @@ if ($id) {
             $itens = $st->fetchAll();
         }
         if ($lista['status'] === 'pronta') {
+            $jaSubiram = L3cMontador::jaSubiramPeloPortal($pdo, $id);
             try { $campanhas = L3cTresC::doConfig()->campanhas(); } catch (Throwable $e) { $erro3c = $e->getMessage(); }
         }
     }
@@ -46,6 +47,9 @@ portal_header('Listas 3C', $u);
 .l3-card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px 20px;margin:0 0 18px}
 .l3-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
 .l3-form label{font-size:13px;font-weight:600;display:flex;flex-direction:column;gap:6px}
+.l3-form .l3-check{grid-column:1/-1;font-weight:400}
+.l3-form .l3-check span{display:flex;gap:8px;align-items:center;font-weight:600}
+.l3-form .l3-check input{width:auto;padding:0}
 .l3-form select,.l3-form input{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:4px;background:#fff}
 .l3-btn{font:inherit;font-weight:600;padding:10px 16px;border:none;border-radius:4px;background:var(--moss);color:#fff;cursor:pointer}
 .l3-btn:hover{background:var(--moss-d)} .l3-btn[disabled]{opacity:.5;cursor:default}
@@ -102,6 +106,10 @@ if ($falta): ?>
       <label>até<input type="date" name="ate" value="<?= h(date('Y-m-d', strtotime('-1 day'))) ?>" required></label>
       <label>Nome da lista (opcional)<input type="text" name="nome" id="l3-nome" maxlength="160" placeholder="no padrão do 3C"></label>
       <button class="l3-btn" type="submit">Montar lista</button>
+      <label class="l3-check"><span><input type="checkbox" name="incluir_corretor" value="1">
+        Incluir leads recentes de origem do corretor</span>
+        <small class="l3-desc">Desmarcado, fica de fora quem veio de origem do corretor há menos de
+          <?= (int)(reset($modelos)['dias_origem_corretor'] ?? 30) ?> dias e ainda está com atendimento aberto. Atendimento já encerrado não fica de fora por esta regra.</small></label>
     </form>
     <p class="l3-desc" id="l3-modelo-desc"></p>
   </div>
@@ -135,7 +143,8 @@ if ($falta): ?>
       <span class="l3-pill <?= h($lista['status']) ?>" id="l3-status"><?= h(L3C_STATUS[$lista['status']] ?? $lista['status']) ?></span>
     </div>
     <p class="l3-desc"><?= h($par['nome'] ?? $lista['modelo']) ?> · <?= $par['tipo'] === 'agendamento_vencido' ? 'agendamento de' : 'cadastro de' ?>
-      <?= h(date('d/m/y', strtotime($lista['periodo_de']))) ?> a <?= h(date('d/m/y', strtotime($lista['periodo_ate']))) ?></p>
+      <?= h(date('d/m/y', strtotime($lista['periodo_de']))) ?> a <?= h(date('d/m/y', strtotime($lista['periodo_ate']))) ?>
+      · <?= !empty($par['incluir_recentes_corretor']) ? 'com' : 'sem' ?> os leads recentes do corretor</p>
     <div class="l3-bar"><i id="l3-bar" style="width:<?= (float)$lista['progresso'] ?>%"></i></div>
     <div id="l3-texto" style="font-size:14px"><?= h($lista['progresso_txt']) ?></div>
     <div class="l3-kpis">
@@ -162,6 +171,14 @@ if ($falta): ?>
   <?php if ($lista['status'] === 'pronta'): ?>
   <div class="l3-card">
     <h2 style="font-size:16px;margin:0 0 10px">Aprovar e subir no 3C</h2>
+    <?php if ($jaSubiram): ?>
+    <?php // O Jhony montou a mesma lista duas vezes e achou que o portal não
+          // barrou (30/09): a conferência só acontece ao aprovar, porque só
+          // aí se sabe a campanha. Este aviso mostra antes, na lista pronta. ?>
+    <div class="aviso" style="margin:0 0 10px">Repetidos já nesta prévia:
+      <?php foreach ($jaSubiram as $j): ?><b><?= (int)$j['n'] ?></b> destes contatos já subiram por este portal na campanha <?= h($j['campanha_nome'] ?: $j['campanha_id']) ?>. <?php endforeach; ?>
+      Se aprovar na mesma campanha, eles saem sozinhos e não sobem de novo.</div>
+    <?php endif; ?>
     <?php if ($erro3c): ?><div class="erro"><?= h($erro3c) ?></div>
     <?php elseif (!$campanhas): ?><div class="aviso">Nenhuma campanha do 3C liberada para este portal.</div>
     <?php else: ?>
@@ -233,7 +250,8 @@ if (sel) {
   document.getElementById('l3-nova').addEventListener('submit', async ev => {
     ev.preventDefault();
     const f = new FormData(ev.target); ev.submitter.disabled = true;
-    const r = await acao({acao: 'criar', modelo: f.get('modelo'), de: f.get('de'), ate: f.get('ate'), nome: f.get('nome')});
+    const r = await acao({acao: 'criar', modelo: f.get('modelo'), de: f.get('de'), ate: f.get('ate'), nome: f.get('nome'),
+                         incluir_corretor: f.get('incluir_corretor') === '1'});
     // Quem está no modo sem dados pessoais (reunião, gravação) continua nele na lista nova.
     if (r.ok) location.href = '?id=' + r.id + (new URLSearchParams(location.search).has('mascara') ? '&mascara=1' : ''); else { alert(r.erro); ev.submitter.disabled = false; }
   });

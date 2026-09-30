@@ -36,7 +36,13 @@ try {
         // Sem nome digitado, vai o padrão das listas feitas à mão no 3C
         // (ver L3cTratamento::nomePadrao), para não confundir na campanha.
         $nome = trim((string)($in['nome'] ?? '')) ?: L3cTratamento::nomePadrao($modelos[$slug], $de, $ate);
-        $novo = L3cMontador::criar($pdo, $slug, $modelos[$slug], $de, $ate, mb_substr($nome, 0, 160), (int)$u['id']);
+        // Caixa da tela, por lista e desmarcada por padrão. O Jhony (30/09):
+        // "geralmente não quero pegar esses leads recentes, que são campanha
+        // deles, mas eventualmente quero". Fica gravada na foto do modelo
+        // (l3c_listas.parametros), então a lista sabe como foi montada.
+        $modelo = $modelos[$slug];
+        $modelo['incluir_recentes_corretor'] = !empty($in['incluir_corretor']);
+        $novo = L3cMontador::criar($pdo, $slug, $modelo, $de, $ate, mb_substr($nome, 0, 160), (int)$u['id']);
         l3c_json(['ok' => true, 'id' => $novo]);
     }
 

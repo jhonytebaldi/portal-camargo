@@ -22,6 +22,7 @@ require_once __DIR__ . '/Apis.php';
 
 final class L3cMontador
 {
+    public const DESCARTE_CORRETOR = 'lead recente de origem do corretor, atendimento ainda aberto';
     public const HEADER_3C = ['identifier', 'phone', 'nome', 'email', 'contactid', 'mensagem', 'origem'];
     private const POR_PAGINA = 500;
     private const IDS_POR_CHAMADA = 80;     // /pessoas?ids= e /andamentos?ids= (per_page=100, ver automacao/README)
@@ -147,17 +148,14 @@ final class L3cMontador
         else { $q['ativo'] = 'true'; $q['criado_de'] = $l['periodo_de']; $q['criado_ate'] = $l['periodo_ate']; }
 
         $etapas = array_map('intval', $m['etapas']);
-        $diasCorretor = (int)($m['dias_origem_corretor'] ?? 0);
         $ins = $this->pdo->prepare('INSERT IGNORE INTO l3c_itens (lista_id, atendimento_id, cliente_id, lead_id, stage, origin, atendente, criado_em, encerrado_em, obs, descarte)
                                     VALUES (?,?,?,?,?,?,?,?,?,?,?)');
         do {
             foreach ($this->pagina('/atendimentos', $q, $cur) as $a) {
                 if (!in_array((int)$a['stage'], $etapas, true)) continue;   // Proposta/Negociado nunca chegam aqui
-                $descarte = null;
-                if ($diasCorretor > 0 && L3cTratamento::origemDeCorretor($a['origin'] ?? '', (array)$m['origens_corretor'])
-                    && strtotime((string)$a['created_at']) > time() - $diasCorretor * 86400) {
-                    $descarte = 'lead recente de origem do corretor';
-                }
+                // Regra inteira (caixa "incluir", encerrado liberado, janela de
+                // dias) em L3cTratamento::seguraPorCorretor, para ter teste.
+                $descarte = L3cTratamento::seguraPorCorretor($a, $m, time()) ? self::DESCARTE_CORRETOR : null;
                 $atendente = '';
                 foreach ((array)($a['atendentes_detalhes'] ?? []) as $d) if ((int)($d['posicao'] ?? 0) === 1) $atendente = (string)($d['nome'] ?? '');
                 $ins->execute([$l['id'], (int)$a['id'], ($a['cliente'] ?? null) ?: null, ($a['lead'] ?? null) ?: null, (int)$a['stage'],
@@ -481,6 +479,26 @@ final class L3cMontador
         }
         $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=? WHERE id=?')->execute([json_encode($cur), $id]);
         return !empty($cur['dup_ok']);
+    }
+
+    /**
+     * Prévia da conferência, para a lista ainda pronta: dos contatos que
+     * entram, quantos este portal já subiu, por campanha. Não descarta nada
+     * (a campanha só é escolhida ao aprovar, e é lá que a conferência vale),
+     * só avisa. Mesma fonte da conferência: l3c_itens com enviado 1 ou 2 de
+     * outra lista, que é o banco do portal no servidor, o mesmo para todo
+     * computador que abre o portal.
+     */
+    public static function jaSubiramPeloPortal(PDO $pdo, int $id): array
+    {
+        $st = $pdo->prepare("SELECT y.campanha_id, MAX(y.campanha_nome) campanha_nome, COUNT(DISTINCT i.telefone) n
+            FROM l3c_itens i
+            JOIN l3c_itens x ON x.telefone = i.telefone AND x.lista_id <> i.lista_id AND x.enviado IN (1,2)
+            JOIN l3c_listas y ON y.id = x.lista_id AND y.campanha_id IS NOT NULL
+            WHERE i.lista_id = ? AND i.descarte IS NULL AND i.telefone <> ''
+            GROUP BY y.campanha_id ORDER BY n DESC");
+        $st->execute([$id]);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
     }
 
     private function contarDuplicatas(int $id): int

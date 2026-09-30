@@ -49,6 +49,36 @@ igual($T::origemDeCorretor('Campanha do Corretor', L3cModelos::ORIGENS_CORRETOR)
 igual($T::origemDeCorretor('Celular do Corretor', L3cModelos::ORIGENS_CORRETOR), true, 'celular do corretor');
 igual($T::origemDeCorretor('Telefone da Imobiliária', L3cModelos::ORIGENS_CORRETOR), false, 'telefone da imobiliária não é do corretor');
 
+// Lead recente de origem do corretor (pedidos do Jhony em 30/09).
+$agora = strtotime('2026-09-30T12:00:00-03:00');
+$prim = $pad['primeiras_etapas'];
+$aberto = ['origin' => 'Campanha do Corretor', 'created_at' => '2026-09-29T10:00:00-03:00', 'ended_at' => null];
+$encerr = ['origin' => 'Campanha do Corretor', 'created_at' => '2026-09-29T10:00:00-03:00', 'ended_at' => '2026-09-29T18:00:00-03:00'];
+igual($T::seguraPorCorretor($aberto, $prim, $agora), true, 'corretor: recente e aberto fica fora por padrão');
+igual($T::seguraPorCorretor($aberto, $prim + ['incluir_recentes_corretor' => true], $agora), false, 'corretor: caixa "incluir" traz o recente aberto');
+igual($T::seguraPorCorretor($encerr, $prim, $agora), false, 'corretor: entrou ontem e já encerrado não fica fora');
+igual($T::seguraPorCorretor(['ativo' => false] + $aberto, $prim, $agora), false, 'corretor: ativo=false conta como encerrado');
+igual($T::seguraPorCorretor(['created_at' => '2026-08-20T10:00:00-03:00'] + $aberto, $prim, $agora), false, 'corretor: mais de 30 dias não fica fora');
+igual($T::seguraPorCorretor(['origin' => 'Site'] + $aberto, $prim, $agora), false, 'corretor: origem que não é do corretor não fica fora');
+igual($T::seguraPorCorretor($aberto, ['dias_origem_corretor' => 0] + $prim, $agora), false, 'corretor: 0 dias desliga a regra');
+igual(array_key_exists('incluir_recentes_corretor', $prim), false, 'corretor: a caixa nasce desmarcada (o padrão não inclui)');
+
+// Motivo em "Nunca entram" aparece travado no modelo, e "Nunca" continua vencendo.
+$cx = [];
+foreach (L3cModelos::caixasDoModelo(L3cModelos::CATALOGO, $ant['motivos'], $ant['motivos_nunca']) as $c) $cx[$c['motivo']] = $c;
+igual(isset($cx['Crédito não aprovou'], $cx['Sem Renda']), true, 'modelos: crédito e sem renda aparecem no modelo antigo');
+igual($cx['Crédito não aprovou']['travado'] && $cx['Sem Renda']['travado'], true, 'modelos: aparecem travados enquanto estão em Nunca');
+igual($cx['Sem Entrada']['travado'], false, 'modelos: motivo fora de Nunca fica livre');
+$nuncaSem = array_values(array_diff($ant['motivos_nunca'], ['Crédito não aprovou', 'Sem Renda']));
+$cx2 = [];
+foreach (L3cModelos::caixasDoModelo(L3cModelos::CATALOGO, $ant['motivos'], $nuncaSem) as $c) $cx2[$c['motivo']] = $c;
+igual($cx2['Sem Renda']['travado'], false, 'modelos: desmarcado em Nunca, destrava no modelo');
+$salvos = L3cModelos::motivosAoSalvar(array_merge($ant['motivos'], ['Sem Renda', 'Crédito não aprovou']), $ant['motivos'], $nuncaSem, L3cModelos::CATALOGO);
+igual($T::descartePorMotivo('Sem Renda', $salvos, $nuncaSem), null, 'modelos: sem renda entra na antiga depois de sair de Nunca');
+igual($T::descartePorMotivo('Sem Renda', $salvos, $ant['motivos_nunca']), 'motivo que nunca entra', 'modelos: se voltar para Nunca, Nunca vence');
+$guard = L3cModelos::motivosAoSalvar($ant['motivos'], array_merge($ant['motivos'], ['Sem Renda']), $ant['motivos_nunca'], L3cModelos::CATALOGO);
+igual(in_array('Sem Renda', $guard, true), true, 'modelos: salvar com a caixa travada não apaga a marcação do modelo');
+
 // Resumo curto, datas no fuso do Robust e teto de tamanho.
 $r = $T::resumo(['stage' => 1, 'criado_em' => '2026-09-11T23:30:00-03:00', 'encerrado_em' => '2026-09-20T10:00:00-03:00',
                  'motivo' => 'Sem retorno após todas as tentativas', 'atendente' => 'Fulano', 'obs' => "cliente\nquer 2 quartos"]);
