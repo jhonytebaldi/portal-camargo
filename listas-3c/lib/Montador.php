@@ -354,6 +354,33 @@ final class L3cMontador
         $id = (int)$l['id'];
         $campanha = (int)$l['campanha_id'];
         L3cTresC::exigePermitida($campanha);
+        // Uma subida por campanha de cada vez. Duas listas iguais aprovadas na
+        // mesma campanha (duas abas, ou a tela e o cron) conferiam ao mesmo
+        // tempo, cada uma sem ver a outra, e as duas subiam: defeito do teste
+        // do Jhony com o Guilherme em 30/09. Com a trava, a segunda só confere
+        // depois que a primeira terminou o passo dela.
+        $trava = 'l3c_campanha_' . $campanha;
+        if ((int)$this->pdo->query('SELECT GET_LOCK(' . $this->pdo->quote($trava) . ', 0)')->fetchColumn() !== 1) {
+            $this->pdo->prepare('UPDATE l3c_listas SET progresso_txt=? WHERE id=?')
+                ->execute(['Outra lista está subindo nesta campanha agora; esta continua logo em seguida, para conferir os repetidos com ela.', $id]);
+            return;
+        }
+        try {
+            $this->enviarComTrava($l, $orcamento);
+        } finally {
+            $this->pdo->query('SELECT RELEASE_LOCK(' . $this->pdo->quote($trava) . ')');
+        }
+    }
+
+    private function enviarComTrava(array $l, float $orcamento): void
+    {
+        $id = (int)$l['id'];
+        $campanha = (int)$l['campanha_id'];
+        // A conferência pode ter terminado num passo anterior (a tela trabalha
+        // ~8 s por vez) e outra lista igual ter subido no intervalo: sem isto,
+        // esta subia os mesmos contatos de novo (dup_ok não confere outra vez).
+        // Custa uma consulta ao banco, sem chamar o 3C.
+        $this->marcarJaSubidos($id, $campanha);
         // Antes de criar a lista no 3C: tira quem já está na campanha de
         // destino. Pedido do Jhony (29/09): na Campanha Padrão as listas são
         // feitas à mão e é lá que dá para conferir duplicata. Só roda uma vez
@@ -441,11 +468,7 @@ final class L3cMontador
         $id = (int)$l['id'];
         $campanha = (int)$l['campanha_id'];
         if (empty($cur['dup_hist'])) {
-            $this->pdo->prepare("UPDATE l3c_itens i JOIN (
-                    SELECT DISTINCT x.telefone FROM l3c_itens x JOIN l3c_listas y ON y.id = x.lista_id
-                    WHERE y.campanha_id = ? AND y.id <> ? AND x.enviado IN (1,2) AND x.telefone <> '') h ON h.telefone = i.telefone
-                SET i.descarte = ? WHERE i.lista_id = ? AND i.descarte IS NULL AND i.enviado = 0")
-                ->execute([$campanha, $id, self::DESCARTE_DUP_PORTAL, $id]);
+            $this->marcarJaSubidos($id, $campanha);
             $cur['dup_hist'] = 1;
             $cur['dup'] = 0;
             $cur['dup_n'] = 0;
@@ -499,6 +522,16 @@ final class L3cMontador
             GROUP BY y.campanha_id ORDER BY n DESC");
         $st->execute([$id]);
         return $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /** Tira da lista (ainda não enviada) quem este portal já subiu nesta campanha por outra lista. */
+    private function marcarJaSubidos(int $id, int $campanha): void
+    {
+        $this->pdo->prepare("UPDATE l3c_itens i JOIN (
+                SELECT DISTINCT x.telefone FROM l3c_itens x JOIN l3c_listas y ON y.id = x.lista_id
+                WHERE y.campanha_id = ? AND y.id <> ? AND x.enviado IN (1,2) AND x.telefone <> '') h ON h.telefone = i.telefone
+            SET i.descarte = ? WHERE i.lista_id = ? AND i.descarte IS NULL AND i.enviado = 0")
+            ->execute([$campanha, $id, self::DESCARTE_DUP_PORTAL, $id]);
     }
 
     private function contarDuplicatas(int $id): int

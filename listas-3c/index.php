@@ -124,7 +124,7 @@ if ($falta): ?>
           <td><a href="?id=<?= (int)$r['id'] ?><?= $mascara ? '&mascara=1' : '' ?>"><?= h($r['nome']) ?></a></td>
           <td><?= h($modelos[$r['modelo']]['nome'] ?? $r['modelo']) ?></td>
           <td><?= h(date('d/m/y', strtotime($r['periodo_de']))) ?> a <?= h(date('d/m/y', strtotime($r['periodo_ate']))) ?></td>
-          <td><span class="l3-pill <?= h($r['status']) ?>"><?= h(L3C_STATUS[$r['status']] ?? $r['status']) ?></span></td>
+          <td><span class="l3-pill <?= h($r['status']) ?>"><?= h(L3cTratamento::rotuloStatus($r)) ?></span></td>
           <td><?= (int)$r['entram'] ?></td>
         </tr>
       <?php endforeach; ?>
@@ -140,7 +140,7 @@ if ($falta): ?>
   <div class="l3-card" id="l3-lista" data-id="<?= (int)$lista['id'] ?>" data-status="<?= h($lista['status']) ?>">
     <div class="l3-top">
       <h2 style="font-size:18px;margin:0"><?= h($lista['nome']) ?></h2>
-      <span class="l3-pill <?= h($lista['status']) ?>" id="l3-status"><?= h(L3C_STATUS[$lista['status']] ?? $lista['status']) ?></span>
+      <span class="l3-pill <?= h($lista['status']) ?>" id="l3-status"><?= h(L3cTratamento::rotuloStatus($lista)) ?></span>
     </div>
     <p class="l3-desc"><?= h($par['nome'] ?? $lista['modelo']) ?> · <?= $par['tipo'] === 'agendamento_vencido' ? 'agendamento de' : 'cadastro de' ?>
       <?= h(date('d/m/y', strtotime($lista['periodo_de']))) ?> a <?= h(date('d/m/y', strtotime($lista['periodo_ate']))) ?>
@@ -159,7 +159,9 @@ if ($falta): ?>
     <?php endif; ?>
   </div>
 
-  <?php if ($descartes && count($descartes) > 1): ?>
+  <?php // Mostra sempre que alguém ficou de fora: quando TODOS eram repetidos só há
+      // um grupo, e a regra antiga (mais de um grupo) escondia justamente a explicação. ?>
+  <?php if (array_filter($descartes, fn($d) => $d['descarte'] !== null)): ?>
   <div class="l3-card">
     <h2 style="font-size:16px;margin:0">Quem ficou de fora e por quê</h2>
     <ul class="l3-desc-lista">

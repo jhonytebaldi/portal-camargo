@@ -64,13 +64,17 @@ try {
         $pdo->prepare("UPDATE l3c_listas SET status='pronta' WHERE id=?")->execute([$id]);
         return $id;
     };
-    $aprovar = function (int $id, int $campanha) use ($pdo, $tresc): array {
+    // Aprovar = o mesmo UPDATE do acao.php; subir = os passos que a tela ou o cron pedem.
+    $marcar = function (int $id, int $campanha) use ($pdo): void {
         $pdo->prepare("UPDATE l3c_listas SET status='enviando', campanha_id=?, campanha_nome=?, cursor_json='{}' WHERE id=?")
             ->execute([$campanha, "Campanha $campanha", $id]);
+    };
+    $subir = function (int $id, int $vezes = 10) use ($pdo, $tresc): array {
         $m = new L3cMontador($pdo, null, $tresc);
-        for ($i = 0; $i < 10; $i++) { $e = $m->avancar($id, 20.0); if ($e['status'] !== 'enviando') break; }
+        for ($i = 0; $i < $vezes; $i++) { $e = $m->avancar($id, 20.0); if ($e['status'] !== 'enviando') break; }
         return $e;
     };
+    $aprovar = function (int $id, int $campanha) use ($marcar, $subir): array { $marcar($id, $campanha); return $subir($id); };
 
     $A = $nova('A', ['47988880001', '47988880002', '47988880003']);
     igual(L3cMontador::jaSubiramPeloPortal($pdo, $A), [], 'primeira lista do portal: nada repetido');
@@ -97,6 +101,37 @@ try {
     $ed = $aprovar($D, 316173);
     $st = $pdo->prepare('SELECT tresc_lista_id FROM l3c_listas WHERE id=?'); $st->execute([$D]);
     igual([$ed['status'], $st->fetchColumn()], ['enviada', null], 'só repetidos: nenhuma lista vazia é criada no 3C');
+    // Defeito de 30/09 (teste do Jhony com o Guilherme), a sequência que
+    // deixa passar repetido: a conferência da lista E terminou num passo e a
+    // subida ficou para o próximo (a tela trabalha ~8 s por vez; fechar a aba
+    // ou a hospedagem cortar deixa assim). Nesse intervalo a lista F, igual,
+    // conferiu e subiu. Quando E voltou, não conferia de novo e subia tudo.
+    $pdo->exec('DELETE FROM l3c_listas');
+    $E = $nova('E', ['47988880011', '47988880012', '47988880013']);
+    $F = $nova('F', ['47988880011', '47988880012', '47988880013']);
+    $marcar($E, 316173);
+    // Estado exato em que E fica depois do passo que só conferiu (nada era repetido ainda).
+    $pdo->prepare("UPDATE l3c_listas SET cursor_json=? WHERE id=?")->execute([json_encode(['dup_hist' => 1, 'dup_ok' => 1, 'dup' => 1002, 'dup_n' => 3, 'dup_total' => 3]), $E]);
+    $marcar($F, 316173);
+    $ef = $subir($F);
+    igual([$ef['status'], $ef['enviados']], ['enviada', 3], 'F confere e sobe os 3');
+    $ee = $subir($E);
+    igual([$ee['status'], $ee['enviados']], ['enviada', 0], 'E volta depois de F e não sobe nenhum repetido');
+    $st = $pdo->prepare('SELECT tresc_lista_id FROM l3c_listas WHERE id=?'); $st->execute([$E]);
+    igual($st->fetchColumn(), null, 'E não cria lista vazia no 3C');
+    $st = $pdo->prepare('SELECT COUNT(*) FROM l3c_itens WHERE lista_id=? AND descarte=?'); $st->execute([$E, L3cMontador::DESCARTE_DUP_PORTAL]);
+    igual((int)$st->fetchColumn(), 3, 'E mostra os 3 como já subidos por este portal');
+
+    // Duas subidas na mesma campanha ao mesmo tempo (duas abas, ou a tela e o
+    // cron): uma espera a outra, para a conferência e o envio não se cruzarem.
+    $outra = new PDO('mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS);
+    $outra->query("SELECT GET_LOCK('l3c_campanha_316173', 0)");
+    $G = $nova('G', ['47988880021']); $marcar($G, 316173);
+    $eg = $subir($G, 1);
+    igual([$eg['status'], $eg['enviados']], ['enviando', 0], 'com outra subida em andamento na campanha, espera');
+    igual(str_contains((string)$eg['texto'], 'Outra lista está subindo'), true, 'e diz por que está esperando');
+    $outra->query("SELECT RELEASE_LOCK('l3c_campanha_316173')");
+    igual($subir($G)['enviados'], 1, 'liberou, sobe');
 } finally {
     $pid = proc_get_status($proc)['pid'];
     proc_terminate($proc);

@@ -256,6 +256,22 @@ final class L3cTratamento
         return mb_substr($resumo, 0, $p, 'UTF-8') . self::ROTULO_OBS . ' (escondida no modo demonstração; na lista real ela vai inteira)';
     }
 
+    /**
+     * Texto do selo de status de uma lista. Quando todos os contatos já
+     * estavam na campanha, a lista termina como 'enviada' sem criar nada no
+     * 3C, e o selo dizia "No 3C": em 30/09 o Jhony viu isso na segunda lista
+     * igual e entendeu que ela tinha subido de novo.
+     */
+    public static function rotuloStatus(array $lista): string
+    {
+        $st = (string)($lista['status'] ?? '');
+        if ($st === 'enviada' && empty($lista['tresc_lista_id'])) return 'Nada subiu: todos repetidos';
+        return [
+            'montando' => 'Montando', 'pronta' => 'Pronta para aprovar', 'enviando' => 'Subindo no 3C',
+            'enviada' => 'No 3C', 'erro' => 'Erro', 'cancelada' => 'Cancelada',
+        ][$st] ?? $st;
+    }
+
     public static function semAcento(string $s): string
     {
         $de   = ['á','à','ã','â','ä','é','è','ê','ë','í','ì','î','ï','ó','ò','õ','ô','ö','ú','ù','û','ü','ç','ñ'];

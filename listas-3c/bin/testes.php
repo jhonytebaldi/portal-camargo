@@ -79,6 +79,12 @@ igual($T::descartePorMotivo('Sem Renda', $salvos, $ant['motivos_nunca']), 'motiv
 $guard = L3cModelos::motivosAoSalvar($ant['motivos'], array_merge($ant['motivos'], ['Sem Renda']), $ant['motivos_nunca'], L3cModelos::CATALOGO);
 igual(in_array('Sem Renda', $guard, true), true, 'modelos: salvar com a caixa travada não apaga a marcação do modelo');
 
+// Rótulo do status: lista em que todos já estavam na campanha não diz "No 3C"
+// (o Jhony viu "No 3C" na segunda lista igual e achou que tinha subido de novo).
+igual($T::rotuloStatus(['status' => 'enviada', 'tresc_lista_id' => null, 'enviados' => 0]), 'Nada subiu: todos repetidos', 'status: todos repetidos não diz No 3C');
+igual($T::rotuloStatus(['status' => 'enviada', 'tresc_lista_id' => 4907208, 'enviados' => 98]), 'No 3C', 'status: lista que subiu diz No 3C');
+igual($T::rotuloStatus(['status' => 'pronta']), 'Pronta para aprovar', 'status: pronta');
+
 // Resumo curto, datas no fuso do Robust e teto de tamanho.
 $r = $T::resumo(['stage' => 1, 'criado_em' => '2026-09-11T23:30:00-03:00', 'encerrado_em' => '2026-09-20T10:00:00-03:00',
                  'motivo' => 'Sem retorno após todas as tentativas', 'atendente' => 'Fulano', 'obs' => "cliente\nquer 2 quartos"]);
