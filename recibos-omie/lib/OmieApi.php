@@ -24,11 +24,51 @@ final class OmieApi
     }
     public static function disponivel(): bool { return (bool)self::contas(); }
 
+    /* ---- proteção contra o anti-abuso do Omie ----
+       O Omie recusa a MESMA chamada repetida em menos de ~60 s ("Consumo redundante", Client-6) e, se insistir,
+       bloqueia a chave por ~30 min (MISUSE_API_PROCESS). Então: leituras idênticas são servidas de um cache curto,
+       um bloqueio conhecido é respeitado sem bater na API, e há um intervalo mínimo entre chamadas. */
+    public const CACHE_LEITURA_SEG = 120;
+    private static float $ultima = 0.0;
+
+    private static function cacheDir(): string
+    {
+        $d = (defined('CF_DATA_DIR') ? CF_DATA_DIR : dirname(__DIR__, 3) . '/capa-dados') . '/omie-cache';
+        if (!is_dir($d)) @mkdir($d, 0750, true);
+        if (!is_dir($d) || !is_writable($d)) { $d = sys_get_temp_dir() . '/portal-omie-cache'; if (!is_dir($d)) @mkdir($d, 0700, true); }
+        return $d;
+    }
+    private static function ehLeitura(string $method): bool { return (bool)preg_match('/^(Consultar|Listar|Pesquisar|Obter)/', $method); }
+
+    /** segundos restantes de um bloqueio informado pelo Omie (0 = livre) */
+    public static function bloqueadoPor(string $conta): int
+    {
+        $f = self::cacheDir() . '/bloqueio-' . preg_replace('/\W+/', '', $conta);
+        $ate = is_file($f) ? (int)file_get_contents($f) : 0;
+        return max(0, $ate - time());
+    }
+    private static function registrarBloqueio(string $conta, string $msg): void
+    {
+        if (preg_match('/(\d+) segundos/u', $msg, $m)) { $seg = (int)$m[1]; }
+        else $seg = str_contains($msg, 'MISUSE') ? 1800 : 60;
+        @file_put_contents(self::cacheDir() . '/bloqueio-' . preg_replace('/\W+/', '', $conta), (string)(time() + $seg + 2));
+    }
+
     /** chamada única; lança RuntimeException com a mensagem do Omie */
     public static function call(string $conta, string $path, string $method, array $param = []): array
     {
         $c = self::contas()[$conta] ?? null;
         if (!$c) throw new RuntimeException("conta Omie '$conta' não configurada (OMIE_CONTAS no config.php)");
+        $leitura = self::ehLeitura($method);
+        $chave = self::cacheDir() . '/r-' . md5($conta . '|' . $path . '|' . $method . '|' . json_encode($param));
+        if ($leitura && is_file($chave) && (time() - filemtime($chave)) < self::CACHE_LEITURA_SEG) {
+            $j = json_decode((string)file_get_contents($chave), true);
+            if (is_array($j)) { if (isset($j['__erro'])) throw new RuntimeException($j['__erro']); return $j; }
+        }
+        if (($resta = self::bloqueadoPor($conta)) > 0) throw new RuntimeException("API do Omie bloqueada temporariamente (anti-abuso) — tente de novo em " . ceil($resta / 60) . " min");
+        // intervalo mínimo entre chamadas (o Omie penaliza rajadas)
+        $dt = microtime(true) - self::$ultima; if ($dt < 0.35) usleep((int)((0.35 - $dt) * 1e6));
+        self::$ultima = microtime(true);
         $body = json_encode(['call' => $method, 'app_key' => $c['app_key'], 'app_secret' => $c['app_secret'], 'param' => [$param ?: new stdClass()]], JSON_UNESCAPED_UNICODE);
         $ch = curl_init(self::URL . ltrim($path, '/'));
         curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 60]);
@@ -37,8 +77,20 @@ final class OmieApi
         if ($raw === false) throw new RuntimeException('Omie indisponível: ' . $err);
         $j = json_decode((string)$raw, true);
         if (!is_array($j)) throw new RuntimeException("resposta inesperada do Omie (HTTP $code)");
-        if (isset($j['faultstring'])) throw new RuntimeException('Omie: ' . $j['faultstring'] . (isset($j['faultcode']) ? ' [' . $j['faultcode'] . ']' : ''));
+        if (isset($j['faultstring'])) {
+            $msg = 'Omie: ' . $j['faultstring'] . (isset($j['faultcode']) ? ' [' . $j['faultcode'] . ']' : '');
+            if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
+            // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
+            elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
+            throw new RuntimeException($msg);
+        }
+        if ($leitura) @file_put_contents($chave, (string)$raw);
         return $j;
+    }
+    /** esquece o cache de uma leitura específica (ex.: depois de incluir/excluir o título) */
+    public static function esquecer(string $conta, string $path, string $method, array $param = []): void
+    {
+        @unlink(self::cacheDir() . '/r-' . md5($conta . '|' . $path . '|' . $method . '|' . json_encode($param)));
     }
 
     /** títulos a pagar por vencimento (PesquisarLancamentos, paginado). [] de cabecTitulo + resumo */
