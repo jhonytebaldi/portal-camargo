@@ -194,18 +194,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $porQuem = (string)($u['nome'] ?? $u['login'] ?? 'portal');
             if ($acao === 'conferir_api') {
                 $res = [];
-                foreach ($linhas as $l) { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null]; }
+                foreach ($linhas as $l) { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente'])]; }
                 exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
             }
             // enviar: linha a linha; cada uma independente (o Omie não tem transação entre títulos)
             $pdo->prepare("INSERT INTO cf_exportacoes (tipo, empresa, modo, arquivo_nome, arquivo_path, n_linhas, total, data_registro, avisos, gerado_por) VALUES (?,?,'api','(envio pela API)','',0,0,?,'[]',?)")
                 ->execute([$tipo, $empresa, $reg, $u['id']]);
             $expId = (int)$pdo->lastInsertId();
-            $enviadas = []; $falhas = []; $avisos = []; $total = 0.0;
+            $enviadas = []; $falhas = []; $avisos = []; $total = 0.0; $parou = null;
             foreach ($linhas as $l) {
-                $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem);
                 $cod = (string)$l['codigo_integracao'];
+                if ($parou) { $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => 'não tentado: ' . $parou]; continue; }
+                try { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); }
+                catch (Throwable $e) {
+                    // erro de comunicação/anti-abuso na conferência: para o lote (insistir só piora o bloqueio)
+                    $parou = 'API do Omie indisponível — ' . $e->getMessage();
+                    $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => 'não tentado: ' . $parou]; continue;
+                }
                 foreach ($r['avisos'] as $a) $avisos[] = "$cod: $a";
+                if (!$r['erros'] && !empty($r['existente'])) {
+                    // já estava no Omie com nosso código (envio anterior que falhou na resposta): vincula em vez de reenviar
+                    $omieId = (int)$r['existente']['codigo_lancamento_omie'];
+                    $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
+                    cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $r['existente'], 'já existia no Omie com este código — vinculado sem reenviar', (int)$u['id'], true);
+                    $enviadas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'omie_id' => $omieId, 'vinculado' => true]; $total += (float)$l['valor']; continue;
+                }
                 if ($r['erros']) {
                     $msg = implode(' | ', $r['erros']);
                     $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = ? WHERE id = ?')->execute([$msg, (int)$l['id']]);
@@ -216,16 +229,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $resp = OmieEnvio::incluir($empresa, $tipo, $r['pedido']);
                     $omieId = (int)($resp['codigo_lancamento_omie'] ?? 0);
                     if (($resp['codigo_status'] ?? '0') !== '0' || !$omieId) throw new RuntimeException('Omie respondeu: ' . ($resp['descricao_status'] ?? json_encode($resp)));
-                    // confere de volta
-                    $ver = OmieEnvio::consultar($empresa, $tipo, $cod); $okVer = $ver && abs((float)($ver['valor_documento'] ?? 0) - (float)$l['valor']) < 0.005;
+                    // confere de volta (pelo código Omie — chamada diferente da pré-checagem); se a conferência falhar por motivo temporário, o título já está lá: não é erro
+                    try { $ver = OmieEnvio::consultarPorOmieId($empresa, $tipo, $omieId); } catch (Throwable $e) { $ver = null; }
+                    $okVer = $ver && abs((float)($ver['valor_documento'] ?? 0) - (float)$l['valor']) < 0.005;
                     $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
                     cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $resp, $okVer ? null : 'incluído, mas a consulta de conferência não bateu', (int)$u['id'], $okVer);
                     if (!$okVer) $avisos[] = "$cod: incluído (cód. $omieId), mas a consulta de conferência não bateu — confira no Omie";
                     $enviadas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'omie_id' => $omieId]; $total += (float)$l['valor'];
                 } catch (Throwable $e) {
                     $msg = 'erro no envio: ' . $e->getMessage();
+                    if (OmieEnvio::erroTemporario($e->getMessage())) $parou = $e->getMessage();   // anti-abuso/indisponível: não insiste nas próximas
                     // se o Omie chegou a criar, não deixar órfão: tenta localizar pelo código de integração
-                    try { $ex = OmieEnvio::consultar($empresa, $tipo, $cod); } catch (Throwable $e2) { $ex = null; }
+                    try { $ex = $parou ? null : OmieEnvio::consultar($empresa, $tipo, $cod); } catch (Throwable $e2) { $ex = null; }
                     if ($ex && !empty($ex['codigo_lancamento_omie'])) {
                         $omieId = (int)$ex['codigo_lancamento_omie'];
                         $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
@@ -238,6 +253,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => $msg];
                 }
             }
+            if ($parou) $avisos[] = 'Envio interrompido: ' . $parou . '. As linhas não tentadas continuam pendentes — aguarde e envie de novo (a conferência antes de enviar vai vincular o que já entrou).';
             $resumo = array_merge(array_map(fn($f) => 'ERRO ' . $f['codigo'] . ': ' . $f['msg'], $falhas), $avisos);
             if ($enviadas) $pdo->prepare('UPDATE cf_exportacoes SET n_linhas = ?, total = ?, avisos = ? WHERE id = ?')->execute([count($enviadas), $total, json_encode($resumo, JSON_UNESCAPED_UNICODE), $expId]);
             else $pdo->prepare('DELETE FROM cf_exportacoes WHERE id = ?')->execute([$expId]);
@@ -630,7 +646,7 @@ portal_header('Exportar para o Omie', $u);
       let html = '';
       r.erros.forEach(e => html += '<div class="cf-flag cf-grave">API: ' + e.replace(/</g, '&lt;') + '</div>');
       r.avisos.forEach(a => html += '<div class="cf-flag cf-leve">API: ' + a.replace(/</g, '&lt;') + '</div>');
-      if (!r.erros.length) html += '<div class="cf-flag cf-ok">API: pronto para enviar' + (r.fornecedor ? ' (cód. ' + r.fornecedor + ')' : '') + '</div>';
+      if (!r.erros.length) html += '<div class="cf-flag cf-ok">API: ' + (r.existente ? 'já está no Omie — ao enviar, só vincula' : 'pronto para enviar') + (r.fornecedor ? ' (fornecedor cód. ' + r.fornecedor + ')' : '') + '</div>';
       box.innerHTML = html;
       const sel = tr.querySelector('.exp-sel'); if (r.erros.length) { sel.checked = false; nErr++; } else nOk++;
     });
@@ -654,7 +670,7 @@ portal_header('Exportar para o Omie', $u);
     const j = await post({acao:'enviar_api', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
     if (!j) { be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; return; }
     let msg = 'Enviados: ' + j.enviadas.length + ' título(s) (' + brl(j.total) + ')';
-    if (j.enviadas.length) msg += '\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id).join('\n');
+    if (j.enviadas.length) msg += '\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
     if (j.falhas.length) msg += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
     if (j.avisos.length) msg += '\n\nAvisos:\n' + j.avisos.map(a => '  ' + a).join('\n');
     alert(msg); location.reload();
