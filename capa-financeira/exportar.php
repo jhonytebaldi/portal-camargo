@@ -182,10 +182,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($acao === 'conferir_api' || $acao === 'enviar_api') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
-            if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos');
-            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos — recarregue a página e tente de novo');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa — as chaves (app_key/app_secret) ficam no arquivo omie.php da configuração do portal; confira se existe uma entrada para "' . $empresa . '"');
+            if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('A API do Omie está bloqueada temporariamente para esta empresa (anti-abuso do Omie, por chamadas repetidas). Aguarde ' . ceil($resta / 60) . ' min e tente de novo — não adianta insistir antes, só prolonga o bloqueio.');
             $ids = array_values(array_unique(array_map('intval', (array)($in['ids'] ?? []))));
-            if ($acao === 'enviar_api' && !$ids) $falha('nenhuma linha selecionada');
+            if ($acao === 'enviar_api' && !$ids) $falha('nenhuma linha selecionada — marque as linhas na tabela antes de enviar');
+            try { $catTeste = OmieEnvio::catalogo($empresa); } catch (Throwable $e) { $falha('Não consegui ler os cadastros do Omie (contas, categorias, departamentos): ' . $e->getMessage() . '. Se for indisponibilidade do Omie, tente em alguns minutos.'); }
             $reg = (string)($in['data_registro'] ?? date('Y-m-d')); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $reg)) $reg = date('Y-m-d');
             $opts = ['data_registro' => $reg, 'emissao' => in_array($in['emissao'] ?? '', ['venda', 'registro', 'prevista'], true) ? $in['emissao'] : 'venda'];
             $pessoas = cf_pessoas(false); $cat = OmieEnvio::catalogo($empresa);
@@ -198,9 +200,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
             }
             // enviar: linha a linha; cada uma independente (o Omie não tem transação entre títulos)
-            $pdo->prepare("INSERT INTO cf_exportacoes (tipo, empresa, modo, arquivo_nome, arquivo_path, n_linhas, total, data_registro, avisos, gerado_por) VALUES (?,?,'api','(envio pela API)','',0,0,?,'[]',?)")
-                ->execute([$tipo, $empresa, $reg, $u['id']]);
-            $expId = (int)$pdo->lastInsertId();
+            // o navegador envia em blocos de 5 (evita o 504 da Hostinger); os blocos seguintes reaproveitam o mesmo registro de envio
+            $expId = (int)($in['exportacao_id'] ?? 0);
+            if ($expId) { $st = $pdo->prepare("SELECT id FROM cf_exportacoes WHERE id = ? AND empresa = ? AND tipo = ? AND modo = 'api' AND status = 'gerada'"); $st->execute([$expId, $empresa, $tipo]); if (!$st->fetch()) $expId = 0; }
+            if (!$expId) {
+                $pdo->prepare("INSERT INTO cf_exportacoes (tipo, empresa, modo, arquivo_nome, arquivo_path, n_linhas, total, data_registro, avisos, gerado_por) VALUES (?,?,'api','(envio pela API)','',0,0,?,'[]',?)")
+                    ->execute([$tipo, $empresa, $reg, $u['id']]);
+                $expId = (int)$pdo->lastInsertId();
+            }
             $enviadas = []; $falhas = []; $avisos = []; $total = 0.0; $parou = null;
             foreach ($linhas as $l) {
                 $cod = (string)$l['codigo_integracao'];
@@ -255,9 +262,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($parou) $avisos[] = 'Envio interrompido: ' . $parou . '. As linhas não tentadas continuam pendentes — aguarde e envie de novo (a conferência antes de enviar vai vincular o que já entrou).';
             $resumo = array_merge(array_map(fn($f) => 'ERRO ' . $f['codigo'] . ': ' . $f['msg'], $falhas), $avisos);
-            if ($enviadas) $pdo->prepare('UPDATE cf_exportacoes SET n_linhas = ?, total = ?, avisos = ? WHERE id = ?')->execute([count($enviadas), $total, json_encode($resumo, JSON_UNESCAPED_UNICODE), $expId]);
-            else $pdo->prepare('DELETE FROM cf_exportacoes WHERE id = ?')->execute([$expId]);
-            exit(json_encode(['ok' => true, 'exportacao_id' => $enviadas ? $expId : null, 'enviadas' => $enviadas, 'falhas' => $falhas, 'avisos' => $avisos, 'total' => $total], JSON_UNESCAPED_UNICODE));
+            // acumula no registro do envio (pode ser o 2º, 3º… bloco)
+            $st = $pdo->prepare('SELECT n_linhas, total, avisos FROM cf_exportacoes WHERE id = ?'); $st->execute([$expId]); $acum = $st->fetch();
+            $avAnt = json_decode((string)($acum['avisos'] ?? '[]'), true) ?: [];
+            $nTot = (int)$acum['n_linhas'] + count($enviadas); $vTot = (float)$acum['total'] + $total;
+            if ($nTot > 0) $pdo->prepare('UPDATE cf_exportacoes SET n_linhas = ?, total = ?, avisos = ? WHERE id = ?')->execute([$nTot, $vTot, json_encode(array_merge($avAnt, $resumo), JSON_UNESCAPED_UNICODE), $expId]);
+            elseif (!empty($in['ultimo'])) { $pdo->prepare('DELETE FROM cf_exportacoes WHERE id = ?')->execute([$expId]); $expId = 0; }
+            exit(json_encode(['ok' => true, 'exportacao_id' => $expId ?: null, 'enviadas' => $enviadas, 'falhas' => $falhas, 'avisos' => $avisos, 'total' => $total, 'parou' => $parou], JSON_UNESCAPED_UNICODE));
         }
         if ($acao === 'conferir_exportacao') {
             // planilha importada: confere título a título no Omie pelo código de integração
@@ -265,9 +276,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $st = $pdo->prepare('SELECT * FROM cf_exportacoes WHERE id = ?'); $st->execute([$id]);
             if (!($ex = $st->fetch())) $falha('exportação não encontrada');
             if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$ex['empresa']])) $falha('API do Omie não configurada para esta empresa');
+            // em blocos (o servidor da Hostinger corta requisições longas — erro 504): o navegador chama de 8 em 8 linhas
+            $offset = max(0, (int)($in['offset'] ?? 0)); $limite = min(20, max(1, (int)($in['limite'] ?? 8)));
             $q = $pdo->prepare("SELECT id, codigo_integracao, valor, data_prevista, status, omie_id FROM cf_lancamentos WHERE exportacao_id = ? ORDER BY codigo_integracao"); $q->execute([$id]);
+            $todas = $q->fetchAll(); $total = count($todas);
+            $conf = $offset === 0 ? [] : (json_decode((string)$ex['conferencia'], true) ?: []);
             $res = [];
-            foreach ($q->fetchAll() as $l) {
+            foreach (array_slice($todas, $offset, $limite) as $l) {
                 try {
                     $t = OmieEnvio::consultar((string)$ex['empresa'], $ex['tipo'] === 'R' ? 'R' : 'P', (string)$l['codigo_integracao']);
                     if (!$t) $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => false, 'msg' => 'NÃO está no Omie (nenhum título com este código de integração)'];
@@ -282,9 +297,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                  : 'está no Omie (cód. ' . $t['codigo_lancamento_omie'] . ', status ' . ($t['status_titulo'] ?? '') . ') mas com dados diferentes do portal — ' . implode('; ', $dif) . '. Se o Omie está certo, vincule; se o portal está certo, ajuste no Omie'];
                         if ($bate && !$l['omie_id']) $pdo->prepare('UPDATE cf_lancamentos SET omie_id = ? WHERE id = ?')->execute([(int)$t['codigo_lancamento_omie'], (int)$l['id']]);
                     }
-                } catch (Throwable $e) { $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => false, 'msg' => 'não deu para conferir: ' . $e->getMessage()]; }
+                } catch (Throwable $e) { $res[] = ['id' => (int)$l['id'], 'codigo' => $l['codigo_integracao'], 'ok' => false, 'erro_api' => true, 'msg' => 'não deu para conferir (API do Omie): ' . $e->getMessage() . ' — tente de novo mais tarde']; }
             }
-            exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
+            foreach ($res as $r) $conf[$r['codigo']] = $r;
+            $fim = $offset + $limite >= $total;
+            $pdo->prepare('UPDATE cf_exportacoes SET conferencia = ?, conferido_em = ' . ($fim ? 'NOW()' : 'conferido_em') . ' WHERE id = ?')->execute([json_encode(array_values($conf), JSON_UNESCAPED_UNICODE), $id]);
+            exit(json_encode(['ok' => true, 'linhas' => $res, 'offset' => $offset, 'total' => $total, 'fim' => $fim, 'conferencia' => array_values($conf)], JSON_UNESCAPED_UNICODE));
         }
         if ($acao === 'vincular_linha') {
             // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
@@ -409,7 +427,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $falha('ação inválida');
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        $falha('erro: ' . $e->getMessage(), 500);
+        $m = $e->getMessage();
+        $dica = str_contains($m, 'Omie') ? ' O erro veio do Omie; se for bloqueio/indisponibilidade, aguarde alguns minutos e tente de novo — nada foi perdido, a conferência antes de enviar vincula o que já entrou.'
+              : (str_contains($m, 'SQLSTATE') ? ' É um erro do banco de dados do portal — rode a migração em Admin › Migração do banco e tente de novo; se persistir, me avise com esta mensagem.' : ' Se persistir, me avise com esta mensagem.');
+        $falha('Falhou: ' . $m . '.' . $dica, 500);
     }
 }
 
@@ -549,7 +570,7 @@ portal_header('Exportar para o Omie', $u);
 <td><?= (int)$e['n_linhas'] ?></td><td class="cf-num"><?= cf_brl($e['total']) ?></td><td><?php if (($e['modo'] ?? 'planilha') === 'api'): ?><span class="cf-tag">API</span><?php else: ?><a href="?baixar=<?= (int)$e['id'] ?>">⬇ <?= h($e['arquivo_nome']) ?></a><?php endif; ?></td>
 <td><?php if ($av): ?><details><summary><?= count($av) ?> aviso(s)</summary><ul class="cf-flags"><?php foreach ($av as $x): ?><li><?= h($x) ?></li><?php endforeach; ?></ul></details><?php endif; ?></td>
 <td><span class="cf-status cf-st-<?= $e['status'] === 'gerada' ? 'confirmada' : 'descartada' ?>"><?= h($e['status']) ?></span></td>
-<td><?php if ($e['status'] === 'gerada' && ($e['modo'] ?? 'planilha') === 'planilha' && $apiOk): ?><button type="button" class="cf-x exp-conferir-exp" title="confere no Omie, título a título, se a planilha importada criou todos (pelo código de integração)">✔ conferir no Omie</button> <?php endif; ?><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" data-modo="<?= h((string)($e['modo'] ?? 'planilha')) ?>" title="<?= ($e['modo'] ?? '') === 'api' ? 'exclui os títulos no Omie (os já baixados ficam) e devolve as linhas para confirmado' : 'a importação no Omie falhou: devolve as linhas para confirmado e gera de novo' ?>">↩ desfazer</button><?php endif; ?></td></tr>
+<td><?php if ($e['status'] === 'gerada' && ($e['modo'] ?? 'planilha') === 'planilha' && $apiOk): ?><button type="button" class="cf-x exp-conferir-exp" title="confere no Omie, título a título, se a planilha importada criou todos (pelo código de integração)"><?= $e['conferido_em'] ? '✔ conferir de novo' : '✔ conferir no Omie' ?></button><?php if ($e['conferido_em']): ?><div class="exp-conf-quando cf-raw">conferida em <?= h(substr((string)$e['conferido_em'], 0, 16)) ?></div><span class="exp-conf-salva" data-conf="<?= h((string)$e['conferencia']) ?>"></span><?php endif; ?> <?php endif; ?><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" data-modo="<?= h((string)($e['modo'] ?? 'planilha')) ?>" title="<?= ($e['modo'] ?? '') === 'api' ? 'exclui os títulos no Omie (os já baixados ficam) e devolve as linhas para confirmado' : 'a importação no Omie falhou: devolve as linhas para confirmado e gera de novo' ?>">↩ desfazer</button><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <?php endif; ?>
 
@@ -559,10 +580,31 @@ portal_header('Exportar para o Omie', $u);
   async function postRaw(body){ body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
     const r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     try { return await r.json(); } catch(e) { return {ok:false, erro:'erro ' + r.status}; } }
+  const HTTP_EXPL = {504:'O servidor demorou demais para responder e a Hostinger cortou a requisição (tempo limite). Costuma acontecer quando há muitas linhas; a operação agora é feita em blocos pequenos — tente de novo. Se voltar a acontecer, me avise dizendo quantas linhas eram.',
+    502:'O servidor do portal não respondeu (gateway). Normalmente é momentâneo — aguarde um minuto e tente de novo.', 503:'O portal está indisponível no momento — aguarde um minuto e tente de novo.',
+    500:'Erro interno no portal (a mensagem detalhada não veio). Tente de novo; se persistir, me avise com o horário e o que estava fazendo.', 403:'Sua sessão expirou ou a verificação de segurança (CSRF) falhou — recarregue a página e entre de novo.',
+    401:'Você não está mais logado — recarregue a página e entre de novo.', 413:'Requisição grande demais para o servidor — selecione menos linhas.'};
   async function post(body){ body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
-    const r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    let r; try { r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); }
+    catch(e) { alert('Sem conexão com o portal (a requisição não chegou ao servidor). Confira sua internet e tente de novo.'); return null; }
     let j = null; try { j = await r.json(); } catch(e) {}
-    if (!r.ok || !j || !j.ok) { alert(j && j.erro ? j.erro : ('erro ' + r.status)); return null; } return j; }
+    if (!r.ok || !j || !j.ok) { alert(j && j.erro ? j.erro : ('Erro ' + r.status + ': ' + (HTTP_EXPL[r.status] || 'resposta inesperada do servidor. Tente de novo; se persistir, me avise com este código.'))); return null; } return j; }
+  function renderConferencia(tr, linhas){
+    let html = '<div class="cf-flags" style="margin-top:6px">' + linhas.map(l => '<div class="cf-flag ' + (l.ok ? 'cf-ok' : (l.existe ? 'cf-leve' : 'cf-grave')) + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;')
+      + (l.ok ? '' : (l.existe ? ' <button type="button" class="cf-x exp-vincular" data-id="' + l.id + '" data-omie="' + l.omie_id + '" title="guarda o vínculo com este título do Omie como está (não altera nada no Omie)">✔ vincular como está no Omie</button>'
+                               : (l.erro_api ? '' : ' <button type="button" class="cf-x exp-devolver" data-id="' + l.id + '" title="a linha volta para a fila e pode ser enviada de novo">↩ devolver p/ confirmado</button>'))) + '</div>').join('') + '</div>';
+    let cel = tr.querySelector('.exp-conf-res'); if (!cel) { cel = document.createElement('div'); cel.className = 'exp-conf-res'; tr.querySelector('td:nth-child(7)').appendChild(cel); }
+    cel.innerHTML = html;
+    cel.querySelectorAll('.exp-vincular').forEach(d => d.addEventListener('click', async () => {
+      const r = await post({acao:'vincular_linha', id: +d.dataset.id, omie_id: +d.dataset.omie}); if (r) { toast('Vinculado'); d.remove(); }
+    }));
+    cel.querySelectorAll('.exp-devolver').forEach(d => d.addEventListener('click', async () => {
+      if (!confirm('Devolver esta linha para "confirmado" para enviar de novo (pela API ou nova planilha)?')) return;
+      const r = await post({acao:'devolver_linha', id: +d.dataset.id}); if (r) { toast('Linha devolvida'); d.remove(); }
+    }));
+  }
+  // conferências já feitas (salvas): mostra ao abrir a página
+  document.querySelectorAll('.exp-conf-salva').forEach(el => { try { renderConferencia(el.closest('tr'), JSON.parse(el.dataset.conf)); } catch(e) {} });
   function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   function soma(){ let n = 0, t = 0; document.querySelectorAll('.exp-sel:checked').forEach(c => { n++; t += parseFloat(c.closest('tr').dataset.valor) || 0; });
@@ -630,24 +672,20 @@ portal_header('Exportar para o Omie', $u);
     location.reload();
   }));
   document.querySelectorAll('.exp-conferir-exp').forEach(b => b.addEventListener('click', async () => {
-    const tr = b.closest('tr'); b.disabled = true; b.textContent = 'conferindo…';
-    const j = await post({acao:'conferir_exportacao', id: +tr.dataset.id});
-    b.disabled = false; b.textContent = '✔ conferir no Omie';
-    if (!j) return;
-    const falt = j.linhas.filter(l => !l.ok);
-    let html = '<div class="cf-flags" style="margin-top:6px">' + j.linhas.map(l => '<div class="cf-flag ' + (l.ok ? 'cf-ok' : (l.existe ? 'cf-leve' : 'cf-grave')) + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;')
-      + (l.ok ? '' : (l.existe ? ' <button type="button" class="cf-x exp-vincular" data-id="' + l.id + '" data-omie="' + l.omie_id + '" title="guarda o vínculo com este título do Omie como está (não altera nada no Omie)">✔ vincular como está no Omie</button>'
-                               : ' <button type="button" class="cf-x exp-devolver" data-id="' + l.id + '" title="a linha volta para a fila e pode ser enviada de novo">↩ devolver p/ confirmado</button>')) + '</div>').join('') + '</div>';
-    let cel = tr.querySelector('.exp-conf-res'); if (!cel) { cel = document.createElement('div'); cel.className = 'exp-conf-res'; tr.querySelector('td:nth-child(7)').appendChild(cel); }
-    cel.innerHTML = html;
-    cel.querySelectorAll('.exp-vincular').forEach(d => d.addEventListener('click', async () => {
-      const r = await post({acao:'vincular_linha', id: +d.dataset.id, omie_id: +d.dataset.omie}); if (r) { toast('Vinculado'); d.remove(); }
-    }));
-    cel.querySelectorAll('.exp-devolver').forEach(d => d.addEventListener('click', async () => {
-      if (!confirm('Devolver esta linha para "confirmado" para enviar de novo (pela API ou nova planilha)?')) return;
-      const r = await post({acao:'devolver_linha', id: +d.dataset.id}); if (r) { toast('Linha devolvida'); d.remove(); }
-    }));
-    toast(falt.length ? falt.length + ' título(s) faltando/divergente(s) no Omie' : 'Todos os títulos estão no Omie');
+    const tr = b.closest('tr'); const id = +tr.dataset.id; b.disabled = true;
+    let offset = 0, todas = [], fim = false, total = 0;
+    while (!fim) {
+      b.textContent = 'conferindo… ' + (total ? offset + '/' + total : '');
+      const j = await post({acao:'conferir_exportacao', id, offset, limite: 8});
+      if (!j) { b.disabled = false; b.textContent = '✔ conferir no Omie'; return; }
+      todas = j.conferencia; total = j.total; fim = j.fim; offset += 8;
+      renderConferencia(tr, todas);
+    }
+    b.disabled = false; b.textContent = '✔ conferir de novo';
+    const marca = tr.querySelector('.exp-conf-quando'); const agora = new Date(); const txt = 'conferida em ' + agora.toLocaleDateString('pt-BR') + ' ' + agora.toTimeString().slice(0,5);
+    if (marca) marca.textContent = txt; else { const m = document.createElement('div'); m.className = 'exp-conf-quando cf-raw'; m.textContent = txt; b.parentNode.appendChild(m); }
+    const falt = todas.filter(l => !l.ok);
+    toast(falt.length ? falt.length + ' título(s) faltando/divergente(s) no Omie' : 'Todos os ' + todas.length + ' títulos estão no Omie');
   }));
   document.querySelectorAll('.exp-desfazer-linha').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const cod = tr.querySelector('b').textContent;
@@ -673,19 +711,30 @@ portal_header('Exportar para o Omie', $u);
   if (bca) bca.addEventListener('click', async () => {
     bca.disabled = true; bca.textContent = 'Conferindo no Omie…';
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
-    const j = await post({acao:'conferir_api', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+    const linhas = {}; const BL = 8;
+    for (let i = 0; i < ids.length; i += BL) {
+      bca.textContent = 'Conferindo no Omie… ' + Math.min(i + BL, ids.length) + '/' + ids.length;
+      const j = await post({acao:'conferir_api', ids: ids.slice(i, i + BL), data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+      if (!j) { bca.disabled = false; bca.textContent = 'Conferir para envio'; return; }
+      Object.assign(linhas, j.linhas);
+    }
     bca.disabled = false; bca.textContent = 'Conferir para envio';
-    if (!j) return;
-    const r = mostraConferencia(j.linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
+    const r = mostraConferencia(linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
   });
   const be = document.getElementById('btn-enviar');
   if (be) be.addEventListener('click', async () => {
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
     if (!ids.length) return;
     if (!confirm('Enviar ' + ids.length + ' título(s) para o Omie pela API? Cada linha é conferida antes; as que passarem são incluídas no Omie na hora (dá pra desfazer enquanto não forem baixadas).')) return;
-    be.disabled = true; be.textContent = 'Enviando…';
-    const j = await post({acao:'enviar_api', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
-    if (!j) { be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; return; }
+    be.disabled = true;
+    const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 5;
+    for (let i = 0; i < ids.length; i += BL) {
+      be.textContent = 'Enviando… ' + Math.min(i + BL, ids.length) + '/' + ids.length;
+      const r = await post({acao:'enviar_api', ids: ids.slice(i, i + BL), exportacao_id: j.exportacao_id, ultimo: i + BL >= ids.length ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+      if (!r) { if (j.enviadas.length) alert('O envio parou no meio. Já enviados: ' + j.enviadas.map(e => e.codigo).join(', ') + '. Recarregue a página: os enviados aparecem em "Enviados pela API" e os demais continuam pendentes.'); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; if (j.enviadas.length) location.reload(); return; }
+      j.enviadas.push(...r.enviadas); j.falhas.push(...r.falhas); j.avisos.push(...r.avisos); j.total += r.total; if (r.exportacao_id) j.exportacao_id = r.exportacao_id;
+      if (r.parou) { ids.slice(i + BL).forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
+    }
     let msg = 'Enviados: ' + j.enviadas.length + ' título(s) (' + brl(j.total) + ')';
     if (j.enviadas.length) msg += '\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
     if (j.falhas.length) msg += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
