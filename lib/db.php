@@ -47,6 +47,7 @@ function db(): PDO {
     static $pdo = null;
     if ($pdo instanceof PDO) return $pdo;
     portal_load_config();
+    if (date_default_timezone_get() === 'UTC') date_default_timezone_set('America/Sao_Paulo');   // servidor da Hostinger fica em UTC
     $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
     try {
         $pdo = new PDO($dsn, DB_USER, DB_PASS, [
