@@ -198,15 +198,21 @@ final class OmieEnvio
         }
 
         // observação: quem enviou + padrão + Pix
-        $obs = 'ENVIADO POR: ' . mb_strtoupper(self::semAcento($porQuem)) . ' ' . date('d/m/Y H:i') . ' | ' . (string)($c['S']['s'] ?? '');
+        $obs = 'ENVIADO POR: ' . mb_strtoupper(self::semAcento($porQuem)) . ' ' . (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format('d/m/Y H:i') . ' | ' . (string)($c['S']['s'] ?? '');
         if ($tipo === 'P' && $pix !== '') $obs .= ' | PIX: ' . $pix;
         $ped['observacao'] = $obs;
 
         // já existe no Omie? (mesmo código de integração) e possível duplicidade (mesmo doc + vencimento + valor)
+        $existente = null;
         if ($ped['codigo_lancamento_integracao'] !== '' && !$erros) {
             $ex = self::consultar($empresa, $tipo, $ped['codigo_lancamento_integracao']);
-            if ($ex) $erros[] = 'já existe no Omie um título com este código de integração (cód. Omie ' . ($ex['codigo_lancamento_omie'] ?? '?') . ', status ' . ($ex['status_titulo'] ?? '?') . ') — desfaça o envio anterior ou confira no Omie';
-            elseif ($cadastro && $prev !== '') {
+            if ($ex) {
+                // o código de integração é nosso: se o título já está lá com o mesmo valor e vencimento, é este lançamento (envio anterior
+                // que deu erro de comunicação, p.ex.) → não reenvia, vincula. Se difere, é conflito e bloqueia.
+                $bate = abs((float)($ex['valor_documento'] ?? 0) - $valor) < 0.005 && (string)($ex['data_vencimento'] ?? '') === ($ped['data_vencimento'] ?? '');
+                if ($bate) { $existente = $ex; $avisos[] = 'já existe no Omie com este código (cód. ' . ($ex['codigo_lancamento_omie'] ?? '?') . ', status ' . ($ex['status_titulo'] ?? '?') . ') — será vinculado, não reenviado'; }
+                else $erros[] = 'já existe no Omie um título com este código de integração mas com valor/vencimento DIFERENTES (cód. Omie ' . ($ex['codigo_lancamento_omie'] ?? '?') . ', ' . ($ex['valor_documento'] ?? '?') . ' venc. ' . ($ex['data_vencimento'] ?? '?') . ') — confira no Omie';
+            } elseif ($cadastro && $prev !== '') {
                 try {
                     $r = OmieApi::call($empresa, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 50, 'cNatureza' => $tipo, 'cCPFCNPJCliente' => (string)($cadastro['cnpj_cpf'] ?? ''), 'dDtVencDe' => self::br($prev), 'dDtVencAte' => self::br($prev)]);
                     foreach ($r['titulosEncontrados'] ?? [] as $t) { $h = $t['cabecTitulo'] ?? $t;
@@ -214,7 +220,7 @@ final class OmieEnvio
                 } catch (RuntimeException $e) { /* sem títulos = ok */ }
             }
         }
-        return ['pedido' => $ped, 'erros' => array_values(array_unique($erros)), 'avisos' => array_values(array_unique($avisos)), 'cadastro' => $cadastro];
+        return ['pedido' => $ped, 'erros' => array_values(array_unique($erros)), 'avisos' => array_values(array_unique($avisos)), 'cadastro' => $cadastro, 'existente' => $existente];
     }
 
     /* ---------------- API: incluir / consultar / excluir ---------------- */
@@ -231,8 +237,17 @@ final class OmieEnvio
 
     public static function incluir(string $empresa, string $tipo, array $pedido): array
     {
-        return OmieApi::call($empresa, self::path($tipo), 'Incluir' . self::sufixo($tipo), $pedido);
+        $r = OmieApi::call($empresa, self::path($tipo), 'Incluir' . self::sufixo($tipo), $pedido);
+        OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => (string)($pedido['codigo_lancamento_integracao'] ?? '')]);
+        return $r;
     }
+    /** conferência depois de incluir: consulta pelo código Omie (chamada diferente da pré-checagem, não cai no "consumo redundante") */
+    public static function consultarPorOmieId(string $empresa, string $tipo, int $omieId): ?array
+    {
+        try { return OmieApi::call($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => $omieId]); }
+        catch (RuntimeException $e) { if (preg_match('/n[ãa]o cadastrado|n[ãa]o (foi )?(encontrad|localizad)|Client-105|Client-103/iu', $e->getMessage())) return null; throw $e; }
+    }
+    public static function erroTemporario(string $msg): bool { return (bool)preg_match('/REDUNDANT|MISUSE|Client-6\]|bloqueada temporariamente|indispon[ií]vel|timed out|timeout/iu', $msg); }
 
     /** Exclui se ainda não foi baixado. @return array{ok: bool, msg: string} */
     public static function excluir(string $empresa, string $tipo, string $codigo): array
@@ -244,6 +259,7 @@ final class OmieEnvio
             return ['ok' => false, 'msg' => "não excluído: o título já tem baixa no Omie (status $st, pago " . number_format($pago, 2, ',', '.') . ') — trate manualmente'];
         $chave = $tipo === 'P' ? ['codigo_lancamento_integracao' => $codigo] : ['codigo_lancamento_integracao' => $codigo];
         OmieApi::call($empresa, self::path($tipo), 'Excluir' . self::sufixo($tipo), $chave);
+        OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => $codigo]);
         return ['ok' => true, 'msg' => 'excluído no Omie (status era ' . $st . ')'];
     }
 
