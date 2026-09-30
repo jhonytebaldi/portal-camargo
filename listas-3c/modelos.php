@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($modelos as $slug => $m) {
         $novo[$slug] = [
             'etapas' => array_map('intval', (array)($_POST['etapas'][$slug] ?? [])),
-            'motivos' => array_values(array_intersect($catalogo, (array)($_POST['motivos'][$slug] ?? []))),
+            'motivos' => L3cModelos::motivosAoSalvar((array)($_POST['motivos'][$slug] ?? []), (array)$m['motivos'], $nunca, $catalogo),
             'dias_origem_corretor' => max(0, (int)($_POST['dias'][$slug] ?? 0)),
             'motivos_nunca' => $nunca,
         ];
@@ -36,7 +36,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 portal_header('Modelos · Listas 3C', $u);
 $nuncaAtual = array_map([L3cTratamento::class, 'chaveMotivo'], (array)(reset($modelos)['motivos_nunca'] ?? []));
-$marcado = fn(array $lista, string $mot) => in_array(L3cTratamento::chaveMotivo($mot), array_map([L3cTratamento::class, 'chaveMotivo'], $lista), true);
 ?>
 <style>
 .l3-card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px 20px;margin:0 0 18px}
@@ -45,6 +44,9 @@ $marcado = fn(array $lista, string $mot) => in_array(L3cTratamento::chaveMotivo(
 .l3-etapas label{margin-right:14px;font-size:14px}
 .l3-btn{font:inherit;font-weight:600;padding:10px 16px;border:none;border-radius:4px;background:var(--moss);color:#fff;cursor:pointer}
 .l3-desc{color:var(--mute);font-size:13px;margin:4px 0 0}
+.l3-nota{display:none;color:var(--mute);font-size:12px;margin-left:22px}
+.l3-travado{color:var(--mute)}
+.l3-travado .l3-nota{display:block}
 </style>
 <p><a href="./" style="color:var(--moss)">← Listas 3C</a></p>
 <h1 class="home-titulo">Modelos de lista</h1>
@@ -64,12 +66,15 @@ $marcado = fn(array $lista, string $mot) => in_array(L3cTratamento::chaveMotivo(
       <span class="l3-desc">(Proposta e Negociado nunca entram)</span>
     </p>
     <p style="margin:8px 0 0;font-size:14px"><label>Deixar de fora lead de origem do corretor com menos de
-      <input type="number" min="0" max="365" name="dias[<?= h($slug) ?>]" value="<?= (int)$m['dias_origem_corretor'] ?>" style="width:70px"> dias</label></p>
+      <input type="number" min="0" max="365" name="dias[<?= h($slug) ?>]" value="<?= (int)$m['dias_origem_corretor'] ?>" style="width:70px"> dias</label>
+      <span class="l3-desc" style="display:block">Só vale para atendimento ainda aberto com o corretor; encerrado não fica de fora por isso. Na hora de montar, a caixa "Incluir leads recentes de origem do corretor" traz todos.</span></p>
     <?php if ($m['tipo'] === 'encerrados'): ?>
       <p style="margin:10px 0 0;font-size:13px"><b>Motivos de encerramento que entram</b></p>
       <div class="l3-mot">
-        <?php foreach ($catalogo as $mot): if (in_array(L3cTratamento::chaveMotivo($mot), $nuncaAtual, true)) continue; ?>
-          <label><input type="checkbox" name="motivos[<?= h($slug) ?>][]" value="<?= h($mot) ?>" <?= $marcado($m['motivos'], $mot) ? 'checked' : '' ?>> <?= h($mot) ?></label>
+        <?php foreach (L3cModelos::caixasDoModelo($catalogo, (array)$m['motivos'], (array)$m['motivos_nunca']) as $cx): ?>
+          <label class="<?= $cx['travado'] ? 'l3-travado' : '' ?>" data-chave="<?= h(L3cTratamento::chaveMotivo($cx['motivo'])) ?>"><input type="checkbox" name="motivos[<?= h($slug) ?>][]" value="<?= h($cx['motivo']) ?>"
+            <?= $cx['marcado'] ? 'checked' : '' ?> <?= $cx['travado'] ? 'disabled' : '' ?>> <?= h($cx['motivo']) ?>
+            <small class="l3-nota">está em "Nunca entram"; desmarque lá embaixo para usar aqui</small></label>
         <?php endforeach; ?>
       </div>
     <?php endif; ?>
@@ -81,11 +86,21 @@ $marcado = fn(array $lista, string $mot) => in_array(L3cTratamento::chaveMotivo(
     <p class="l3-desc">Vence a marcação dos modelos acima.</p>
     <div class="l3-mot">
       <?php foreach ($catalogo as $mot): ?>
-        <label><input type="checkbox" name="nunca[]" value="<?= h($mot) ?>" <?= in_array(L3cTratamento::chaveMotivo($mot), $nuncaAtual, true) ? 'checked' : '' ?>> <?= h($mot) ?></label>
+        <label><input type="checkbox" name="nunca[]" data-chave="<?= h(L3cTratamento::chaveMotivo($mot)) ?>" value="<?= h($mot) ?>" <?= in_array(L3cTratamento::chaveMotivo($mot), $nuncaAtual, true) ? 'checked' : '' ?>> <?= h($mot) ?></label>
       <?php endforeach; ?>
     </div>
   </div>
   <button class="l3-btn" type="submit">Salvar modelos</button>
 </form>
+<script>
+// Desmarcar em "Nunca entram" destrava na hora o mesmo motivo nos modelos,
+// para dar para marcar e salvar de uma vez só (e marcar trava de novo).
+document.querySelectorAll('input[name="nunca[]"]').forEach(n => n.addEventListener('change', () => {
+  document.querySelectorAll('.l3-mot label[data-chave="' + n.dataset.chave + '"]').forEach(l => {
+    l.classList.toggle('l3-travado', n.checked);
+    l.querySelector('input').disabled = n.checked;
+  });
+}));
+</script>
 <?php
 portal_footer();

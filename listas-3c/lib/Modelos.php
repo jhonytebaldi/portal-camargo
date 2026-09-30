@@ -9,6 +9,7 @@
    l3c_config (chave 'modelos'), e o que estiver lá vence.
    ===================================================================== */
 declare(strict_types=1);
+require_once __DIR__ . '/Tratamento.php';
 
 final class L3cModelos
 {
@@ -129,6 +130,45 @@ final class L3cModelos
                 'motivos' => [],
             ],
         ];
+    }
+
+    /**
+     * Caixas de motivo de um modelo na tela de edição.
+     * Antes, motivo marcado em "Nunca entram" sumia do modelo, e o Jhony
+     * (30/09) procurou "Crédito não aprovou" e "Sem Renda" na lista antiga e
+     * não achou. Agora ele aparece travado, com o aviso de onde destravar.
+     * A regra não muda: "Nunca entram" continua vencendo o modelo
+     * (L3cTratamento::descartePorMotivo).
+     * Devolve [['motivo' => ..., 'marcado' => bool, 'travado' => bool], ...].
+     */
+    public static function caixasDoModelo(array $catalogo, array $motivosDoModelo, array $motivosNunca): array
+    {
+        $ch = fn(array $l) => array_map(fn($x) => L3cTratamento::chaveMotivo((string)$x), $l);
+        $doModelo = $ch($motivosDoModelo);
+        $nunca = $ch($motivosNunca);
+        $out = [];
+        foreach ($catalogo as $mot) {
+            $k = L3cTratamento::chaveMotivo((string)$mot);
+            $out[] = ['motivo' => (string)$mot, 'marcado' => in_array($k, $doModelo, true), 'travado' => in_array($k, $nunca, true)];
+        }
+        return $out;
+    }
+
+    /**
+     * Motivos do modelo ao salvar. Caixa travada (desabilitada) não vai no
+     * formulário, então sem isto salvar a tela apagaria a marcação que o
+     * modelo já tinha para um motivo em "Nunca entram". Guarda a marcação
+     * antiga dos travados; o resto é o que veio marcado.
+     */
+    public static function motivosAoSalvar(array $postados, array $antes, array $motivosNunca, array $catalogo): array
+    {
+        $nunca = array_map(fn($x) => L3cTratamento::chaveMotivo((string)$x), $motivosNunca);
+        $guardados = array_filter($antes, fn($x) => in_array(L3cTratamento::chaveMotivo((string)$x), $nunca, true));
+        $out = [];
+        foreach (array_merge(array_values(array_intersect($catalogo, $postados)), array_values($guardados)) as $m) {
+            $out[L3cTratamento::chaveMotivo((string)$m)] = (string)$m;
+        }
+        return array_values($out);
     }
 
     /** Padrões + o que foi editado na tela (l3c_config 'modelos'). */

@@ -43,7 +43,9 @@ tirar do trabalho manual de exportar do Robust, tratar na IA e subir no 3C.
 
 Em todos: motivo da lista "nunca" fica fora (duplicado, número incorreto,
 comprou em outra imobiliária etc.), lead de origem "do corretor" com menos de
-30 dias fica fora, telefone sem DDD válido e telefone repetido ficam fora, e
+30 dias e atendimento ainda aberto fica fora (encerrado não; e a caixa
+"Incluir leads recentes de origem do corretor", na hora de montar, traz todos),
+telefone sem DDD válido e telefone repetido ficam fora, e
 encerrado que já tem outro atendimento ativo fica fora. Tudo editável em
 **Editar modelos**; listas já montadas guardam o modelo que usaram.
 
@@ -99,6 +101,12 @@ lista (`GET .../lists/{l}/mailing` dá 405), então contato de lista feita à m�
 que ainda não foi discado não é visto. Atenção: `numbers[0]=` (o que o
 `http_build_query` gera) faz o 3C ignorar o filtro; tem de ser `numbers[]=`.
 Se todos já estiverem na campanha, nenhuma lista é criada.
+O histórico é o banco do portal no servidor, o mesmo para todo computador.
+A conferência roda ao aprovar (só aí se sabe a campanha); na lista pronta,
+um aviso já mostra quantos contatos este portal subiu antes, por campanha.
+
+Motivo marcado em "Nunca entram" aparece travado nos modelos, com o aviso de
+desmarcar lá para usar; "Nunca entram" continua vencendo o modelo.
 
 Aprovar cria uma lista nova na campanha escolhida (`POST /campaigns/{c}/lists`)
 e grava o id na hora (o 3C não deduplica por nome), depois sobe em lotes de 100
@@ -110,7 +118,10 @@ campanha descartam número na importação e o 3C ainda responde 200.
 ## Testes
 
 `php listas-3c/bin/testes.php` roda as regras puras (nome, telefone, motivo,
-resumo, máscara) sem banco nem rede.
+resumo, máscara, corretor, motivos travados) sem banco nem rede.
+`PORTAL_CONFIG=<config de teste> php listas-3c/bin/teste-conferencia.php` prova
+a conferência de repetidos num MySQL de teste (o nome do banco precisa ter
+"teste"), com um 3C falso local: nada vai para o 3C de verdade.
 
 Na tela da lista, **Modo demonstração** mascara nome, e-mail, telefone e a
 observação do atendimento (texto livre do corretor no Robust, que às vezes traz

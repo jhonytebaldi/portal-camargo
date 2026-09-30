@@ -176,6 +176,30 @@ final class L3cTratamento
     }
 
     /**
+     * O atendimento fica fora por ser lead recente de origem do corretor?
+     * Três condições, todas pedidas pelo Jhony em 30/09/2026:
+     *  - "Geralmente não quero pegar esses leads recentes, que são campanha
+     *    deles, mas eventualmente quero": quem monta a lista marca a caixa
+     *    'incluir_recentes_corretor' e aí ninguém fica fora por isso;
+     *  - "Se entrou ontem e o corretor encerrou ontem, esse cara está livre":
+     *    atendimento ENCERRADO nunca é segurado por esta regra; ela só
+     *    protege o atendimento que ainda está aberto com o corretor;
+     *  - recente = cadastrado há menos de 'dias_origem_corretor' dias (0
+     *    desliga a regra).
+     */
+    public static function seguraPorCorretor(array $a, array $modelo, int $agora): bool
+    {
+        if (!empty($modelo['incluir_recentes_corretor'])) return false;
+        $dias = (int)($modelo['dias_origem_corretor'] ?? 0);
+        if ($dias <= 0) return false;
+        // ended_at preenchido ou ativo=false: o corretor já encerrou.
+        if (!empty($a['ended_at']) || (array_key_exists('ativo', $a) && ($a['ativo'] === false || $a['ativo'] === 0 || $a['ativo'] === 'false'))) return false;
+        if (!self::origemDeCorretor($a['origin'] ?? '', (array)($modelo['origens_corretor'] ?? []))) return false;
+        $criado = strtotime((string)($a['created_at'] ?? ''));
+        return $criado !== false && $criado > $agora - $dias * 86400;
+    }
+
+    /**
      * Resumo curto do atendimento, para caber na tela do SDR no 3C.
      * Só fatos que o Robust já tem (etapa, datas, motivo, agenda e a
      * observação do corretor), sem IA: o resumo tem que ser o mesmo toda
