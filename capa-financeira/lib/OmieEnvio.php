@@ -263,6 +263,36 @@ final class OmieEnvio
         return ['ok' => true, 'msg' => 'excluído no Omie (status era ' . $st . ')'];
     }
 
+    /**
+     * Corrige a forma de pagamento de um título a pagar que ficou como "PIX QR-Code" (importação por planilha)
+     * para Transferência Bancária + finalidade "Transferência por chave PIX" (01.3) + chave.
+     * @return array{status:'corrigido'|'ja_ok'|'pulado'|'erro', msg:string, antes:?array, depois:?array}
+     */
+    public static function corrigirPix(string $empresa, string $codigo, string $chave): array
+    {
+        $t = self::consultar($empresa, 'P', $codigo);
+        if (!$t) return ['status' => 'erro', 'msg' => 'título não existe no Omie com este código de integração', 'antes' => null, 'depois' => null];
+        $cnab = $t['cnab_integracao_bancaria'] ?? [];
+        $forma = (string)($cnab['codigo_forma_pagamento'] ?? '');
+        if ($forma === 'TRA' && (string)($cnab['finalidade_transferencia'] ?? '') === '01.3') return ['status' => 'ja_ok', 'msg' => 'já está como Transferência por chave PIX', 'antes' => $cnab, 'depois' => $cnab];
+        if ($forma !== 'PIX' && $forma !== '') return ['status' => 'pulado', 'msg' => "forma de pagamento é \"$forma\" (não é PIX QR-Code) — não mexi", 'antes' => $cnab, 'depois' => null];
+        if ((float)($t['valor_pag'] ?? 0) > 0 || preg_match('/PAG|LIQ/i', (string)($t['status_titulo'] ?? ''))) return ['status' => 'pulado', 'msg' => 'título já pago/baixado (status ' . $t['status_titulo'] . ') — não mexi', 'antes' => $cnab, 'depois' => null];
+        $chave = trim($chave) !== '' ? trim($chave) : trim((string)($cnab['pix_qrcode'] ?? ''));
+        if ($chave === '') return ['status' => 'erro', 'msg' => 'sem chave Pix (nem no portal nem no título)', 'antes' => $cnab, 'depois' => null];
+        $cad = null;
+        try { $r = OmieApi::call($empresa, 'geral/clientes/', 'ConsultarCliente', ['codigo_cliente_omie' => (int)$t['codigo_cliente_fornecedor']]); $cad = $r; } catch (Throwable $e) {}
+        $novo = ['codigo_forma_pagamento' => 'TRA', 'finalidade_transferencia' => '01.3', 'pix_qrcode' => $chave,
+                 'cpf_cnpj_transferencia' => (string)($cad['cnpj_cpf'] ?? ''), 'nome_transferencia' => mb_substr((string)($cad['razao_social'] ?? ''), 0, 60)];
+        $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie'], 'codigo_lancamento_integracao' => $codigo, 'cnab_integracao_bancaria' => $novo];
+        // Alterar exige os campos obrigatórios do título: reenvia os que já estão lá
+        foreach (['codigo_cliente_fornecedor', 'data_vencimento', 'valor_documento', 'codigo_categoria', 'data_previsao', 'id_conta_corrente', 'data_emissao', 'numero_documento', 'observacao', 'numero_parcela', 'numero_documento_fiscal', 'codigo_projeto'] as $k) if (isset($t[$k]) && $t[$k] !== '' && $t[$k] !== 0) $ped[$k] = $t[$k];
+        OmieApi::call($empresa, 'financas/contapagar/', 'AlterarContaPagar', $ped);
+        OmieApi::esquecer($empresa, 'financas/contapagar/', 'ConsultarContaPagar', ['codigo_lancamento_integracao' => $codigo]);
+        $v = self::consultar($empresa, 'P', $codigo); $dep = $v['cnab_integracao_bancaria'] ?? null;
+        $ok = ($dep['codigo_forma_pagamento'] ?? '') === 'TRA' && ($dep['finalidade_transferencia'] ?? '') === '01.3';
+        return ['status' => $ok ? 'corrigido' : 'erro', 'msg' => $ok ? 'corrigido para Transferência por chave PIX (' . $chave . ')' : 'o Omie aceitou a alteração mas a consulta de volta não mostra a nova forma — confira no Omie', 'antes' => $cnab, 'depois' => $dep];
+    }
+
     /* ---------------- util ---------------- */
 
     public static function br(string $iso): string { return preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $iso, $m) ? "$m[3]/$m[2]/$m[1]" : $iso; }
