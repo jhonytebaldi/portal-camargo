@@ -304,6 +304,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('UPDATE cf_exportacoes SET conferencia = ?, conferido_em = ' . ($fim ? 'NOW()' : 'conferido_em') . ' WHERE id = ?')->execute([json_encode(array_values($conf), JSON_UNESCAPED_UNICODE), $id]);
             exit(json_encode(['ok' => true, 'linhas' => $res, 'offset' => $offset, 'total' => $total, 'fim' => $fim, 'conferencia' => array_values($conf)], JSON_UNESCAPED_UNICODE));
         }
+        if ($acao === 'corrigir_pix') {
+            // títulos a pagar de uma exportação por planilha que ficaram como "PIX QR-Code": corrige N por vez, em ordem, pulando os já tratados
+            $id = (int)($in['id'] ?? 0); $qtd = min(20, max(1, (int)($in['qtd'] ?? 5)));
+            $st = $pdo->prepare("SELECT * FROM cf_exportacoes WHERE id = ? AND tipo = 'P'"); $st->execute([$id]);
+            if (!($ex = $st->fetch())) $falha('exportação não encontrada ou não é de contas a pagar');
+            $emp = (string)$ex['empresa'];
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$emp])) $falha('API do Omie não configurada para esta empresa — as chaves ficam no omie.php da configuração do portal');
+            if (($resta = OmieApi::bloqueadoPor($emp)) > 0) $falha('API do Omie bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
+            $q = $pdo->prepare("SELECT l.* FROM cf_lancamentos l WHERE l.exportacao_id = ? AND l.tipo = 'P' AND l.status = 'exportado'
+                                AND NOT EXISTS (SELECT 1 FROM cf_envios_omie e WHERE e.lancamento_id = l.id AND e.acao = 'alterar' AND e.status = 'ok') ORDER BY l.codigo_integracao LIMIT " . $qtd); $q->execute([$id]);
+            $linhas = $q->fetchAll(); $res = [];
+            foreach ($linhas as $l) {
+                $cod = (string)$l['codigo_integracao'];
+                try { $r = OmieEnvio::corrigirPix($emp, $cod, (string)($l['chave_pix'] ?? '')); }
+                catch (Throwable $e) { $r = ['status' => 'erro', 'msg' => 'erro na API do Omie: ' . $e->getMessage() . (OmieEnvio::erroTemporario($e->getMessage()) ? ' — aguarde alguns minutos e tente de novo' : ''), 'antes' => null, 'depois' => null]; }
+                $stLog = in_array($r['status'], ['corrigido', 'ja_ok'], true) ? 'ok' : ($r['status'] === 'pulado' ? 'recusado' : 'erro');
+                cf_exp_log_envio($pdo, $id, $l, $emp, 'P', 'alterar', $stLog, $l['omie_id'] ? (int)$l['omie_id'] : null, $r['antes'] !== null ? ['cnab_antes' => $r['antes']] : null, $r['depois'] !== null ? ['cnab_depois' => $r['depois']] : null, $r['msg'], (int)$u['id'], $r['status'] === 'corrigido');
+                $res[] = ['codigo' => $cod, 'status' => $r['status'], 'msg' => $r['msg']];
+                if ($r['status'] === 'erro' && OmieEnvio::erroTemporario($r['msg'])) break;
+            }
+            $q = $pdo->prepare("SELECT COUNT(*) FROM cf_lancamentos l WHERE l.exportacao_id = ? AND l.tipo = 'P' AND l.status = 'exportado' AND NOT EXISTS (SELECT 1 FROM cf_envios_omie e WHERE e.lancamento_id = l.id AND e.acao = 'alterar' AND e.status = 'ok')"); $q->execute([$id]);
+            exit(json_encode(['ok' => true, 'linhas' => $res, 'restam' => (int)$q->fetchColumn()], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'vincular_linha') {
             // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
             $id = (int)($in['id'] ?? 0); $omieId = (int)($in['omie_id'] ?? 0);
@@ -570,7 +593,7 @@ portal_header('Exportar para o Omie', $u);
 <td><?= (int)$e['n_linhas'] ?></td><td class="cf-num"><?= cf_brl($e['total']) ?></td><td><?php if (($e['modo'] ?? 'planilha') === 'api'): ?><span class="cf-tag">API</span><?php else: ?><a href="?baixar=<?= (int)$e['id'] ?>">⬇ <?= h($e['arquivo_nome']) ?></a><?php endif; ?></td>
 <td><?php if ($av): ?><details><summary><?= count($av) ?> aviso(s)</summary><ul class="cf-flags"><?php foreach ($av as $x): ?><li><?= h($x) ?></li><?php endforeach; ?></ul></details><?php endif; ?></td>
 <td><span class="cf-status cf-st-<?= $e['status'] === 'gerada' ? 'confirmada' : 'descartada' ?>"><?= h($e['status']) ?></span></td>
-<td><?php if ($e['status'] === 'gerada' && ($e['modo'] ?? 'planilha') === 'planilha' && $apiOk): ?><button type="button" class="cf-x exp-conferir-exp" title="confere no Omie, título a título, se a planilha importada criou todos (pelo código de integração)"><?= $e['conferido_em'] ? '✔ conferir de novo' : '✔ conferir no Omie' ?></button><?php if ($e['conferido_em']): ?><div class="exp-conf-quando cf-raw">conferida em <?= h(substr((string)$e['conferido_em'], 0, 16)) ?></div><span class="exp-conf-salva" data-conf="<?= h((string)$e['conferencia']) ?>"></span><?php endif; ?> <?php endif; ?><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" data-modo="<?= h((string)($e['modo'] ?? 'planilha')) ?>" title="<?= ($e['modo'] ?? '') === 'api' ? 'exclui os títulos no Omie (os já baixados ficam) e devolve as linhas para confirmado' : 'a importação no Omie falhou: devolve as linhas para confirmado e gera de novo' ?>">↩ desfazer</button><?php endif; ?></td></tr>
+<td><?php if ($e['status'] === 'gerada' && $e['tipo'] === 'P' && ($e['modo'] ?? 'planilha') === 'planilha' && $apiOk): ?><button type="button" class="cf-x exp-corrigir-pix" title="títulos importados por planilha ficam como 'PIX QR-Code'; isto muda no Omie para Transferência Bancária + finalidade 'Transferência por chave PIX' + chave (pula os já pagos). Processa poucos por vez.">⇄ corrigir forma Pix</button> <?php endif; ?><?php if ($e['status'] === 'gerada' && ($e['modo'] ?? 'planilha') === 'planilha' && $apiOk): ?><button type="button" class="cf-x exp-conferir-exp" title="confere no Omie, título a título, se a planilha importada criou todos (pelo código de integração)"><?= $e['conferido_em'] ? '✔ conferir de novo' : '✔ conferir no Omie' ?></button><?php if ($e['conferido_em']): ?><div class="exp-conf-quando cf-raw">conferida em <?= h(substr((string)$e['conferido_em'], 0, 16)) ?></div><span class="exp-conf-salva" data-conf="<?= h((string)$e['conferencia']) ?>"></span><?php endif; ?> <?php endif; ?><?php if ($e['status'] === 'gerada'): ?><button type="button" class="cf-x exp-desfazer" data-modo="<?= h((string)($e['modo'] ?? 'planilha')) ?>" title="<?= ($e['modo'] ?? '') === 'api' ? 'exclui os títulos no Omie (os já baixados ficam) e devolve as linhas para confirmado' : 'a importação no Omie falhou: devolve as linhas para confirmado e gera de novo' ?>">↩ desfazer</button><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <?php endif; ?>
 
@@ -686,6 +709,17 @@ portal_header('Exportar para o Omie', $u);
     if (marca) marca.textContent = txt; else { const m = document.createElement('div'); m.className = 'exp-conf-quando cf-raw'; m.textContent = txt; b.parentNode.appendChild(m); }
     const falt = todas.filter(l => !l.ok);
     toast(falt.length ? falt.length + ' título(s) faltando/divergente(s) no Omie' : 'Todos os ' + todas.length + ' títulos estão no Omie');
+  }));
+  document.querySelectorAll('.exp-corrigir-pix').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); const qtd = parseInt(prompt('Quantos títulos corrigir agora (um lote de cada vez; os já corrigidos são pulados)?', '5') || '0', 10); if (!qtd) return;
+    b.disabled = true; b.textContent = 'corrigindo…';
+    const j = await post({acao:'corrigir_pix', id: +tr.dataset.id, qtd});
+    b.disabled = false; b.textContent = '⇄ corrigir forma Pix';
+    if (!j) return;
+    const cls = {corrigido:'cf-ok', ja_ok:'cf-ok', pulado:'cf-leve', erro:'cf-grave'};
+    let cel = tr.querySelector('.exp-pix-res'); if (!cel) { cel = document.createElement('div'); cel.className = 'exp-pix-res cf-flags'; cel.style.marginTop = '6px'; tr.querySelector('td:nth-child(7)').appendChild(cel); }
+    cel.innerHTML = j.linhas.map(l => '<div class="cf-flag ' + cls[l.status] + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;') + '</div>').join('') + '<div class="cf-raw">' + (j.restam ? 'faltam ' + j.restam + ' título(s) nesta planilha — clique de novo para o próximo lote' : 'todos os títulos desta planilha já foram tratados') + '</div>';
+    toast(j.linhas.filter(l => l.status === 'corrigido').length + ' corrigido(s)');
   }));
   document.querySelectorAll('.exp-desfazer-linha').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const cod = tr.querySelector('b').textContent;

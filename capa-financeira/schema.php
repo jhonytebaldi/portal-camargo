@@ -165,6 +165,10 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_exportacoes ADD COLUMN modo ENUM('planilha','api') NOT NULL DEFAULT 'planilha' AFTER empresa");
         $feitos[] = 'cf_exportacoes.modo';
     }
+    if ($tem('cf_envios_omie')) {
+        $col = $pdo->query("SHOW COLUMNS FROM cf_envios_omie LIKE 'acao'")->fetch();
+        if ($col && !str_contains((string)$col['Type'], 'alterar')) { $pdo->exec("ALTER TABLE cf_envios_omie MODIFY acao ENUM('incluir','excluir','alterar') NOT NULL"); $feitos[] = 'cf_envios_omie.acao alterar'; }
+    }
     if (!$colExiste('cf_exportacoes', 'conferencia')) {
         $pdo->exec("ALTER TABLE cf_exportacoes ADD COLUMN conferencia JSON NULL AFTER avisos, ADD COLUMN conferido_em DATETIME NULL AFTER conferencia");
         $feitos[] = 'cf_exportacoes.conferencia/conferido_em';
