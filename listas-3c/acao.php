@@ -54,11 +54,20 @@ try {
         l3c_json(['ok' => true] + $m->avancar($id, 8.0));
     }
 
+    if ($acao === 'previa') {
+        // Confere a lista pronta contra a campanha do seletor (L3cMontador::preconferir).
+        $campanha = (int)($in['campanha'] ?? 0);
+        if (!isset(L3cTresC::doConfig()->campanhas()[$campanha])) l3c_json(['ok' => false, 'erro' => 'Campanha não permitida ou inexistente no 3C.'], 400);
+        l3c_json(['ok' => true] + l3c_montador(true)->preconferir($id, $campanha, 8.0));
+    }
+
     if ($acao === 'aprovar') {
         $campanha = (int)($in['campanha'] ?? 0);
         $tresc = L3cTresC::doConfig();
         $campanhas = $tresc->campanhas();   // já filtradas pela trava L3C_CAMPANHAS_PERMITIDAS
         if (!isset($campanhas[$campanha])) l3c_json(['ok' => false, 'erro' => 'Campanha não permitida ou inexistente no 3C.'], 400);
+        $erroPrevia = L3cMontador::antesDeAprovar($pdo, $id, $campanha);
+        if ($erroPrevia) l3c_json(['ok' => false, 'erro' => $erroPrevia], 409);
         // Só sai de 'pronta' uma vez: um segundo clique não cria outra lista no 3C.
         // cursor_json zerado: o envio começa conferindo duplicatas na campanha
         // escolhida (Montador::conferirDuplicatas) e guarda ali onde parou.

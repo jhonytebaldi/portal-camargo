@@ -19,7 +19,7 @@ $id = (int)($_GET['id'] ?? 0);
 $mascara = !empty($_GET['mascara']);
 $mk = fn(string $s, string $t) => $mascara ? L3cTratamento::mascarar($s, $t) : $s;
 
-$lista = null; $itens = []; $descartes = []; $jaSubiram = []; $campanhas = []; $erro3c = '';
+$lista = null; $itens = []; $descartes = []; $campanhas = []; $erro3c = ''; $selecionada = null; $previaOk = false;
 if ($id) {
     $st = $pdo->prepare('SELECT * FROM l3c_listas WHERE id=?'); $st->execute([$id]);
     $lista = $st->fetch() ?: null;
@@ -31,8 +31,17 @@ if ($id) {
             $itens = $st->fetchAll();
         }
         if ($lista['status'] === 'pronta') {
-            $jaSubiram = L3cMontador::jaSubiramPeloPortal($pdo, $id);
             try { $campanhas = L3cTresC::doConfig()->campanhas(); } catch (Throwable $e) { $erro3c = $e->getMessage(); }
+            // Campanha do seletor: a da URL (trocou no seletor), senão a
+            // Campanha Padrão, que é onde o time sobe as listas feitas à mão e
+            // onde o Jhony quer a conferência de duplicata (29/09); senão a
+            // primeira. A Clicou Ligou fica de fora da escolha automática.
+            $pedida = (int)($_GET['campanha'] ?? 0);
+            foreach ($campanhas as $cid => $cn) if (L3cTratamento::semAcento(mb_strtolower(trim($cn), 'UTF-8')) === 'campanha padrao') $selecionada = $cid;
+            if (isset($campanhas[$pedida])) $selecionada = $pedida;
+            if ($selecionada === null && $campanhas) $selecionada = array_key_first($campanhas);
+            // A prévia só vale conferida para ESTA campanha; senão a tela confere (JS, ação 'previa') e recarrega.
+            $previaOk = $selecionada !== null && L3cMontador::campanhaDaPrevia($lista) === $selecionada;
         }
     }
 } else {
@@ -173,32 +182,24 @@ if ($falta): ?>
   <?php if ($lista['status'] === 'pronta'): ?>
   <div class="l3-card">
     <h2 style="font-size:16px;margin:0 0 10px">Aprovar e subir no 3C</h2>
-    <?php if ($jaSubiram): ?>
-    <?php // O Jhony montou a mesma lista duas vezes e achou que o portal não
-          // barrou (30/09): a conferência só acontece ao aprovar, porque só
-          // aí se sabe a campanha. Este aviso mostra antes, na lista pronta. ?>
-    <div class="aviso" style="margin:0 0 10px">Repetidos já nesta prévia:
-      <?php foreach ($jaSubiram as $j): ?><b><?= (int)$j['n'] ?></b> destes contatos já subiram por este portal na campanha <?= h($j['campanha_nome'] ?: $j['campanha_id']) ?>. <?php endforeach; ?>
-      Se aprovar na mesma campanha, eles saem sozinhos e não sobem de novo.</div>
-    <?php endif; ?>
     <?php if ($erro3c): ?><div class="erro"><?= h($erro3c) ?></div>
     <?php elseif (!$campanhas): ?><div class="aviso">Nenhuma campanha do 3C liberada para este portal.</div>
     <?php else: ?>
-    <form class="l3-form" id="l3-aprovar">
+    <?php $entramAgora = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $entramAgora = (int)$d['n']; ?>
+    <form class="l3-form" id="l3-aprovar" data-previa="<?= $previaOk ? 'ok' : 'falta' ?>" data-campanha="<?= (int)$selecionada ?>">
       <label>Campanha
-        <?php
-        // A Campanha Padrão vem marcada: é onde o time sobe as listas feitas
-        // à mão e onde o Jhony quer a conferência de duplicata (29/09). A
-        // Clicou Ligou fica de fora da escolha automática de propósito.
-        $padrao = null;
-        foreach ($campanhas as $cid => $cn) if (L3cTratamento::semAcento(mb_strtolower(trim($cn), 'UTF-8')) === 'campanha padrao') $padrao = $cid;
-        ?>
-        <select name="campanha"><?php foreach ($campanhas as $cid => $cn): ?><option value="<?= (int)$cid ?>"<?= $cid === $padrao ? ' selected' : '' ?>><?= h($cn) ?> (<?= (int)$cid ?>)</option><?php endforeach; ?></select>
+        <select name="campanha" id="l3-campanha"><?php foreach ($campanhas as $cid => $cn): ?><option value="<?= (int)$cid ?>"<?= $cid === $selecionada ? ' selected' : '' ?>><?= h($cn) ?> (<?= (int)$cid ?>)</option><?php endforeach; ?></select>
       </label>
-      <button class="l3-btn" type="submit">Aprovar e subir</button>
+      <button class="l3-btn" type="submit" <?= (!$previaOk || $entramAgora === 0) ? 'disabled' : '' ?>>Aprovar e subir</button>
     </form>
-    <p class="l3-desc">Nada sobe sem este clique. Ao aprovar, o portal primeiro tira quem já está na campanha escolhida
-      (quem este portal já subiu nela e quem já recebeu ligação nela nos últimos 60 dias) e só então cria a lista
+    <?php if (!$previaOk): ?>
+      <div class="aviso" style="margin:10px 0 0" id="l3-previa-txt">Conferindo quem já está nesta campanha…</div>
+    <?php elseif ($entramAgora === 0): ?>
+      <div class="aviso" style="margin:10px 0 0">Nada para subir nesta campanha: todos estes contatos já estão nela. Veja em "Quem ficou de fora e por quê".</div>
+    <?php endif; ?>
+    <p class="l3-desc">Nada sobe sem este clique. A prévia acima já tirou quem está na campanha escolhida
+      (quem este portal já subiu nela e quem já recebeu ligação nela nos últimos 60 dias); trocar a campanha refaz a conta.
+      Ao aprovar, o portal confere de novo e só então cria a lista
       "<?= h($lista['nome']) ?>" dentro dela. O número final aparece em "Quem ficou de fora e por quê".
       Limite: contato de lista feita à mão que ainda não foi discado não dá para ver pela API do 3C.
       As tentativas por status e a reciclagem continuam na configuração da campanha no 3C.</p>
@@ -279,6 +280,23 @@ if (card) {
   }
   if (['montando', 'enviando'].includes(card.dataset.status)) rodar();
   const ap = document.getElementById('l3-aprovar');
+  // Trocou a campanha: recarrega com ela, e a página refaz a conta dos repetidos.
+  const selc = document.getElementById('l3-campanha');
+  if (selc) selc.addEventListener('change', () => {
+    const u = new URLSearchParams(location.search); u.set('campanha', selc.value); location.search = u.toString();
+  });
+  // Prévia ainda não conferida para a campanha do seletor: confere em passos curtos e recarrega.
+  if (ap && ap.dataset.previa === 'falta') (async () => {
+    const t = document.getElementById('l3-previa-txt');
+    for (;;) {
+      let r;
+      try { r = await acao({acao: 'previa', id, campanha: +ap.dataset.campanha}); } catch (e) { await new Promise(s => setTimeout(s, 3000)); continue; }
+      if (!r.ok) { t.textContent = r.erro; return; }
+      if (r.pronto) { location.reload(); return; }
+      t.textContent = 'Conferindo quem já está nesta campanha: ' + r.feitos + ' de ' + r.total;
+      await new Promise(s => setTimeout(s, 300));
+    }
+  })();
   if (ap) ap.addEventListener('submit', async ev => {
     ev.preventDefault();
     const b = ev.submitter; b.disabled = true;

@@ -467,6 +467,23 @@ final class L3cMontador
     {
         $id = (int)$l['id'];
         $campanha = (int)$l['campanha_id'];
+        $ok = $this->conferirEm($id, $campanha, $cur, $orcamento, function (array $cur, int $feitos, int $total) use ($l, $id, $campanha) {
+            $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=?, progresso=?, progresso_txt=? WHERE id=?')
+                ->execute([json_encode($cur), min(99, 100 * $feitos / max(1, $total)),
+                           'Conferindo quem já está na campanha ' . ($l['campanha_nome'] ?? $campanha) . ": $feitos de $total", $id]);
+        });
+        $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=? WHERE id=?')->execute([json_encode($cur), $id]);
+        return $ok;
+    }
+
+    /**
+     * O miolo da conferência, numa campanha: histórico do portal primeiro
+     * (banco), depois as ligações no 3C, em lotes, guardando em $cur onde
+     * parou. Serve ao envio (campanha aprovada) e à prévia (campanha que está
+     * no seletor). $aoAndar recebe ($cur, feitos, total) a cada lote.
+     */
+    private function conferirEm(int $id, int $campanha, array &$cur, float $orcamento, callable $aoAndar): bool
+    {
         if (empty($cur['dup_hist'])) {
             $this->marcarJaSubidos($id, $campanha);
             $cur['dup_hist'] = 1;
@@ -495,13 +512,81 @@ final class L3cMontador
             foreach (array_unique($achados) as $n) if (isset($porNumero[$n])) $upd->execute([self::DESCARTE_DUP_3C, $id, $porNumero[$n]]);
             $cur['dup'] = (int)end($lote)['atendimento_id'];
             $cur['dup_n'] = (int)($cur['dup_n'] ?? 0) + count($lote);
-            $feitos = $cur['dup_n'];
-            $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=?, progresso=?, progresso_txt=? WHERE id=?')
-                ->execute([json_encode($cur), min(99, 100 * $feitos / max(1, $total)),
-                           'Conferindo quem já está na campanha ' . ($l['campanha_nome'] ?? $campanha) . ": $feitos de $total", $id]);
+            $aoAndar($cur, $cur['dup_n'], $total);
         }
-        $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=? WHERE id=?')->execute([json_encode($cur), $id]);
         return !empty($cur['dup_ok']);
+    }
+
+    /**
+     * Prévia que já desconta os repetidos da campanha que está no seletor.
+     * Pedido do Jhony (30/09, 21:48): a prévia dizia "197 entram" e só um
+     * aviso falava dos 97 repetidos; "se eu subir 2 listas iguais tem que
+     * ficar 0 ali". Agora a lista pronta passa pela mesma conferência do
+     * envio, para a campanha do seletor: os repetidos saem do "entram" e
+     * aparecem em "Quem ficou de fora e por quê". Trocou a campanha, os
+     * repetidos da anterior voltam e a conta é refeita. O aprovar continua
+     * conferindo de novo (segunda trava). Em passos curtos, como o resto.
+     * Devolve ['pronto' => bool, 'feitos' => n, 'total' => n].
+     */
+    public function preconferir(int $id, int $campanha, float $orcamento = 8.0): array
+    {
+        $this->inicio = microtime(true);
+        $this->orc = $orcamento;
+        $lock = 'l3c_lista_' . $id;
+        if ((int)$this->pdo->query('SELECT GET_LOCK(' . $this->pdo->quote($lock) . ', 0)')->fetchColumn() !== 1) {
+            return ['pronto' => false, 'feitos' => 0, 'total' => 0];
+        }
+        try {
+            $l = $this->lista($id);
+            if ($l['status'] !== 'pronta') return ['pronto' => true, 'feitos' => 0, 'total' => 0];
+            $cursor = json_decode((string)$l['cursor_json'], true) ?: [];
+            $prev = (array)($cursor['previa'] ?? []);
+            if ((int)($prev['campanha'] ?? 0) !== $campanha) {
+                self::desfazerPrevia($this->pdo, $id);
+                $prev = ['campanha' => $campanha];
+            }
+            if (empty($prev['dup_ok'])) {
+                $salvar = function (array $p) use ($id, &$cursor) {
+                    $cursor['previa'] = $p;
+                    $this->pdo->prepare('UPDATE l3c_listas SET cursor_json=? WHERE id=?')->execute([json_encode($cursor), $id]);
+                };
+                $this->conferirEm($id, $campanha, $prev, $orcamento, fn(array $p) => $salvar($p));
+                $salvar($prev);
+            }
+            return ['pronto' => !empty($prev['dup_ok']), 'feitos' => (int)($prev['dup_n'] ?? 0), 'total' => (int)($prev['dup_total'] ?? 0)];
+        } finally {
+            $this->pdo->query('SELECT RELEASE_LOCK(' . $this->pdo->quote($lock) . ')');
+        }
+    }
+
+    /**
+     * Antes de aprovar: se a prévia foi de outra campanha, os repetidos dela
+     * voltam (a conferência do envio refaz para a campanha certa); se foi
+     * desta e não sobrou ninguém, recusa: "se eu subir 2 listas iguais tem que
+     * ficar 0 ali" (Jhony, 30/09). Devolve a mensagem de recusa ou null.
+     */
+    public static function antesDeAprovar(PDO $pdo, int $id, int $campanha): ?string
+    {
+        $st = $pdo->prepare('SELECT * FROM l3c_listas WHERE id=?'); $st->execute([$id]);
+        $l = $st->fetch();
+        if (!$l || $l['status'] !== 'pronta') return null;   // o UPDATE do aprovar já recusa o resto
+        if (self::campanhaDaPrevia($l) !== $campanha) { self::desfazerPrevia($pdo, $id); return null; }
+        $st = $pdo->prepare('SELECT COUNT(*) FROM l3c_itens WHERE lista_id=? AND descarte IS NULL'); $st->execute([$id]);
+        return (int)$st->fetchColumn() === 0 ? 'Nada para subir nesta campanha: todos estes contatos já estão nela.' : null;
+    }
+
+    /** Campanha em que a prévia já foi conferida por inteiro, ou null. */
+    public static function campanhaDaPrevia(array $lista): ?int
+    {
+        $p = (array)((json_decode((string)($lista['cursor_json'] ?? ''), true) ?: [])['previa'] ?? []);
+        return !empty($p['dup_ok']) ? (int)$p['campanha'] : null;
+    }
+
+    /** Os repetidos de uma campanha voltam para a lista (trocou a campanha no seletor ou no aprovar). */
+    public static function desfazerPrevia(PDO $pdo, int $id): void
+    {
+        $pdo->prepare('UPDATE l3c_itens SET descarte=NULL WHERE lista_id=? AND enviado=0 AND descarte IN (?,?)')
+            ->execute([$id, self::DESCARTE_DUP_PORTAL, self::DESCARTE_DUP_3C]);
     }
 
     /**
