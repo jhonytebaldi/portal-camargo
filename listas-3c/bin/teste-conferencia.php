@@ -132,6 +132,33 @@ try {
     igual(str_contains((string)$eg['texto'], 'Outra lista está subindo'), true, 'e diz por que está esperando');
     $outra->query("SELECT RELEASE_LOCK('l3c_campanha_316173')");
     igual($subir($G)['enviados'], 1, 'liberou, sobe');
+    // Caso do Jhony (30/09, 21:48): subiu a lista, montou a mesma de novo e
+    // a prévia dizia "197 entram". Agora a prévia já confere a campanha do
+    // seletor: lista idêntica dá 0, e aprovar recusa.
+    $pdo->exec('DELETE FROM l3c_listas');
+    $entram = fn(int $id) => (int)$pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND descarte IS NULL")->fetchColumn();
+    $foraPor = fn(int $id, string $d) => (int)$pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND descarte=" . $pdo->quote($d))->fetchColumn();
+    $P1 = $nova('P1', ['47988880031', '47988880032', '47988880033']);
+    $aprovar($P1, 316173);
+    $P2 = $nova('P2', ['47988880031', '47988880032', '47988880033']);
+    $mp = new L3cMontador($pdo, null, $tresc);
+    for ($i = 0; $i < 5 && !($r = $mp->preconferir($P2, 316173))['pronto']; $i++);
+    igual($entram($P2), 0, 'prévia da lista idêntica: 0 entram');
+    igual($foraPor($P2, L3cMontador::DESCARTE_DUP_PORTAL), 3, 'prévia: os 3 aparecem em quem ficou de fora');
+    igual(is_string(L3cMontador::antesDeAprovar($pdo, $P2, 316173)), true, 'lista idêntica não deixa aprovar');
+    $st = $pdo->prepare('SELECT status FROM l3c_listas WHERE id=?'); $st->execute([$P2]);
+    igual($st->fetchColumn(), 'pronta', 'e continua pronta, sem nada no 3C');
+    // Trocou a campanha no seletor: a conta refaz para a nova.
+    for ($i = 0; $i < 5 && !$mp->preconferir($P2, 999)['pronto']; $i++);
+    igual($entram($P2), 3, 'outra campanha no seletor: os 3 voltam a entrar');
+    for ($i = 0; $i < 5 && !$mp->preconferir($P2, 316173)['pronto']; $i++);
+    igual($entram($P2), 0, 'voltou para a campanha de antes: 0 de novo');
+    // Lista com 1 novo: a prévia mostra só ele, e aprovar sobe só ele.
+    $P3 = $nova('P3', ['47988880031', '47988880032', '47988880039']);
+    for ($i = 0; $i < 5 && !$mp->preconferir($P3, 316173)['pronto']; $i++);
+    igual($entram($P3), 1, 'prévia com um contato novo: 1 entra');
+    igual(L3cMontador::antesDeAprovar($pdo, $P3, 316173), null, 'com alguém novo, aprovar segue');
+    igual($aprovar($P3, 316173)['enviados'], 1, 'e sobe só o novo (a conferência do aprovar é a segunda trava)');
 } finally {
     $pid = proc_get_status($proc)['pid'];
     proc_terminate($proc);
