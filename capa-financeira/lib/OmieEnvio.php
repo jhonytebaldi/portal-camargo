@@ -281,14 +281,15 @@ final class OmieEnvio
         if ($chave === '') return ['status' => 'erro', 'msg' => 'sem chave Pix (nem no portal nem no título)', 'antes' => $cnab, 'depois' => null];
         $cad = null;
         try { $r = OmieApi::call($empresa, 'geral/clientes/', 'ConsultarCliente', ['codigo_cliente_omie' => (int)$t['codigo_cliente_fornecedor']]); $cad = $r; } catch (Throwable $e) {}
-        $novo = ['codigo_forma_pagamento' => 'TRA', 'finalidade_transferencia' => '01.3', 'pix_qrcode' => $chave,
+        $novo = ['codigo_forma_pagamento' => 'TRA', 'finalidade_transferencia' => '01.3', 'pix_qrcode' => $chave, 'banco_transferencia' => '', 'agencia_transferencia' => '', 'conta_corrente_transferencia' => '',
                  'cpf_cnpj_transferencia' => (string)($cad['cnpj_cpf'] ?? ''), 'nome_transferencia' => mb_substr((string)($cad['razao_social'] ?? ''), 0, 60)];
         $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie'], 'codigo_lancamento_integracao' => $codigo, 'cnab_integracao_bancaria' => $novo];
         // Alterar exige os campos obrigatórios do título: reenvia os que já estão lá
         foreach (['codigo_cliente_fornecedor', 'data_vencimento', 'valor_documento', 'codigo_categoria', 'data_previsao', 'id_conta_corrente', 'data_emissao', 'numero_documento', 'observacao', 'numero_parcela', 'numero_documento_fiscal', 'codigo_projeto'] as $k) if (isset($t[$k]) && $t[$k] !== '' && $t[$k] !== 0) $ped[$k] = $t[$k];
         OmieApi::call($empresa, 'financas/contapagar/', 'AlterarContaPagar', $ped);
         OmieApi::esquecer($empresa, 'financas/contapagar/', 'ConsultarContaPagar', ['codigo_lancamento_integracao' => $codigo]);
-        $v = self::consultar($empresa, 'P', $codigo); $dep = $v['cnab_integracao_bancaria'] ?? null;
+        sleep(2);   // o Omie leva um instante para refletir a alteração
+        $v = self::consultarPorOmieId($empresa, 'P', (int)$t['codigo_lancamento_omie']); $dep = $v['cnab_integracao_bancaria'] ?? null;
         $ok = ($dep['codigo_forma_pagamento'] ?? '') === 'TRA' && ($dep['finalidade_transferencia'] ?? '') === '01.3';
         return ['status' => $ok ? 'corrigido' : 'erro', 'msg' => $ok ? 'corrigido para Transferência por chave PIX (' . $chave . ')' : 'o Omie aceitou a alteração mas a consulta de volta não mostra a nova forma — confira no Omie', 'antes' => $cnab, 'depois' => $dep];
     }
