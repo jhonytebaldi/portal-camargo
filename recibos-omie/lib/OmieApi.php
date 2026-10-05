@@ -66,6 +66,12 @@ final class OmieApi
             if (is_array($j)) { if (isset($j['__erro'])) throw new RuntimeException($j['__erro']); return $j; }
         }
         if (($resta = self::bloqueadoPor($conta)) > 0) throw new RuntimeException("API do Omie bloqueada temporariamente (anti-abuso) — tente de novo em " . ceil($resta / 60) . " min");
+        // gravação idêntica a uma que o Omie acabou de recusar: não reenviar (o Omie conta a repetição como abuso) — devolve o mesmo erro
+        $fw = self::cacheDir() . '/w-' . md5($conta . '|' . $path . '|' . $method . '|' . json_encode($param));
+        if (!$leitura && is_file($fw) && (time() - filemtime($fw)) < 300) {
+            $msg = (string)file_get_contents($fw);
+            throw new RuntimeException($msg . ' (pedido idêntico recusado há menos de 5 min — não foi reenviado para não bloquear a API; corrija a causa antes de tentar de novo)');
+        }
         // intervalo mínimo entre chamadas (o Omie penaliza rajadas)
         $dt = microtime(true) - self::$ultima; if ($dt < 0.35) usleep((int)((0.35 - $dt) * 1e6));
         self::$ultima = microtime(true);
@@ -82,6 +88,7 @@ final class OmieApi
             if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
             // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
             elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
+            elseif (!$leitura) @file_put_contents($fw, $msg);   // lembra a gravação recusada (ver acima)
             throw new RuntimeException($msg);
         }
         if ($leitura) @file_put_contents($chave, (string)$raw);
