@@ -594,6 +594,8 @@ def publicar():
             fp = os.path.join(d, f)
             if os.path.isfile(fp): os.remove(fp)
     ginput = []
+    agora_tx = datetime.now(TZ)
+    periodo_tx = "manhã" if agora_tx.hour < 12 else "tarde"
     for p in planos:
         # só tarefas PENDENTES entram no texto: exclui as que o check manual do
         # mesmo dia já marcou como feitas (reimportação preserva o check por
@@ -616,6 +618,7 @@ def publicar():
         top = top[:15]
         ginput.append({"robust_atendente": p["robust_atendente"],
             "corretor": p["corretor_nome"], "data": DATA,
+            "periodo": periodo_tx, "hora_geracao": agora_tx.strftime("%H:%M"),
             "tarefas_no_portal": len(pend) - len(top),
             "itens": [{k: i.get(k) for k in ("cliente_nome", "telefones", "stage", "acao",
                        "titulo", "justificativa", "msg_sugerida", "faixa", "atendimento_id")}
