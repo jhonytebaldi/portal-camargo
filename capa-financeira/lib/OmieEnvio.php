@@ -163,7 +163,8 @@ final class OmieEnvio
             $ped['data_vencimento'] = self::br($prev); $ped['data_previsao'] = self::br($prev);
         }
         if (!empty($c['I']['d'])) { $ped['data_emissao'] = self::br((string)$c['I']['d']); $ae = (int)substr((string)$c['I']['d'], 0, 4); if ($ae < 2000 || $ae > (int)date('Y') + 1) $erros[] = 'data de emissão com ano fora do razoável'; }
-        if (!empty($c['J']['d'])) $ped['data_entrada'] = self::br((string)$c['J']['d']);
+        // data de registro: no contas a pagar o campo chama "data_entrada"; no contas a receber, "data_registro" (o Omie recusa campo fora da estrutura)
+        if (!empty($c['J']['d'])) $ped[$tipo === 'P' ? 'data_entrada' : 'data_registro'] = self::br((string)$c['J']['d']);
 
         // documento / NF / parcela
         $ped['numero_documento'] = mb_substr((string)$c['U']['s'], 0, 20);
