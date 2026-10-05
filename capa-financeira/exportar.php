@@ -246,6 +246,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } catch (Throwable $e) {
                     $msg = 'erro no envio: ' . $e->getMessage();
                     if (OmieEnvio::erroTemporario($e->getMessage())) $parou = $e->getMessage();   // anti-abuso/indisponível: não insiste nas próximas
+                    elseif (preg_match('/n[ãa]o faz parte da estrutura|Client-5001|Tag \[/iu', $e->getMessage())) {
+                        // o Omie recusou um CAMPO do pedido: é bug da ferramenta, não da capa — as outras linhas falhariam igual e cada repetição conta como abuso
+                        $msg .= ' — isto é um defeito no envio da ferramenta (campo fora da estrutura da API), não um problema da capa; avise para corrigir';
+                        $parou = 'o Omie recusou um campo do pedido (defeito da ferramenta, não da capa) — envio interrompido para não bloquear a API; avise para corrigir';
+                    }
                     // se o Omie chegou a criar, não deixar órfão: tenta localizar pelo código de integração
                     try { $ex = $parou ? null : OmieEnvio::consultar($empresa, $tipo, $cod); } catch (Throwable $e2) { $ex = null; }
                     if ($ex && !empty($ex['codigo_lancamento_omie'])) {
