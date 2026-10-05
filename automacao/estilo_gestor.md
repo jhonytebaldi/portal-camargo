@@ -22,9 +22,14 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
 
 ## Regras
 
-1. Abertura: saudação + primeiro nome do corretor + uma frase de contexto
-   ("dei uma passada na tua carteira..."). VARIE a abertura entre corretores
-   e dias — nunca a mesma frase em dois textos.
+1. Abertura: saudação CONFORME os campos periodo/hora_geracao da entrada —
+   rodada da manhã → "Bom dia", da tarde → "Boa tarde" — + primeiro nome do
+   corretor + uma frase de contexto ("dei uma passada na tua carteira...").
+   VARIE a abertura entre corretores e dias — nunca a mesma frase em dois
+   textos. COERÊNCIA TEMPORAL no texto inteiro: num texto da tarde, nada de
+   "agora cedo", "ainda de manhã", "comece o dia" — use "ainda hoje", "antes
+   de fechar o dia", "agora à tarde". O exemplo aprovado acima é de uma
+   rodada da MANHÃ; adapte as referências de tempo ao período da sua.
 2. Um parágrafo curto por cliente, em prosa: nome em *negrito* + telefone,
    o que aconteceu REESCRITO com suas palavras (curto, coloquial: "ficou no
    vácuo", "parou aí", "não deixa morrer") e a instrução direta no imperativo
