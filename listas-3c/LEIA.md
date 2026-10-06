@@ -91,6 +91,10 @@ sobe as listas feitas à mão).
 na Campanha Padrão (lido por GET em 29/09/2026): `[15-09 a 25-09] L.A.A
 ENCERRADOS MOTIVOS PORTAL`. Período, iniciais das etapas (Lead, Atendimento,
 Agendamento, Visita), tipo e `PORTAL` no fim para separar da lista feita à mão.
+Se o nome já existe no portal, a nova ganha ` #2`, ` #3`... logo depois do `]`
+(`[15-09 a 25-09] #2 L.A.A ...`); a primeira fica sem número (combinado com o
+Jhony em 05/10; conta pelo maior número já usado, então cancelar a #2 não
+reaproveita o número). O exemplo no campo já mostra o número.
 
 **Duplicatas:** antes de criar a lista, o portal tira quem já está na campanha
 escolhida, por duas fontes: (1) telefone que este portal já subiu nela;
@@ -104,6 +108,16 @@ Se todos já estiverem na campanha, nenhuma lista é criada.
 O histórico é o banco do portal no servidor, o mesmo para todo computador.
 A conferência roda ao aprovar (só aí se sabe a campanha); na lista pronta,
 um aviso já mostra quantos contatos este portal subiu antes, por campanha.
+
+**Cartão Repetidos** (05/10): total fixo, mostra 0 quando não há, separado em
+três tipos (já subiu pelo portal, ligado no 3C nos últimos 60 dias, repetido
+dentro da própria lista), com "ver quais" (telefone com DDD e 4 finais, lista
+de origem e data). O "entram" já está sem eles. A origem do 3C é o campo `list`
+e a data é o `call_date` da ligação mais recente (`GET /calls`), gravados em
+`l3c_itens.repetido_lista/repetido_em` (migração 2 do `schema.php`). O número
+pode mudar ao gerar de novo: cada geração relê o Robust, a lista recém-subida
+passa a contar como "já subiu" e a janela de 60 dias anda. Explicações da tela
+ficam em tooltip (`title`), não em frase.
 
 Motivo marcado em "Nunca entram" aparece travado nos modelos, com o aviso de
 desmarcar lá para usar; "Nunca entram" continua vencendo o modelo.

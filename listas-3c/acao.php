@@ -42,6 +42,14 @@ try {
         // (l3c_listas.parametros), então a lista sabe como foi montada.
         $modelo = $modelos[$slug];
         $modelo['incluir_recentes_corretor'] = !empty($in['incluir_corretor']);
+        // Mesmo nome já usado no portal: ganha " #2", " #3" logo depois do
+        // período (combinado com o Jhony em 05/10; regra e teste em
+        // L3cTratamento::nomeComNumero). Lê só os nomes com o mesmo começo.
+        $nome = mb_substr($nome, 0, 150);
+        $cab = preg_match('/^\[[^\]]*\]/', $nome, $mm) ? $mm[0] : $nome;
+        $st = $pdo->prepare('SELECT nome FROM l3c_listas WHERE LEFT(nome, ?) = ?');
+        $st->execute([mb_strlen($cab), $cab]);
+        $nome = L3cTratamento::nomeComNumero($nome, $st->fetchAll(PDO::FETCH_COLUMN));
         $novo = L3cMontador::criar($pdo, $slug, $modelo, $de, $ate, mb_substr($nome, 0, 160), (int)$u['id']);
         l3c_json(['ok' => true, 'id' => $novo]);
     }

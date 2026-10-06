@@ -337,7 +337,7 @@ final class L3cMontador
             $descarte = null;
             if (!$tel) $descarte = 'sem telefone válido';
             elseif ($bloq && function_exists('fone_bloqueado') && fone_bloqueado($tel, $bloq)) $descarte = 'na lista de bloqueio do portal';
-            elseif (isset($jaVisto[$tel])) $descarte = 'telefone repetido na lista';
+            elseif (isset($jaVisto[$tel])) $descarte = L3cTratamento::DUP_LISTA;
             if ($tel) $jaVisto[$tel] = 1;
             $upd->execute([
                 mb_substr(L3cTratamento::nomeLimpo($it['nome_bruto'], $email), 0, 160), $email, (string)$tel,
@@ -362,7 +362,8 @@ final class L3cMontador
         $trava = 'l3c_campanha_' . $campanha;
         if ((int)$this->pdo->query('SELECT GET_LOCK(' . $this->pdo->quote($trava) . ', 0)')->fetchColumn() !== 1) {
             $this->pdo->prepare('UPDATE l3c_listas SET progresso_txt=? WHERE id=?')
-                ->execute(['Outra lista está subindo nesta campanha agora; esta continua logo em seguida, para conferir os repetidos com ela.', $id]);
+                // Texto curto: a tela mostra numa linha (regra do João, 05/10).
+                ->execute(['Na fila: outra lista subindo nesta campanha', $id]);
             return;
         }
         try {
@@ -393,7 +394,7 @@ final class L3cMontador
             if ($sobra === 0) {
                 // Lista vazia no 3C só confunde quem opera a campanha: não cria.
                 $this->pdo->prepare("UPDATE l3c_listas SET status='enviada', progresso=100, progresso_txt=? WHERE id=?")
-                    ->execute(["Nenhum contato novo: todos já estavam na campanha ($dups repetidos). Nenhuma lista foi criada no 3C.", $id]);
+                    ->execute(["Nada subiu: $dups repetidos, nenhuma lista criada no 3C", $id]);
                 return;
             }
         }
@@ -436,17 +437,17 @@ final class L3cMontador
         if ($falta === 0) {
             $incertos = (int)$this->pdo->query("SELECT COUNT(*) FROM l3c_itens WHERE lista_id=$id AND enviado=2")->fetchColumn();
             $l2 = $this->lista($id);
-            $dups = $this->contarDuplicatas($id);
-            $txt = 'No 3C: ' . $l2['importados'] . ' de ' . $l2['enviados'] . ' importados na lista ' . $l2['tresc_lista_id']
-                 . ($dups ? "; $dups já estavam na campanha e não subiram de novo" : '')
-                 . ($incertos ? " ($incertos em voo quando a conexão caiu: confira no 3C)" : '');
+            // Os repetidos saíram desta frase: agora têm cartão próprio na tela,
+            // sempre visível e com zero (pedido do Jhony, 05/10).
+            $txt = 'No 3C: ' . $l2['importados'] . ' de ' . $l2['enviados'] . ' importados (lista ' . $l2['tresc_lista_id'] . ')'
+                 . ($incertos ? "; $incertos incertos, confira no 3C" : '');
             $this->pdo->prepare("UPDATE l3c_listas SET status='enviada', progresso=100, progresso_txt=? WHERE id=?")->execute([$txt, $id]);
         }
     }
 
     // ---- duplicatas na campanha de destino -----------------------------
-    public const DESCARTE_DUP_PORTAL = 'já subiu por este portal nesta campanha';
-    public const DESCARTE_DUP_3C     = 'já recebeu ligação nesta campanha (últimos 60 dias)';
+    public const DESCARTE_DUP_PORTAL = L3cTratamento::DUP_PORTAL;
+    public const DESCARTE_DUP_3C     = L3cTratamento::DUP_3C;
     private const DUP_POR_CONSULTA = 25;
     // O 3C aceita no máximo 31 dias por consulta de ligações; duas janelas
     // de 30 dias cobrem os últimos 60 (as listas à mão da Campanha Padrão
@@ -510,6 +511,16 @@ final class L3cMontador
                     array_values($faltam), date('Y-m-d', strtotime("-$desde days")), date('Y-m-d', strtotime("-$ate days"))));
             }
             foreach (array_unique($achados) as $n) if (isset($porNumero[$n])) $upd->execute([self::DESCARTE_DUP_3C, $id, $porNumero[$n]]);
+            // De onde veio cada repetido do 3C (nome da lista e data da última
+            // ligação), para o "ver quais" do cartão Repetidos. A API não dá
+            // isso em outra rota; vem de graça na mesma consulta de ligações.
+            if (self::temColunaRepetido($this->pdo) && $this->tresc->ultimaLigacao) {
+                $ref = $this->pdo->prepare('UPDATE l3c_itens SET repetido_lista=?, repetido_em=? WHERE lista_id=? AND telefone=? AND descarte=?');
+                foreach (array_unique($achados) as $n) {
+                    $u = $this->tresc->ultimaLigacao[$n] ?? null;
+                    if ($u && isset($porNumero[$n])) $ref->execute([mb_substr($u['lista'], 0, 160), $u['em'], $id, $porNumero[$n], self::DESCARTE_DUP_3C]);
+                }
+            }
             $cur['dup'] = (int)end($lote)['atendimento_id'];
             $cur['dup_n'] = (int)($cur['dup_n'] ?? 0) + count($lote);
             $aoAndar($cur, $cur['dup_n'], $total);
@@ -585,8 +596,54 @@ final class L3cMontador
     /** Os repetidos de uma campanha voltam para a lista (trocou a campanha no seletor ou no aprovar). */
     public static function desfazerPrevia(PDO $pdo, int $id): void
     {
-        $pdo->prepare('UPDATE l3c_itens SET descarte=NULL WHERE lista_id=? AND enviado=0 AND descarte IN (?,?)')
+        $limpa = self::temColunaRepetido($pdo) ? ', repetido_lista=NULL, repetido_em=NULL' : '';
+        $pdo->prepare("UPDATE l3c_itens SET descarte=NULL$limpa WHERE lista_id=? AND enviado=0 AND descarte IN (?,?)")
             ->execute([$id, self::DESCARTE_DUP_PORTAL, self::DESCARTE_DUP_3C]);
+    }
+
+    /**
+     * As colunas repetido_lista/repetido_em nascem na migração 2
+     * (schema.php), que só roda quando um admin abre o portal ou no cron.
+     * Até lá, um usuário comum pode montar e aprovar lista: sem esta
+     * checagem o UPDATE com coluna inexistente derrubava a conferência.
+     * Sem a coluna, o "ver quais" só não mostra a lista de origem do 3C.
+     */
+    public static function temColunaRepetido(PDO $pdo): bool
+    {
+        static $tem = null;
+        return $tem ??= (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                                          AND TABLE_NAME = 'l3c_itens' AND COLUMN_NAME = 'repetido_lista'")->fetchColumn() > 0;
+    }
+
+    /**
+     * Os repetidos da lista, um por linha, para o "ver quais": telefone,
+     * tipo, lista de origem e data. Origem por tipo:
+     *  - já subiu pelo portal: a lista do portal mais recente que subiu o
+     *    mesmo telefone nesta campanha, e quando foi aprovada;
+     *  - ligado no 3C: o nome da lista do 3C e a data da última ligação,
+     *    gravados na conferência;
+     *  - repetido nesta lista: o próprio nome desta lista e a data de
+     *    cadastro do atendimento que ficou de fora.
+     */
+    public static function repetidosDaLista(PDO $pdo, array $lista, ?int $campanha, int $limite = 500): array
+    {
+        $id = (int)$lista['id'];
+        $ref = self::temColunaRepetido($pdo) ? 'i.repetido_lista, i.repetido_em' : 'NULL repetido_lista, NULL repetido_em';
+        $st = $pdo->prepare("SELECT i.atendimento_id, i.telefone, i.descarte, i.criado_em, $ref,
+                (SELECT CONCAT(y.nome, '\t', COALESCE(y.aprovado_em, y.criado_em)) FROM l3c_itens x JOIN l3c_listas y ON y.id = x.lista_id
+                  WHERE x.telefone = i.telefone AND x.lista_id <> i.lista_id AND x.enviado IN (1,2) AND y.campanha_id = ?
+                  ORDER BY y.id DESC LIMIT 1) portal_ref
+            FROM l3c_itens i WHERE i.lista_id = ? AND i.descarte IN (?,?,?) ORDER BY i.descarte, i.telefone LIMIT " . (int)$limite);
+        $st->execute([(int)$campanha, $id, L3cTratamento::DUP_PORTAL, L3cTratamento::DUP_3C, L3cTratamento::DUP_LISTA]);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $origem = ''; $em = '';
+            if ($r['descarte'] === L3cTratamento::DUP_PORTAL && $r['portal_ref']) [$origem, $em] = explode("\t", $r['portal_ref'], 2) + ['', ''];
+            elseif ($r['descarte'] === L3cTratamento::DUP_3C) { $origem = (string)$r['repetido_lista']; $em = (string)$r['repetido_em']; }
+            elseif ($r['descarte'] === L3cTratamento::DUP_LISTA) { $origem = (string)$lista['nome']; $em = (string)$r['criado_em']; }
+            $out[] = ['telefone' => (string)$r['telefone'], 'tipo' => $r['descarte'], 'origem' => $origem, 'em' => $em];
+        }
+        return $out;
     }
 
     /**

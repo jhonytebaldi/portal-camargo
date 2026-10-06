@@ -48,7 +48,18 @@ header("Content-Type: application/json");
 $p = parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH);
 if ($_SERVER["REQUEST_METHOD"] === "POST" && preg_match("#^/campaigns/\d+/lists$#", $p)) { echo json_encode(["data" => ["id" => random_int(100000, 999999)]]); return; }
 if ($_SERVER["REQUEST_METHOD"] === "POST" && preg_match("#/mailing$#", $p)) { $j = json_decode(file_get_contents("php://input"), true); echo json_encode(["imported_lines" => count($j["mailing"] ?? [])]); return; }
-if ($_SERVER["REQUEST_METHOD"] === "GET" && $p === "/calls") { echo json_encode(["data" => []]); return; }
+if ($_SERVER["REQUEST_METHOD"] === "GET" && $p === "/calls") {
+    // Um único número "já ligado" numa lista feita à mão, com duas ligações
+    // (a mais nova é a que o cartão Repetidos mostra).
+    $d = [];
+    // Só na campanha 316173: em outra campanha ele não é repetido.
+    $c = (int)($_GET["campaigns"][0] ?? 0);
+    if ($c === 316173 && in_array("5547988880099", (array)($_GET["numbers"] ?? []), true)) {
+        $d[] = ["number" => "5547988880099", "campaign_id" => $c, "list" => "[01-09 a 10-09] L.A.A ENCERRADOS MOTIVOS", "call_date" => "2026-09-20 10:00:00"];
+        $d[] = ["number" => "5547988880099", "campaign_id" => $c, "list" => "[11-09 a 20-09] L.A.A ENCERRADOS MOTIVOS", "call_date" => "2026-09-28 15:30:00"];
+    }
+    echo json_encode(["data" => $d]); return;
+}
 http_response_code(404); echo "{}";');
 $porta = 18000 + getmypid() % 1000;
 $proc = proc_open([PHP_BINARY, '-S', "127.0.0.1:$porta", "$dir/r.php"], [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
@@ -129,7 +140,7 @@ try {
     $G = $nova('G', ['47988880021']); $marcar($G, 316173);
     $eg = $subir($G, 1);
     igual([$eg['status'], $eg['enviados']], ['enviando', 0], 'com outra subida em andamento na campanha, espera');
-    igual(str_contains((string)$eg['texto'], 'Outra lista está subindo'), true, 'e diz por que está esperando');
+    igual(str_contains((string)$eg['texto'], 'outra lista subindo'), true, 'e diz por que está esperando');
     $outra->query("SELECT RELEASE_LOCK('l3c_campanha_316173')");
     igual($subir($G)['enviados'], 1, 'liberou, sobe');
     // Caso do Jhony (30/09, 21:48): subiu a lista, montou a mesma de novo e
@@ -159,6 +170,35 @@ try {
     igual($entram($P3), 1, 'prévia com um contato novo: 1 entra');
     igual(L3cMontador::antesDeAprovar($pdo, $P3, 316173), null, 'com alguém novo, aprovar segue');
     igual($aprovar($P3, 316173)['enviados'], 1, 'e sobe só o novo (a conferência do aprovar é a segunda trava)');
+
+    // Cartão Repetidos (Jhony, 05/10): os três tipos com quais são, de onde
+    // vieram e quando. P4 tem 1 já subido pelo portal (P1), 1 já ligado no
+    // 3C numa lista feita à mão e 1 repetido dentro dela mesma.
+    $P4 = $nova('P4', ['47988880031', '47988880099', '47988880041', '47988880041', '47988880042']);
+    $pdo->prepare("UPDATE l3c_itens SET descarte=? WHERE lista_id=? AND atendimento_id=1003")->execute([L3cTratamento::DUP_LISTA, $P4]);
+    for ($i = 0; $i < 5 && !$mp->preconferir($P4, 316173)['pronto']; $i++);
+    $g = $pdo->prepare('SELECT descarte, COUNT(*) n FROM l3c_itens WHERE lista_id=? GROUP BY descarte'); $g->execute([$P4]);
+    $rep = L3cTratamento::repetidosPorTipo($g->fetchAll());
+    igual([$rep['total'], $rep['tipos'][L3cTratamento::DUP_PORTAL], $rep['tipos'][L3cTratamento::DUP_3C], $rep['tipos'][L3cTratamento::DUP_LISTA]], [3, 1, 1, 1], 'repetidos: 1 de cada tipo, total 3');
+    igual($entram($P4), 2, 'repetidos: o "entram" já está sem os 3');
+    $st = $pdo->prepare('SELECT * FROM l3c_listas WHERE id=?'); $st->execute([$P4]); $l4 = $st->fetch();
+    $q = [];
+    foreach (L3cMontador::repetidosDaLista($pdo, $l4, 316173) as $r) $q[$r['tipo']] = $r;
+    igual($q[L3cTratamento::DUP_PORTAL]['origem'] ?? null, 'P1', 'ver quais: já subiu pelo portal mostra a lista de origem');
+    igual(($q[L3cTratamento::DUP_PORTAL]['em'] ?? '') !== '', true, 'ver quais: e a data');
+    igual([$q[L3cTratamento::DUP_3C]['origem'] ?? null, substr($q[L3cTratamento::DUP_3C]['em'] ?? '', 0, 10)],
+          ['[11-09 a 20-09] L.A.A ENCERRADOS MOTIVOS', '2026-09-28'], 'ver quais: ligado no 3C mostra a lista e a última ligação');
+    igual($q[L3cTratamento::DUP_LISTA]['origem'] ?? null, 'P4', 'ver quais: repetido na lista aponta ela mesma');
+    // Trocou a campanha: o repetido do 3C volta e perde a origem antiga.
+    for ($i = 0; $i < 5 && !$mp->preconferir($P4, 999)['pronto']; $i++);
+    $st = $pdo->prepare('SELECT repetido_lista FROM l3c_itens WHERE lista_id=? AND telefone=?'); $st->execute([$P4, '47988880099']);
+    igual($st->fetchColumn(), null, 'trocar a campanha limpa a origem do repetido do 3C');
+    // Nome igual ganha #2 (mesma consulta do acao.php).
+    $cab = '[15-09 a 25-09]';
+    $pdo->exec('DELETE FROM l3c_listas');
+    $nova("$cab L.A.A ENCERRADOS MOTIVOS PORTAL", ['47988880051']);
+    $st = $pdo->prepare('SELECT nome FROM l3c_listas WHERE LEFT(nome, ?) = ?'); $st->execute([mb_strlen($cab), $cab]);
+    igual(L3cTratamento::nomeComNumero("$cab L.A.A ENCERRADOS MOTIVOS PORTAL", $st->fetchAll(PDO::FETCH_COLUMN)), "$cab #2 L.A.A ENCERRADOS MOTIVOS PORTAL", 'nome igual no banco: a segunda vira #2');
 } finally {
     $pid = proc_get_status($proc)['pid'];
     proc_terminate($proc);

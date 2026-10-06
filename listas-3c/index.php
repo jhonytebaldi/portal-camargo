@@ -43,10 +43,20 @@ if ($id) {
             // A prévia só vale conferida para ESTA campanha; senão a tela confere (JS, ação 'previa') e recarrega.
             $previaOk = $selecionada !== null && L3cMontador::campanhaDaPrevia($lista) === $selecionada;
         }
+        // Cartão Repetidos (pedido do Jhony, 05/10): total fixo, com zero, por
+        // tipo, e quais são. A campanha da conta é a da prévia (lista pronta)
+        // ou a aprovada (subindo/subida).
+        $repetidos = L3cTratamento::repetidosPorTipo($descartes);
+        $campRep = $lista['status'] === 'pronta' ? L3cMontador::campanhaDaPrevia($lista) : ($lista['campanha_id'] ? (int)$lista['campanha_id'] : null);
+        $repLinhas = $repetidos['total'] ? L3cMontador::repetidosDaLista($pdo, $lista, $campRep) : [];
     }
 } else {
     $recentes = $pdo->query('SELECT l.*, (SELECT COUNT(*) FROM l3c_itens i WHERE i.lista_id=l.id AND i.descarte IS NULL) entram
                              FROM l3c_listas l ORDER BY l.id DESC LIMIT 20')->fetchAll();
+    // Nomes já usados no padrão "[dd-mm a dd-mm] ...", para o exemplo do
+    // campo nome já mostrar o " #2" que a lista vai ganhar (mesma regra de
+    // L3cTratamento::nomeComNumero, repetida no JS abaixo).
+    $nomesUsados = $pdo->query("SELECT DISTINCT nome FROM l3c_listas WHERE nome LIKE '[%'")->fetchAll(PDO::FETCH_COLUMN);
 }
 
 portal_header('Listas 3C', $u);
@@ -76,11 +86,17 @@ portal_header('Listas 3C', $u);
 .l3-pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;background:#e8e4d8}
 .l3-pill.pronta{background:#dcebe2;color:#1f4d3f}.l3-pill.enviada{background:var(--moss);color:#fff}.l3-pill.erro{background:#f3d9cf;color:#8a3317}
 .l3-desc-lista{margin:8px 0 0;padding-left:18px;font-size:13px}
+.l3-rep{display:flex;gap:22px;flex-wrap:wrap;align-items:baseline;font-size:14px;margin:8px 0 0}
+.l3-rep b{font-size:20px;display:block}
+.l3-rep .tot b{font-size:26px}
+.l3-fora{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;background:#f3d9cf;color:#8a3317;margin-left:8px;vertical-align:middle}
+.l3-quais{margin:12px 0 0;font-size:13px}
+.l3-quais summary{cursor:pointer;color:var(--moss);font-weight:600}
 @media (max-width:640px){.l3-res{max-width:none}}
 </style>
 
 <div class="l3-top">
-  <h1 class="home-titulo">Listas 3C</h1>
+  <h1 class="home-titulo" title="Monta a lista a partir do Robust, trata os contatos, você aprova e ela sobe na campanha do 3C.">Listas 3C</h1>
   <span style="display:flex;gap:18px">
     <a href="modelos.php" style="color:var(--moss);font-weight:600;text-decoration:none">Editar modelos</a>
     <?php if (is_admin($u)): /* chave de API é assunto de admin; o link some para quem só usa */ ?>
@@ -88,7 +104,6 @@ portal_header('Listas 3C', $u);
     <?php endif; ?>
   </span>
 </div>
-<p class="home-sub">Monta a lista a partir do Robust, trata os contatos, você aprova e ela sobe na campanha do 3C.</p>
 
 <?php
 // Aviso logo na entrada quando falta chave: sem isso a pessoa só descobre
@@ -113,14 +128,11 @@ if ($falta): ?>
       </label>
       <label><span id="l3-rot-de">Cadastro de</span><input type="date" name="de" value="<?= h(date('Y-m-d', strtotime('-14 days'))) ?>" required></label>
       <label>até<input type="date" name="ate" value="<?= h(date('Y-m-d', strtotime('-1 day'))) ?>" required></label>
-      <label>Nome da lista (opcional)<input type="text" name="nome" id="l3-nome" maxlength="160" placeholder="no padrão do 3C"></label>
+      <label title="Vazio: usa o padrão do 3C. Se já existir lista com o mesmo nome, ganha #2, #3 depois do período.">Nome da lista (opcional)<input type="text" name="nome" id="l3-nome" maxlength="150" placeholder="no padrão do 3C"></label>
       <button class="l3-btn" type="submit">Montar lista</button>
-      <label class="l3-check"><span><input type="checkbox" name="incluir_corretor" value="1">
-        Incluir leads recentes de origem do corretor</span>
-        <small class="l3-desc">Desmarcado, fica de fora quem veio de origem do corretor há menos de
-          <?= (int)(reset($modelos)['dias_origem_corretor'] ?? 30) ?> dias e ainda está com atendimento aberto. Atendimento já encerrado não fica de fora por esta regra.</small></label>
+      <label class="l3-check" title="Desmarcado, fica de fora quem veio de origem do corretor há menos de <?= (int)(reset($modelos)['dias_origem_corretor'] ?? 30) ?> dias e ainda está com atendimento aberto. Atendimento já encerrado não fica de fora por esta regra."><span><input type="checkbox" name="incluir_corretor" value="1">
+        Incluir leads recentes do corretor</span></label>
     </form>
-    <p class="l3-desc" id="l3-modelo-desc"></p>
   </div>
 
   <div class="l3-card">
@@ -158,7 +170,7 @@ if ($falta): ?>
     <div id="l3-texto" style="font-size:14px"><?= h($lista['progresso_txt']) ?></div>
     <div class="l3-kpis">
       <span><b id="l3-brutos"><?= array_sum(array_column($descartes, 'n')) ?></b>lidos no Robust</span>
-      <span><b id="l3-entram"><?php $e = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $e = (int)$d['n']; echo $e; ?></b>entram na lista</span>
+      <span title="Já sem os repetidos e sem quem ficou de fora pelas regras do modelo."><b id="l3-entram"><?php $e = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $e = (int)$d['n']; echo $e; ?></b>entram (sem repetidos)</span>
       <span><b id="l3-chamadas"><?= (int)$lista['chamadas_robust'] ?></b>chamadas ao Robust</span>
       <?php if ($lista['status'] === 'enviada'): ?><span><b><?= (int)$lista['importados'] ?></b>importados no 3C</span><?php endif; ?>
     </div>
@@ -168,13 +180,48 @@ if ($falta): ?>
     <?php endif; ?>
   </div>
 
-  <?php // Mostra sempre que alguém ficou de fora: quando TODOS eram repetidos só há
-      // um grupo, e a regra antiga (mais de um grupo) escondia justamente a explicação. ?>
-  <?php if (array_filter($descartes, fn($d) => $d['descarte'] !== null)): ?>
+  <?php if (in_array($lista['status'], ['pronta', 'enviando', 'enviada'], true)):
+      // Cartão fixo, aparece mesmo com zero (Jhony, 05/10: "lembra que eu falei
+      // que ela tinha que mostrar zerado?"). Antes os repetidos só apareciam
+      // soltos em "Quem ficou de fora", sem total, e não dava para saber se
+      // estavam dentro ou fora do "entram". Enquanto a prévia confere a
+      // campanha, os dois tipos que dependem dela mostram "…".
+      $conferindo = $lista['status'] === 'pronta' && !$previaOk;
+      $tituloRep = 'Já descontados do "entram": não sobem. O número pode mudar se gerar a lista de novo: cada geração relê o Robust na hora (quem encerrou depois entra), a lista que acabou de subir passa a contar como "já subiu", e a janela de 60 dias do 3C anda com a data de hoje. Contato de lista feita à mão no 3C que ainda não foi discado não aparece aqui (a API do 3C não mostra).'; ?>
+  <div class="l3-card" id="l3-repetidos" title="<?= h($tituloRep) ?>">
+    <h2 style="font-size:16px;margin:0">Repetidos<span class="l3-fora">não entram</span></h2>
+    <div class="l3-rep">
+      <span class="tot"><b id="l3-rep-total"><?= $conferindo ? '…' : (int)$repetidos['total'] ?></b>total</span>
+      <?php foreach (L3cTratamento::TIPOS_REPETIDO as $tipo => $rot): $pend = $conferindo && $tipo !== L3cTratamento::DUP_LISTA; ?>
+        <span title="<?= h($tipo) ?>"><b><?= $pend ? '…' : (int)$repetidos['tipos'][$tipo] ?></b><?= h($rot) ?></span>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($repLinhas): ?>
+    <details class="l3-quais">
+      <summary>ver quais</summary>
+      <div class="l3-tbl-wrap"><table class="l3-tbl">
+        <tr><th>Telefone</th><th>Tipo</th><th>Lista de origem</th><th>Data</th></tr>
+        <?php foreach ($repLinhas as $r): ?>
+          <tr>
+            <td style="white-space:nowrap"><?= h($mascara ? L3cTratamento::mascarar($r['telefone'], 'telefone') : L3cTratamento::mascararMeio($r['telefone'])) ?></td>
+            <td><?= h(L3cTratamento::TIPOS_REPETIDO[$r['tipo']] ?? $r['tipo']) ?></td>
+            <td><?= $r['origem'] === '' ? '<span style="color:var(--mute)">—</span>' : h($r['origem']) ?></td>
+            <td style="white-space:nowrap"><?= $r['em'] === '' ? '—' : h(L3cTratamento::dataCurta($r['em'])) ?></td>
+          </tr>
+        <?php endforeach; ?>
+      </table></div>
+    </details>
+    <?php endif; ?>
+  </div>
+  <?php endif; ?>
+
+  <?php // Os outros motivos de exclusão (regras do modelo); os repetidos têm o cartão acima. ?>
+  <?php $outros = array_filter($descartes, fn($d) => $d['descarte'] !== null && !L3cTratamento::ehRepetido($d['descarte'])); ?>
+  <?php if ($outros): ?>
   <div class="l3-card">
-    <h2 style="font-size:16px;margin:0">Quem ficou de fora e por quê</h2>
+    <h2 style="font-size:16px;margin:0" title="Regras do modelo: motivo de encerramento, etapa, agendamento, telefone inválido, lead recente do corretor etc.">Fora pelas regras do modelo</h2>
     <ul class="l3-desc-lista">
-      <?php foreach ($descartes as $d) if ($d['descarte'] !== null): ?><li><?= (int)$d['n'] ?> · <?= h($d['descarte']) ?></li><?php endif; ?>
+      <?php foreach ($outros as $d): ?><li><?= (int)$d['n'] ?> · <?= h($d['descarte']) ?></li><?php endforeach; ?>
     </ul>
   </div>
   <?php endif; ?>
@@ -193,16 +240,12 @@ if ($falta): ?>
       <button class="l3-btn" type="submit" <?= (!$previaOk || $entramAgora === 0) ? 'disabled' : '' ?>>Aprovar e subir</button>
     </form>
     <?php if (!$previaOk): ?>
-      <div class="aviso" style="margin:10px 0 0" id="l3-previa-txt">Conferindo quem já está nesta campanha…</div>
+      <div class="aviso" style="margin:10px 0 0" id="l3-previa-txt">Conferindo repetidos…</div>
     <?php elseif ($entramAgora === 0): ?>
-      <div class="aviso" style="margin:10px 0 0">Nada para subir nesta campanha: todos estes contatos já estão nela. Veja em "Quem ficou de fora e por quê".</div>
+      <div class="aviso" style="margin:10px 0 0" title="Todos estes contatos já estão nesta campanha. Veja o cartão Repetidos.">Nada a subir: todos repetidos</div>
     <?php endif; ?>
-    <p class="l3-desc">Nada sobe sem este clique. A prévia acima já tirou quem está na campanha escolhida
-      (quem este portal já subiu nela e quem já recebeu ligação nela nos últimos 60 dias); trocar a campanha refaz a conta.
-      Ao aprovar, o portal confere de novo e só então cria a lista
-      "<?= h($lista['nome']) ?>" dentro dela. O número final aparece em "Quem ficou de fora e por quê".
-      Limite: contato de lista feita à mão que ainda não foi discado não dá para ver pela API do 3C.
-      As tentativas por status e a reciclagem continuam na configuração da campanha no 3C.</p>
+    <?php // Era um bloco de 6 frases; o João quer número e rótulo na tela e a explicação no title (05/10). ?>
+    <p class="l3-desc" title="<?= h('A contagem acima já tirou quem está na campanha escolhida (quem este portal já subiu nela e quem recebeu ligação nela nos últimos 60 dias); trocar a campanha refaz a conta. Ao aprovar, o portal confere de novo e só então cria a lista "' . $lista['nome'] . '" dentro dela. Contato de lista feita à mão que ainda não foi discado não dá para ver pela API do 3C. Tentativas por status e reciclagem continuam na configuração da campanha no 3C.') ?>">Nada sobe sem este clique.</p>
     <?php endif; ?>
   </div>
   <?php endif; ?>
@@ -211,7 +254,7 @@ if ($falta): ?>
   <div class="l3-card">
     <div class="l3-top">
       <h2 style="font-size:16px;margin:0">Prévia tratada<?= count($itens) >= 300 ? ' (primeiros 300)' : '' ?></h2>
-      <a href="?id=<?= (int)$lista['id'] ?><?= $mascara ? '' : '&mascara=1' ?>" style="color:var(--moss);font-size:13px"><?= $mascara ? 'Sair do modo demonstração' : 'Modo demonstração (para gravar ou mostrar em reunião)' ?></a>
+      <a href="?id=<?= (int)$lista['id'] ?><?= $mascara ? '' : '&mascara=1' ?>" style="color:var(--moss);font-size:13px" title="Esconde nome, e-mail, telefone e a observação, para gravar ou mostrar em reunião."><?= $mascara ? 'Sair do modo demonstração' : 'Modo demonstração' ?></a>
     </div>
     <div class="l3-tbl-wrap"><table class="l3-tbl">
       <tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Canal</th><th>Resumo do atendimento</th></tr>
@@ -237,16 +280,30 @@ async function acao(corpo) {
   return r.json();
 }
 const sel = document.getElementById('l3-modelo');
+// Espelho de L3cTratamento::nomeComNumero (o servidor é quem decide; isto só
+// mostra no exemplo o " #2" que a lista vai ganhar).
+const nomesUsados = <?= json_encode($nomesUsados ?? [], JSON_UNESCAPED_UNICODE) ?>;
+function nomeComNumero(cab, resto) {
+  let maior = 0;
+  for (const n of nomesUsados) {
+    if (!n.startsWith(cab)) continue;
+    const r = n.slice(cab.length).trim();
+    if (r === resto) { maior = Math.max(maior, 1); continue; }
+    const m = r.match(/^#(\d+)(?: (.*))?$/s);
+    if (m && (m[2] || '') === resto) maior = Math.max(maior, +m[1]);
+  }
+  return cab + (maior ? ' #' + (maior + 1) : '') + (resto ? ' ' + resto : '');
+}
 if (sel) {
   const desc = () => {
     const o = sel.selectedOptions[0];
-    document.getElementById('l3-modelo-desc').textContent = o.dataset.desc;
+    sel.title = o.dataset.desc;   // a descrição do modelo era um parágrafo na tela; agora é tooltip
     document.getElementById('l3-rot-de').textContent = sel.value === 'agendamento_vencido' ? 'Agendamento de' : 'Cadastro de';
     // Mostra o nome que a lista vai ganhar no 3C se o campo ficar vazio
     // (mesma regra de L3cTratamento::nomePadrao).
     const f = document.getElementById('l3-nova');
     const dm = v => v ? v.slice(8, 10) + '-' + v.slice(5, 7) : '';
-    document.getElementById('l3-nome').placeholder = '[' + dm(f.de.value) + ' a ' + dm(f.ate.value) + '] ' + o.dataset.sufixo;
+    document.getElementById('l3-nome').placeholder = nomeComNumero('[' + dm(f.de.value) + ' a ' + dm(f.ate.value) + ']', o.dataset.sufixo);
   };
   sel.addEventListener('change', desc); desc();
   document.querySelectorAll('#l3-nova input[type=date]').forEach(i => i.addEventListener('change', desc));
@@ -293,7 +350,7 @@ if (card) {
       try { r = await acao({acao: 'previa', id, campanha: +ap.dataset.campanha}); } catch (e) { await new Promise(s => setTimeout(s, 3000)); continue; }
       if (!r.ok) { t.textContent = r.erro; return; }
       if (r.pronto) { location.reload(); return; }
-      t.textContent = 'Conferindo quem já está nesta campanha: ' + r.feitos + ' de ' + r.total;
+      t.textContent = 'Conferindo repetidos: ' + r.feitos + ' de ' + r.total;
       await new Promise(s => setTimeout(s, 300));
     }
   })();

@@ -115,5 +115,32 @@ igual($T::telefone3c('47988887777'), '5547988887777', 'telefone com 55 para o 3C
 $ed = L3cModelos::todos(['primeiras_etapas' => ['etapas' => [0, 1, 4, 5]]]);
 igual($ed['primeiras_etapas']['etapas'], [0, 1], 'etapas 4 e 5 são cortadas');
 
+// Nome igual ganha #2, #3 logo depois do período (Jhony, 05/10).
+$b = '[15-09 a 25-09] L.A.A ENCERRADOS MOTIVOS PORTAL';
+igual($T::nomeComNumero($b, []), $b, 'nome: primeira lista fica sem número');
+igual($T::nomeComNumero($b, [$b]), '[15-09 a 25-09] #2 L.A.A ENCERRADOS MOTIVOS PORTAL', 'nome: segunda vira #2 depois do ]');
+igual($T::nomeComNumero($b, [$b, '[15-09 a 25-09] #2 L.A.A ENCERRADOS MOTIVOS PORTAL']), '[15-09 a 25-09] #3 L.A.A ENCERRADOS MOTIVOS PORTAL', 'nome: terceira vira #3');
+igual($T::nomeComNumero($b, [$b, '[15-09 a 25-09] #5 L.A.A ENCERRADOS MOTIVOS PORTAL']), '[15-09 a 25-09] #6 L.A.A ENCERRADOS MOTIVOS PORTAL', 'nome: conta pelo maior número, não pela quantidade');
+igual($T::nomeComNumero($b, ['[15-09 a 25-09] L.A.A ATIVOS PORTAL', '[15-09 a 26-09] L.A.A ENCERRADOS MOTIVOS PORTAL']), $b, 'nome: outro tipo ou outro período não conta');
+igual($T::nomeComNumero($b, ['[15-09 a 25-09] #2 L.A.A ATIVOS PORTAL']), $b, 'nome: #2 de outro tipo não conta');
+igual($T::nomeComNumero('Lista do Gui', ['Lista do Gui']), 'Lista do Gui #2', 'nome digitado sem colchete: número no fim');
+igual($T::nomeComNumero('Lista do Gui', ['Lista do Gui', 'Lista do Gui #2']), 'Lista do Gui #3', 'nome digitado: #3');
+
+// Cartão Repetidos: sempre os três tipos, com zero, e o resto fora da conta.
+$vazio = $T::repetidosPorTipo([['descarte' => null, 'n' => 40], ['descarte' => 'motivo fora do modelo', 'n' => 7]]);
+igual($vazio['total'], 0, 'repetidos: zero quando não há (mostra zerado)');
+igual(array_values($vazio['tipos']), [0, 0, 0], 'repetidos: os três tipos aparecem com zero');
+$r3 = $T::repetidosPorTipo([['descarte' => null, 'n' => 40], ['descarte' => $T::DUP_PORTAL, 'n' => 5],
+                            ['descarte' => $T::DUP_3C, 'n' => 3], ['descarte' => $T::DUP_LISTA, 'n' => 2], ['descarte' => 'sem telefone válido', 'n' => 9]]);
+igual($r3['total'], 10, 'repetidos: soma os três tipos e só eles');
+igual([$r3['tipos'][$T::DUP_PORTAL], $r3['tipos'][$T::DUP_3C], $r3['tipos'][$T::DUP_LISTA]], [5, 3, 2], 'repetidos: separados por tipo');
+igual($T::ehRepetido('sem telefone válido'), false, 'repetidos: sem telefone não é repetido');
+igual($T::ehRepetido(null), false, 'repetidos: quem entra não é repetido');
+// O texto gravado no banco não pode mudar (listas antigas guardam este texto).
+igual($T::DUP_PORTAL, 'já subiu por este portal nesta campanha', 'repetidos: chave do portal igual à gravada');
+igual($T::DUP_3C, 'já recebeu ligação nesta campanha (últimos 60 dias)', 'repetidos: chave do 3C igual à gravada');
+igual($T::DUP_LISTA, 'telefone repetido na lista', 'repetidos: chave da lista igual à gravada');
+igual($T::mascararMeio('47988887777'), '(47) •••••-7777', 'repetidos: telefone com DDD e 4 finais');
+
 echo "\n$n testes, $falhas falhas\n";
 exit($falhas ? 1 : 0);

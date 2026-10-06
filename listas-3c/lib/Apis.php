@@ -76,6 +76,12 @@ final class L3cRobust
 
 final class L3cTresC
 {
+    /** Por número (55+DDD+número): ['lista' => nome da lista no 3C, 'em' => 'Y-m-d H:i:s']
+     *  da ligação mais recente vista por numerosJaLigados. Mostrado no "ver
+     *  quais" do cartão Repetidos (campos list e call_date de GET /calls,
+     *  lidos em 05/10/2026). */
+    public array $ultimaLigacao = [];
+
     public function __construct(private string $base, private string $token) {}
 
     public static function doConfig(): self
@@ -187,7 +193,13 @@ final class L3cTresC
             $dados = (array)($j['data'] ?? []);
             foreach ($dados as $c) {
                 $n = (string)($c['number'] ?? '');
-                if (isset($pedidos[$n]) && (int)($c['campaign_id'] ?? $campanhaId) === $campanhaId) $achados[$n] = true;
+                if (isset($pedidos[$n]) && (int)($c['campaign_id'] ?? $campanhaId) === $campanhaId) {
+                    $achados[$n] = true;
+                    $em = (string)($c['call_date'] ?? '');
+                    if (!isset($this->ultimaLigacao[$n]) || $em > $this->ultimaLigacao[$n]['em']) {
+                        $this->ultimaLigacao[$n] = ['lista' => (string)($c['list'] ?? ''), 'em' => $em];
+                    }
+                }
             }
             // Um número pode ter 20+ ligações (rediscagem); página cheia = pode haver mais.
             if (count($dados) < 100 || count($achados) === count($pedidos)) break;

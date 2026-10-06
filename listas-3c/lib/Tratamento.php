@@ -244,6 +244,14 @@ final class L3cTratamento
         return implode(' ', $out);
     }
 
+    /** Telefone no "ver quais" dos repetidos: DDD e os 4 últimos, o bastante
+     *  para achar o contato sem expor o número inteiro na tela. */
+    public static function mascararMeio(string $tel): string
+    {
+        if (strlen($tel) < 8) return $tel === '' ? '' : '•••';
+        return '(' . substr($tel, 0, 2) . ') •••••-' . substr($tel, -4);
+    }
+
     /**
      * Resumo no modo demonstração. A observação é texto livre do corretor e
      * às vezes traz nome ou telefone, por isso some; mas no lugar vai uma
@@ -270,6 +278,82 @@ final class L3cTratamento
             'montando' => 'Montando', 'pronta' => 'Pronta para aprovar', 'enviando' => 'Subindo no 3C',
             'enviada' => 'No 3C', 'erro' => 'Erro', 'cancelada' => 'Cancelada',
         ][$st] ?? $st;
+    }
+
+    /* ---- repetidos -------------------------------------------------
+       Os três jeitos de um contato ser repetido. Os textos são a chave
+       gravada em l3c_itens.descarte (não mudar: listas antigas guardam
+       estes mesmos textos). Moram aqui, e não no Montador, para a
+       contagem por tipo ter teste sem banco. */
+    public const DUP_PORTAL = 'já subiu por este portal nesta campanha';
+    public const DUP_3C     = 'já recebeu ligação nesta campanha (últimos 60 dias)';
+    public const DUP_LISTA  = 'telefone repetido na lista';
+    /** Rótulo curto de cada tipo no cartão "Repetidos" (o texto longo vai no title). */
+    public const TIPOS_REPETIDO = [
+        self::DUP_PORTAL => 'Já subiu pelo portal',
+        self::DUP_3C     => 'Ligado no 3C (60 dias)',
+        self::DUP_LISTA  => 'Repetido nesta lista',
+    ];
+
+    /**
+     * Separa os repetidos das outras exclusões. Recebe as linhas
+     * [descarte, n] do GROUP BY da tela e devolve sempre os três tipos,
+     * com 0 quando não há: o Jhony (reunião de 05/10) pediu que o cartão
+     * "mostre zerado", porque um número que só aparece quando é maior que
+     * zero não deixa saber se a conta foi feita.
+     * ['total' => n, 'tipos' => [descarte => n, ...]]
+     */
+    public static function repetidosPorTipo(array $linhas): array
+    {
+        $tipos = array_fill_keys(array_keys(self::TIPOS_REPETIDO), 0);
+        foreach ($linhas as $l) {
+            $d = $l['descarte'] ?? null;
+            if ($d !== null && isset($tipos[$d])) $tipos[$d] += (int)($l['n'] ?? 0);
+        }
+        return ['total' => array_sum($tipos), 'tipos' => $tipos];
+    }
+
+    public static function ehRepetido(?string $descarte): bool
+    {
+        return $descarte !== null && isset(self::TIPOS_REPETIDO[$descarte]);
+    }
+
+    /**
+     * Nome com número de ordem quando o mesmo nome já existe no portal.
+     * Combinado com o Jhony (05/10): duas listas do mesmo período e tipo
+     * ficavam com nome idêntico no 3C e não dava para saber qual era qual.
+     * A primeira fica sem número (é o padrão das listas feitas à mão e não
+     * dá para renomear depois no 3C), a segunda vira " #2", a terceira
+     * " #3", logo depois do "]" do período. Nome digitado sem colchetes
+     * ganha o número no fim. Conta pelo MAIOR número já usado, não pela
+     * quantidade: se a #2 foi cancelada, a próxima é #3, nunca outra #2.
+     */
+    public static function nomeComNumero(string $base, array $existentes): string
+    {
+        $base = trim($base);
+        [$cab, $resto] = self::partesDoNome($base);
+        $maior = 0;
+        foreach ($existentes as $e) {
+            [$c, $r] = self::partesDoNome(trim((string)$e));
+            if ($c !== $cab) continue;
+            if ($r === $resto) { $maior = max($maior, 1); continue; }
+            // "#2 RESTO" (com colchetes) ou "RESTO #2" (sem colchetes)
+            $padrao = $cab !== '' ? '/^#(\d+)(?: (.*))?$/s' : '/^(?:(.*) )?#(\d+)$/s';
+            if (!preg_match($padrao, $r, $m)) continue;
+            [$num, $sobra] = $cab !== '' ? [(int)$m[1], (string)($m[2] ?? '')] : [(int)$m[2], (string)($m[1] ?? '')];
+            if ($sobra === $resto) $maior = max($maior, $num);
+        }
+        if ($maior === 0) return $base;
+        $n = $maior + 1;
+        if ($cab === '') return $base . ' #' . $n;
+        return $cab . ' #' . $n . ($resto !== '' ? ' ' . $resto : '');
+    }
+
+    /** "[15-09 a 25-09] L.A.A X" → ["[15-09 a 25-09]", "L.A.A X"]; sem colchete → ["", nome]. */
+    private static function partesDoNome(string $nome): array
+    {
+        if (preg_match('/^(\[[^\]]*\])\s*(.*)$/s', $nome, $m)) return [$m[1], trim($m[2])];
+        return ['', $nome];
     }
 
     public static function semAcento(string $s): string

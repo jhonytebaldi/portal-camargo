@@ -15,7 +15,7 @@ declare(strict_types=1);
 
 /* Sobe quando l3c_migrar ganhar coisa nova: a sessão de cada admin roda a
    migração de novo uma vez e grava esta versão. */
-const L3C_SCHEMA_VERSAO = 1;
+const L3C_SCHEMA_VERSAO = 2;   // 2: l3c_itens.repetido_lista/repetido_em (05/10/2026)
 
 /**
  * Instala o módulo sem ninguém abrir admin/migrar.php.
@@ -111,6 +111,15 @@ function l3c_migrar(PDO $pdo): array
             atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabelas l3c_listas/l3c_itens/l3c_config';
+    }
+    // Migração 2 (05/10/2026): de onde veio o repetido do 3C (nome da lista
+    // e data da última ligação), para o "ver quais" do cartão Repetidos.
+    // Coluna nula e sem índice: ALTER barato numa tabela de poucos mil.
+    $temCol = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                                AND TABLE_NAME = 'l3c_itens' AND COLUMN_NAME = 'repetido_lista'")->fetchColumn() > 0;
+    if (!$temCol) {
+        $pdo->exec("ALTER TABLE l3c_itens ADD COLUMN repetido_lista VARCHAR(160) NULL, ADD COLUMN repetido_em VARCHAR(25) NULL");
+        $feitos[] = 'colunas l3c_itens.repetido_*';
     }
     // Registrar a ferramenta é o que faz o botão aparecer na home para quem
     // tiver acesso (a home lista a tabela tools). Nasce só para admin: o
