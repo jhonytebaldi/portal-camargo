@@ -26,6 +26,13 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   do cliente CHEGOU. Inbound é SEMPRE o cliente falando — "via" nunca é autor.
 - Mensagens com src="workflow" são AUTOMAÇÃO: não contam como resposta do
   corretor.
+- "dir":"nota" = comentário INTERNO do corretor/equipe (o cliente NÃO vê;
+  "por" diz quem escreveu). Não é mensagem da conversa, mas é contexto FORTE
+  e muitas vezes decide a ação: se o corretor explica que não vai dar
+  sequência e o porquê (ex.: "veio do meu patrocinado querendo comprar com
+  outro corretor, vou ignorar"), a ação é "encerrar" citando o motivo da
+  nota; se a nota traz um combinado ou orientação do gestor, leve em conta
+  no plano do dia.
 
 ## Como decidir
 - Última mensagem é do cliente sem resposta manual → "responder cliente".
