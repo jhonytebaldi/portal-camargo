@@ -93,7 +93,7 @@ final class OmieApi
             @file_put_contents($fe, json_encode(['n' => (int)$erros['n'] + 1, 'q' => time()]));
             if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
             // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
-            elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
+            elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad|foram encontrad)|Client-103|Client-105|Client-5113|Client-1013/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
             elseif (!$leitura) @file_put_contents($fw, $msg);   // lembra a gravação recusada (ver acima)
             throw new RuntimeException($msg);
         }
@@ -126,7 +126,7 @@ final class OmieApi
         // sem filtro por CPF: a pesquisa por dia de vencimento (sempre com resultado quando há títulos) é filtrada aqui — evita a resposta
         // "não existem registros", que o Omie conta como erro (10 seguidos = bloqueio de 30 min)
         try { $r = self::call($conta, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 500, 'cNatureza' => 'P', 'dDtVencDe' => self::br($vencIso), 'dDtVencAte' => self::br($vencIso)]); }
-        catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) return []; throw $e; }
+        catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113|Client-1013/iu', $e->getMessage())) return []; throw $e; }
         $dig = preg_replace('/\D+/', '', $doc);
         return array_values(array_filter($r['titulosEncontrados'] ?? [], fn($t) => preg_replace('/\D+/', '', (string)(($t['cabecTitulo'] ?? $t)['cCPFCNPJCliente'] ?? '')) === $dig));
     }
