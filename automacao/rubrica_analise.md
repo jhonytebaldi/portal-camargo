@@ -17,8 +17,11 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 
 ## Como ler as mensagens (campos "por" e "via")
 - "por" em mensagem outbound = o CORRETOR que enviou (pelo app ou pelo próprio
-  celular — a rotina já resolveu a instância). Outbound sem "por" = automação
-  ou linha institucional.
+  celular — a rotina já resolveu a instância, inclusive áudios sem remetente
+  identificado, atribuídos à linha da conversa). Outbound sem "por": se
+  src="workflow", é automação; se src="api", é mensagem MANUAL enviada de um
+  aparelho — conte como resposta humana (em dúvida, do corretor da conversa),
+  NUNCA como automação.
 - "via" em mensagem inbound = a linha/aparelho de corretor em que a mensagem
   do cliente CHEGOU. Inbound é SEMPRE o cliente falando — "via" nunca é autor.
 - Mensagens com src="workflow" são AUTOMAÇÃO: não contam como resposta do
