@@ -45,8 +45,22 @@ final class Recibo
         ]);
         $p->espaco(18);
         foreach ($linhas as $l) {
-            $total += (float)$l['valor'];
             $p->paragrafo([[self::rotulo($l) . ': ' . self::descricao($l, $pessoa) . ', ', false], ['Valor: ' . self::brl((float)$l['valor']), true]]);
+            // ajustes (título "Pago Parcialmente" no Omie): desconto, impostos retidos, juros/multa → valor final
+            $desc = (float)($l['desconto'] ?? 0); $imp = (float)($l['impostos'] ?? 0); $jur = (float)($l['juros'] ?? 0);
+            if ($desc > 0 || $imp > 0 || $jur > 0) {
+                $final = round((float)$l['valor'] - $desc - $imp + $jur, 2);
+                $tr = [];
+                if ($desc > 0) $tr[] = ['Desconto: ' . self::brl($desc), false];
+                // descrição digitada na baixa do Omie (ex.: "Desconto 4,82% adiantamento de 2 meses")
+                $obsB = trim((string)($l['obs_baixa'] ?? ''));
+                if ($imp > 0) $tr[] = [($tr ? ' · ' : '') . 'Impostos retidos: ' . self::brl($imp), false];
+                if ($jur > 0) $tr[] = [($tr ? ' · ' : '') . 'Juros e multa: ' . self::brl($jur), false];
+                if ($obsB !== '') $tr[] = [' — ' . $obsB, false];
+                $tr[] = ['   Valor final: ' . self::brl($final), true];
+                $p->paragrafoComFundo($tr);
+                $total += $final;
+            } else $total += (float)$l['valor'];
             $p->espaco(8);
         }
         $p->espaco(10);

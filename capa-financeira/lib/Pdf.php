@@ -108,6 +108,20 @@ final class Pdf
         }
     }
 
+    /** parágrafo com fundo colorido (faixa da margem esquerda à direita), cor em 0..1 */
+    public function paragrafoComFundo(array $trechos, array $rgb = [1, 0.97, 0.80], float $tam = 11, float $entrelinha = 1.45, float $folga = 4): void
+    {
+        $antes = $this->cur; $y0 = $this->y;
+        $this->y += $folga;
+        $this->paragrafo($trechos, $tam, $entrelinha, false);
+        $ops = substr($this->cur, strlen($antes));
+        $h = $this->y - $y0 + $folga * 0.5;
+        $yPdf = self::A4_H - ($y0 + $h);
+        $rect = sprintf("q %.3f %.3f %.3f rg %.2f %.2f %.2f %.2f re f Q\n", $rgb[0], $rgb[1], $rgb[2], $this->margemEsq - 4, $yPdf, $this->larguraUtil() + 8, $h);
+        $this->cur = $antes . $rect . $ops;
+        $this->y = $y0 + $h;
+    }
+
     /** linha pontilhada centralizada (assinatura) */
     public function linhaPontilhada(float $w = 360): void
     {
