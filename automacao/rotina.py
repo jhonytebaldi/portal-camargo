@@ -305,7 +305,7 @@ def preparar():
                 r = requests.get(f"{GB}/conversations/{c['ghl_conv']}/messages?limit=40", headers=GH, timeout=40)
             arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
         except Exception: arr = []
-        msgs = []
+        pre = []
         for m in arr:
             if (m.get("messageType", "").startswith("TYPE_ACTIVITY")
                     or m.get("messageType") == "TYPE_INTERNAL_COMMENT"): continue
@@ -318,18 +318,30 @@ def preparar():
                 slug = ms.group(1)
                 body = body[:ms.start()].rstrip()
                 if slug not in INST: inst_desconhecidas.add(slug)
+            pre.append((m, slug, body))
+        # dono da linha desta conversa: áudios/mídias do aparelho às vezes chegam
+        # SEM o "Source:" (ex. "Mensagem de Áudio.") — herdam a instância vista
+        # nas demais mensagens da mesma conversa
+        dono_linha = None
+        for _m, _s, _b in pre:
+            if _s and INST.get(_s): dono_linha = INST[_s]
+        msgs = []
+        for m, slug, body in pre:
             d = {"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
                  "body": body[:280]}
             # autor da mensagem manual (qual corretor enviou) — essencial p/ julgar
-            # a titularidade, já que o WeSales passa o contato pra quem mandou a
-            # mensagem mais recente
+            # a titularidade. Mensagem de workflow NUNCA ganha autor (é automação,
+            # mesmo quando o GHL manda um userId junto).
             u = m.get("userId")
-            if m.get("direction") == "outbound":
+            if m.get("direction") == "outbound" and m.get("source") != "workflow":
                 if u and ghl2nome.get(u):
                     d["por"] = ghl2nome[u]                      # enviada pelo app/sistema
                 elif slug and INST.get(slug):
                     d["por"] = INST[slug]                       # enviada pelo celular do corretor
-            elif slug:
+                elif (slug is None and dono_linha and m.get("source") == "api"
+                      and not body.startswith(("Number Active", "Envio de mensagem ativa"))):
+                    d["por"] = dono_linha                       # áudio/mídia do aparelho sem Source
+            elif m.get("direction") != "outbound" and slug:
                 # inbound: mensagem DO CLIENTE; "via" só diz em que linha chegou
                 d["via"] = INST.get(slug) or "linha institucional"
             msgs.append(d)
