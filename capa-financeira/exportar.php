@@ -441,6 +441,9 @@ $emp = $empresas[$empresa];
 $pessoas = cf_pessoas(false);
 $opts = ['data_registro' => date('Y-m-d'), 'emissao' => 'venda'];
 $linhas = cf_exp_candidatas($pdo, $empresa, $tipo, null);
+// último pedido enviado ao Omie por linha (para diagnóstico quando o envio falha)
+$ultPedido = [];
+if ($linhas) { $q = $pdo->prepare("SELECT lancamento_id, pedido, mensagem FROM cf_envios_omie WHERE acao = 'incluir' AND lancamento_id IN (" . implode(',', array_map(fn($l) => (int)$l['id'], $linhas)) . ") ORDER BY id"); $q->execute(); foreach ($q->fetchAll() as $r) $ultPedido[(int)$r['lancamento_id']] = $r; }
 $contagem = [];
 foreach ($pdo->query("SELECT c.empresa, l.tipo, COUNT(*) n FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.status = 'confirmado' AND c.status = 'confirmada' GROUP BY c.empresa, l.tipo")->fetchAll() as $r) $contagem[$r['empresa']][$r['tipo']] = (int)$r['n'];
 $montadas = [];
@@ -508,7 +511,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
   <td class="cf-pix-cel"><input type="text" class="cf-in cf-pix exp-edit" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" autocomplete="off"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?></div><?php endif; ?><div class="exp-omie"></div></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -528,7 +531,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?></div><?php endif; ?><div class="exp-omie"></div></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
