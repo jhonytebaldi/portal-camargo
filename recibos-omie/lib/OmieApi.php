@@ -72,6 +72,11 @@ final class OmieApi
             $msg = (string)file_get_contents($fw);
             throw new RuntimeException($msg . ' (pedido idêntico recusado há menos de 5 min — não foi reenviado para não bloquear a API; corrija a causa antes de tentar de novo)');
         }
+        // guarda contra o bloqueio de 30 min: o Omie bloqueia na 10ª resposta com erro SEGUIDA no mesmo método (contador zera 60 s após o último erro)
+        $fe = self::cacheDir() . '/e-' . preg_replace('/\W+/', '', $conta . '-' . $method);
+        $erros = is_file($fe) ? json_decode((string)file_get_contents($fe), true) ?: ['n' => 0, 'q' => 0] : ['n' => 0, 'q' => 0];
+        if (time() - (int)$erros['q'] > 90) $erros = ['n' => 0, 'q' => 0];
+        if ($erros['n'] >= 7) throw new RuntimeException("pausa preventiva: $method já devolveu {$erros['n']} erros seguidos no Omie — na 10ª o Omie bloqueia a API por 30 min. Aguarde 2 minutos e tente de novo; se repetir, há um problema nos dados (veja a mensagem do erro anterior)");
         // intervalo mínimo entre chamadas (o Omie penaliza rajadas)
         $dt = microtime(true) - self::$ultima; if ($dt < 0.35) usleep((int)((0.35 - $dt) * 1e6));
         self::$ultima = microtime(true);
@@ -85,6 +90,7 @@ final class OmieApi
         if (!is_array($j)) throw new RuntimeException("resposta inesperada do Omie (HTTP $code)");
         if (isset($j['faultstring'])) {
             $msg = 'Omie: ' . $j['faultstring'] . (isset($j['faultcode']) ? ' [' . $j['faultcode'] . ']' : '');
+            @file_put_contents($fe, json_encode(['n' => (int)$erros['n'] + 1, 'q' => time()]));
             if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
             // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
             elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
@@ -92,6 +98,7 @@ final class OmieApi
             throw new RuntimeException($msg);
         }
         if ($leitura) @file_put_contents($chave, (string)$raw);
+        if ($erros['n'] > 0) @unlink($fe);   // sucesso zera a sequência de erros
         return $j;
     }
     /** esquece o cache de uma leitura específica (ex.: depois de incluir/excluir o título) */
@@ -116,8 +123,12 @@ final class OmieApi
     /** procura um título pelo CNPJ/CPF + vencimento (validação do relatório) */
     public static function procurarTitulo(string $conta, string $doc, string $vencIso): array
     {
-        $r = self::call($conta, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 100, 'cNatureza' => 'P', 'cCPFCNPJCliente' => $doc, 'dDtVencDe' => self::br($vencIso), 'dDtVencAte' => self::br($vencIso)]);
-        return $r['titulosEncontrados'] ?? [];
+        // sem filtro por CPF: a pesquisa por dia de vencimento (sempre com resultado quando há títulos) é filtrada aqui — evita a resposta
+        // "não existem registros", que o Omie conta como erro (10 seguidos = bloqueio de 30 min)
+        try { $r = self::call($conta, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 500, 'cNatureza' => 'P', 'dDtVencDe' => self::br($vencIso), 'dDtVencAte' => self::br($vencIso)]); }
+        catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) return []; throw $e; }
+        $dig = preg_replace('/\D+/', '', $doc);
+        return array_values(array_filter($r['titulosEncontrados'] ?? [], fn($t) => preg_replace('/\D+/', '', (string)(($t['cabecTitulo'] ?? $t)['cCPFCNPJCliente'] ?? '')) === $dig));
     }
 
     /** fornecedor por código Omie, com cache em ro_fornecedores */
