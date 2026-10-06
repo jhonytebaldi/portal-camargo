@@ -83,6 +83,17 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   ("já comprei", "não quero mais", número errado) → "encerrar".
 - SEM conversa no GHL (tem_conversa=false): use obs + andamentos como referência.
   Se nem isso der sinal e estiver parado 45+ dias → "encerrar".
+- CO-ATENDIMENTO: donos_robust pode listar 2+ corretores do MESMO atendimento
+  (parceria — ex.: quem agendou + quem faz a visita). Co-atendente NÃO é
+  "outro corretor": NUNCA sugira encerrar porque o cliente "está com" alguém
+  que é um dos donos do próprio atendimento. Se o caso pede combinação entre
+  os dois, a tarefa é de coordenação ("alinhar com o [co-atendente] quem dá o
+  próximo passo"), nunca de encerramento.
+- HISTÓRICO DE ENCERRAMENTO em atendimento ATIVO: se há um andamento antigo de
+  "Atendimento encerrado" mas o atendimento está ativo hoje, ele foi REABERTO
+  (repare em feedbacks como "Encerrado por engano") — esse registro antigo NÃO
+  é motivo pra encerrar de novo. O que vale é o estado atual e os registros
+  mais recentes do histórico.
 - Cliente PAUSADO no Robust (campo pausado_ate com data FUTURA): a pausa é uma
   decisão do corretor (ex.: "resolver pendências financeiras"). NÃO gere tarefa
   de retomada/follow-up/reativar antes dessa data — o sistema já segura o
