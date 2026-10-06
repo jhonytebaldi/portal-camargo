@@ -118,6 +118,7 @@ def preparar():
                         "obs": (r.get("obs") or "")[:600], "criado": r.get("created_at"),
                         "last_update": r.get("last_update"), "robust_atendente": ra,
                         "corretor": nomes_rob.get(ra, str(ra)),
+                        "stopped_until": r.get("stopped_until"),
                         "donos": donos or [ra]}
             pages = j["meta"]["pages"]; page += 1
             if pages and page <= pages: time.sleep(0.2)
@@ -277,6 +278,9 @@ def preparar():
         cob = None
         try: cob = datetime.strptime(str(c.get("cobrar_em") or ""), "%Y-%m-%d").date()
         except ValueError: pass
+        pau = parse_iso(c.get("stopped_until"))
+        if pau and (cob is None or pau.date() > cob):
+            cob = pau.date()   # pausado no Robust = espera até a data da pausa
         if precisa and cob and cob > agora.date():
             algo_novo = ((lm is not None and la is not None and lm > la)
                          or (lu is not None and la is not None and lu > la)
@@ -434,6 +438,7 @@ def preparar():
                 "flags": c.get("flags", []), "obs": c.get("obs") or "",
                 "andamentos": c.get("andamentos", []),
                 "cobranca_combinada": c.get("cobrar_em"),
+                "pausado_ate": c.get("stopped_until"),
                 "dono_robust": c["corretor"],
                 "donos_robust": [nomes_rob.get(d, str(d)) for d in c.get("donos", [])],
                 "dono_wesales": ghl2nome.get(c.get("assigned")) if c.get("assigned") else None,
@@ -481,11 +486,20 @@ def publicar():
         return t or ""
 
     hoje = datetime.strptime(DATA, "%Y-%m-%d").date()
-    por, n_div, n_alinhar, n_carry, n_aguardar = {}, 0, 0, 0, 0
+    por, n_div, n_alinhar, n_carry, n_aguardar, n_pausados = {}, 0, 0, 0, 0, 0
     for aid, c in cli.items():
         a = ana.get(aid)
         _donos_brk = {rob2broker.get(d) for d in c.get("donos", [c["robust_atendente"]])} - {None}
         divergente = bool(c.get("assigned") and _donos_brk and c["assigned"] not in _donos_brk)
+        pau = parse_iso(c.get("stopped_until"))
+        if (pau and pau.date() > hoje and not divergente
+                and (a is None or a["acao"] not in ("responder cliente", "encerrar"))):
+            # pausado no Robust até data FUTURA: decisão do corretor — nada de
+            # tarefa de retomada. O cliente volta ao plano quando a pausa vencer
+            # ou quando algo novo acontecer (mensagem, andamento, stage).
+            c["cobrar_em"] = pau.date().isoformat()
+            n_pausados += 1
+            continue
         if a and a["acao"] == "aguardar retorno" and not divergente:
             # dentro do prazo de retorno combinado: NÃO vira tarefa no plano.
             # Guarda a data de cobrança; a rotina só volta a olhar o cliente
@@ -600,7 +614,8 @@ def publicar():
               "planos": res.get("planos"), "itens": res.get("itens"),
               "auto_checks": res.get("auto_checks"), "re_analisados": len(ana),
               "carry_forward": n_carry, "titularidade_divergente": n_div,
-              "alinhar_titularidade": n_alinhar, "aguardando_retorno": n_aguardar}
+              "alinhar_titularidade": n_alinhar, "aguardando_retorno": n_aguardar,
+              "pausados": n_pausados}
     json.dump(resumo, open(os.path.join(DIR, "resumo_publicacao.json"), "w"), ensure_ascii=False)
 
     # ---- entrada p/ os textos "análise do gestor" (redigidos por subagentes
