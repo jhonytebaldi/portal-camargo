@@ -6,7 +6,7 @@
    (período selecionável). Valida se cada título existe no Omie.
    GET  filtros de histórico · ?baixar=ID · ?zip=1,2,3
    POST form: buscar (api) | relatorio (xlsx)
-   POST JSON: acao gerar
+   POST JSON: acao gerar | cancelar
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/../capa-financeira/_comum.php';   // helpers, cf_pessoas, cf_config, Pix, Parser
@@ -64,10 +64,12 @@ function ro_numero(PDO $pdo, array $t): string
 {
     if (!empty($t['obs']['recibo'])) return (string)$t['obs']['recibo'];
     if (!empty($t['cod_int'])) return (string)$t['cod_int'];
+    // código do imóvel digitado na tela (título sem COD na observação): troca a numeração genérica REC<ano> pela do imóvel
+    $manual = preg_replace('/\D+/', '', (string)($t['cod_manual'] ?? ''));
     $st = $pdo->prepare("SELECT r.numero, r.itens FROM ro_recibo_itens i JOIN ro_recibos r ON r.id = i.recibo_id WHERE i.fingerprint = ? ORDER BY r.id DESC LIMIT 1");
     $st->execute([$t['fingerprint']]);
-    if ($r = $st->fetch()) { foreach (json_decode((string)$r['itens'], true) ?: [] as $it) if (($it['fingerprint'] ?? '') === $t['fingerprint'] && !empty($it['numero'])) return (string)$it['numero']; }
-    $cod = preg_replace('/\D+/', '', (string)($t['obs']['cod'] ?? '')) ?: ('REC' . date('Y'));
+    if ($r = $st->fetch()) { foreach (json_decode((string)$r['itens'], true) ?: [] as $it) if (($it['fingerprint'] ?? '') === $t['fingerprint'] && !empty($it['numero']) && !($manual !== '' && str_starts_with((string)$it['numero'], 'REC'))) return (string)$it['numero']; }
+    $cod = $manual ?: (preg_replace('/\D+/', '', (string)($t['obs']['cod'] ?? '')) ?: ('REC' . date('Y')));
     $pdo->prepare('INSERT INTO cf_sequencias (cod, tipo, ultimo) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE ultimo = ultimo + 1')->execute([$cod, 'P']);
     $q = $pdo->prepare('SELECT ultimo FROM cf_sequencias WHERE cod = ? AND tipo = ?'); $q->execute([$cod, 'P']);
     return $cod . '-P' . str_pad((string)(int)$q->fetchColumn(), 3, '0', STR_PAD_LEFT);
@@ -81,6 +83,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
     $_POST['csrf'] = $in['csrf'] ?? ''; csrf_check();
     $falha = function (string $m, int $c = 400): never { http_response_code($c); exit(json_encode(['ok' => false, 'erro' => $m], JSON_UNESCAPED_UNICODE)); };
     try {
+        if (($in['acao'] ?? '') === 'cancelar') {
+            if (!$gestor) $falha('só o financeiro pode cancelar recibos', 403);
+            $id = (int)($in['id'] ?? 0); $motivo = mb_substr(trim((string)($in['motivo'] ?? '')), 0, 200);
+            $q = $pdo->prepare('SELECT id, numero, status FROM ro_recibos WHERE id = ?'); $q->execute([$id]); $r = $q->fetch();
+            if (!$r) $falha('recibo não encontrado: pode já ter sido removido. Atualize a página e confira a lista.', 404);
+            if ($r['status'] !== 'atual') $falha('o recibo ' . $r['numero'] . ' já está ' . $r['status'] . ' — nada a cancelar. Para emitir outro, busque o título de novo e marque "gerar de novo".');
+            $pdo->prepare("UPDATE ro_recibos SET status = 'cancelado', motivo = ?, encerrado_por = ?, encerrado_em = NOW() WHERE id = ?")->execute([$motivo ?: null, $u['id'], $id]);
+            exit(json_encode(['ok' => true, 'numero' => $r['numero']]));
+        }
         if (($in['acao'] ?? '') !== 'gerar') $falha('ação inválida');
         $itens = (array)($in['itens'] ?? []); if (!$itens) $falha('nenhum título selecionado');
         $agrupar = !empty($in['agrupar']); $substituir = !empty($in['substituir']);
@@ -111,10 +122,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
             $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
             file_put_contents($path, $r['pdf']);
-            foreach ($g as $t) if (!empty($t['_antigo'])) $pdo->prepare("UPDATE ro_recibos SET status = 'substituido' WHERE id = ?")->execute([$t['_antigo']]);
+            $antigos = array_values(array_unique(array_filter(array_map(fn($t) => (int)($t['_antigo'] ?? 0), $g))));
             $pdo->prepare('INSERT INTO ro_recibos (conta, numero, fingerprints, omie_ids, fornecedor_doc, fornecedor_nome, pessoa_id, valor, data_recibo, itens, origem, validado, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                 ->execute([$t0['conta'], $r['numero'], json_encode($fps), json_encode($ids), (string)$t0['doc'], $r['recebedor'], $p['id'] ?? null, $r['valor'], $data, json_encode($itensGravar, JSON_UNESCAPED_UNICODE), $t0['origem'], (string)($t0['validado'] ?? ($t0['origem'] === 'api' ? $t0['situacao'] : '')), $nome, $path, $u['id']]);
             $rid = (int)$pdo->lastInsertId();
+            foreach ($antigos as $aid) $pdo->prepare("UPDATE ro_recibos SET status = 'substituido', substituido_por = ?, encerrado_por = ?, encerrado_em = NOW() WHERE id = ? AND status = 'atual'")->execute([$rid, $u['id'], $aid]);
             $ins = $pdo->prepare('INSERT IGNORE INTO ro_recibo_itens (recibo_id, fingerprint) VALUES (?, ?)');
             foreach ($fps as $fp) $ins->execute([$rid, $fp]);
             $gerados[] = $rid;
@@ -173,8 +185,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $gestor) {
 }
 
 /* ---------- histórico ---------- */
-$f = ['busca' => trim((string)($_GET['busca'] ?? '')), 'de' => (string)($_GET['hde'] ?? ''), 'ate' => (string)($_GET['hate'] ?? ''), 'conta' => (string)($_GET['hconta'] ?? '')];
-$sql = "SELECT r.*, u.nome AS por FROM ro_recibos r LEFT JOIN users u ON u.id = r.gerado_por WHERE r.status = 'atual'"; $a = [];
+$f = ['busca' => trim((string)($_GET['busca'] ?? '')), 'de' => (string)($_GET['hde'] ?? ''), 'ate' => (string)($_GET['hate'] ?? ''), 'conta' => (string)($_GET['hconta'] ?? ''),
+      'origem' => in_array($_GET['horigem'] ?? '', ['api', 'xlsx'], true) ? (string)$_GET['horigem'] : '', 'status' => in_array($_GET['hstatus'] ?? '', ['atual', 'substituido', 'cancelado', 'todos'], true) ? (string)$_GET['hstatus'] : 'atual'];
+$sql = "SELECT r.*, u.nome AS por, e.nome AS encerrado_nome, s.numero AS subst_numero FROM ro_recibos r LEFT JOIN users u ON u.id = r.gerado_por LEFT JOIN users e ON e.id = r.encerrado_por LEFT JOIN ro_recibos s ON s.id = r.substituido_por WHERE 1"; $a = [];
+if ($f['status'] !== 'todos') { $sql .= ' AND r.status = ?'; $a[] = $f['status']; }
+if ($f['origem'] !== '') { $sql .= ' AND r.origem = ?'; $a[] = $f['origem']; }
 if (!$gestor) { $sql .= ' AND (r.pessoa_id = ? OR r.fornecedor_doc IN (?, ?))'; array_push($a, (int)$minhaPessoa['id'], (string)$minhaPessoa['cnpj'], (string)$minhaPessoa['cpf']); }
 if ($f['busca'] !== '') { $sql .= ' AND (r.numero LIKE ? OR r.fornecedor_nome LIKE ? OR r.itens LIKE ?)'; $b = '%' . $f['busca'] . '%'; array_push($a, $b, $b, $b); }
 if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['de'])) { $sql .= ' AND r.data_recibo >= ?'; $a[] = $f['de']; }
@@ -186,7 +201,7 @@ $st = $pdo->prepare($sql); $st->execute($a); $historico = $st->fetchAll();
 portal_header('Recibos do Omie', $u);
 ?>
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
-<style>main.wrap{max-width:1600px}.ro-val-ok{color:#2e6b3a;font-weight:600}.ro-val-nao{color:#b4512f;font-weight:700}.ro-per button{font:inherit;font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-per button.on{background:var(--moss);color:#fff;border-color:var(--moss)}</style>
+<style>main.wrap{max-width:1600px}.ro-filtros{display:grid;grid-template-columns:minmax(220px,2fr) repeat(5,minmax(130px,1fr)) auto;gap:10px;align-items:end;margin-bottom:10px}.ro-filtros label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;min-width:0}.ro-filtros .cf-in{width:100%;min-width:0;padding:7px 9px;font:inherit;font-size:14px;border:2px solid var(--line);border-radius:6px;background:#fff;box-sizing:border-box}.ro-filtros .btn{height:38px}@media(max-width:1100px){.ro-filtros{grid-template-columns:repeat(3,1fr)}}@media(max-width:640px){.ro-filtros{grid-template-columns:1fr 1fr}}.ro-encerrado td{opacity:.72}#tbl-hist .cf-tag{white-space:normal;display:inline-block;line-height:1.3;margin-top:3px}.ro-cod-in{width:70px;padding:3px 5px;font:inherit;font-size:13px;border:1.5px solid #c9a227;border-radius:5px;background:#fffbe6}.ro-val-ok{color:#2e6b3a;font-weight:600}.ro-val-nao{color:#b4512f;font-weight:700}.ro-per button{font:inherit;font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-per button.on{background:var(--moss);color:#fff;border-color:var(--moss)}</style>
 <div class="cf-rev">
 <?php cf_cabecalho($gestor ? 'Recibos do Omie' : 'Meus recibos', $gestor ? 'Declaração e Recibo a partir das contas a pagar já registradas no Omie — busque pela API por período ou envie o relatório "Finanças › Contas a Pagar" (.xlsx). Mesmo modelo dos recibos da Capa Financeira.' : 'Recibos das suas comissões e bônus.', $gestor ? [['Recibos do Omie', null]] : [['Meus recibos', null]], 'recibos-omie'); ?>
 
@@ -243,7 +258,7 @@ portal_header('Recibos do Omie', $u);
   <td><?= $p ? h($p['nome']) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>' ?></td>
   <td><?= h((string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria']))) ?><?= $o['natureza'] === 'BONUS' ? ' <span class="cf-tag">BONUS</span>' : '' ?><?= $repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '' ?><br><small class="cf-raw"><?= h((string)$t['categoria']) ?></small></td>
   <td><small><?= h(mb_substr((string)($o['cliente'] ?? ''), 0, 45)) ?><br><span class="cf-raw"><?= h(mb_substr((string)($o['imovel'] ?? ''), 0, 45)) ?></span><?= $o['padrao'] === 'vazio' ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '' ?></small></td>
-  <td><?= h((string)($o['cod'] ?? '—')) ?><?= $o['venda'] ? '<br><small class="cf-raw">' . h($o['venda']) . '</small>' : '' ?></td>
+  <td><?php if (!empty($o['cod'])): ?><?= h((string)$o['cod']) ?><?php elseif (!empty($t['cod_int']) || !empty($o['recibo'])): ?>—<?php else: ?><input class="ro-cod-in" placeholder="COD" inputmode="numeric" title="título sem código do imóvel na observação: informe o COD para numerar o recibo como COD-Pxxx (vazio = REC<?= date('Y') ?>-Pxxx)"><?php endif; ?><?= $o['venda'] ? '<br><small class="cf-raw">' . h($o['venda']) . '</small>' : '' ?></td>
   <td class="cf-num"><?= cf_brl($t['valor']) ?></td>
   <td><?php if ($ja): ?><a href="?baixar=<?= (int)$ja['id'] ?>&ver=1" target="_blank">📄 <?= h($ja['numero']) ?></a><?php elseif (!empty($o['recibo'])): ?><?= h($o['recibo']) ?><?php else: ?><span class="cf-raw">novo</span><?php endif; ?></td>
   <td class="<?= $naoAchou ? 'ro-val-nao' : 'ro-val-ok' ?>"><small><?= h((string)($t['validado'] ?? '')) ?></small></td>
@@ -254,21 +269,27 @@ portal_header('Recibos do Omie', $u);
 <?php endif; endif; endif; ?>
 
 <h2 class="cf-h2">Recibos gerados</h2>
-<form method="get" class="cf-form" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+<form method="get" class="ro-filtros">
   <label>Busca<input name="busca" class="cf-in" value="<?= h($f['busca']) ?>" placeholder="nº, fornecedor, cliente, COD"></label>
-  <label>De<input type="date" name="hde" class="cf-in" value="<?= h($f['de']) ?>"></label><label>até<input type="date" name="hate" class="cf-in" value="<?= h($f['ate']) ?>"></label>
+  <label>De<input type="date" name="hde" class="cf-in" value="<?= h($f['de']) ?>"></label>
+  <label>Até<input type="date" name="hate" class="cf-in" value="<?= h($f['ate']) ?>"></label>
   <?php if ($gestor): ?><label>Empresa<select name="hconta" class="cf-in"><option value="">todas</option><?php foreach ($empresas as $id => $e): ?><option value="<?= h($id) ?>" <?= $f['conta'] === $id ? 'selected' : '' ?>><?= h($e['nome']) ?></option><?php endforeach; ?></select></label><?php endif; ?>
+  <label>Origem<select name="horigem" class="cf-in"><option value="">todas</option><option value="api" <?= $f['origem'] === 'api' ? 'selected' : '' ?>>buscados pela API</option><option value="xlsx" <?= $f['origem'] === 'xlsx' ? 'selected' : '' ?>>importados do .xlsx</option></select></label>
+  <label>Situação<select name="hstatus" class="cf-in"><?php foreach (['atual' => 'atuais', 'substituido' => 'substituídos', 'cancelado' => 'cancelados', 'todos' => 'todos'] as $k => $n): ?><option value="<?= $k ?>" <?= $f['status'] === $k ? 'selected' : '' ?>><?= $n ?></option><?php endforeach; ?></select></label>
   <button class="btn" type="submit">Filtrar</button>
 </form>
 <?php if (!$historico): ?><p class="home-sub">Nenhum recibo ainda.</p><?php else: ?>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-hist">
 <thead><tr><th><input type="checkbox" id="h-todos"></th><th>Nº</th><th>Data</th><th>Recebedor</th><th>Empresa</th><th>Valor</th><th>Títulos</th><th>Omie</th><th>Gerado</th><th></th></tr></thead>
-<tbody><?php foreach ($historico as $r): $its = json_decode((string)$r['itens'], true) ?: []; ?>
-<tr data-id="<?= (int)$r['id'] ?>"><td><input type="checkbox" class="h-sel"></td><td><b><?= h($r['numero']) ?></b></td><td><?= cf_data_br($r['data_recibo']) ?></td><td><?= h($r['fornecedor_nome']) ?><br><small class="cf-raw"><?= h($r['fornecedor_doc']) ?></small></td>
+<tbody><?php foreach ($historico as $r): $its = json_decode((string)$r['itens'], true) ?: [];
+  $quando = $r['encerrado_em'] ? ' em ' . cf_data_br(substr((string)$r['encerrado_em'], 0, 10)) : ''; $quem = $r['encerrado_nome'] ? ' por ' . h((string)$r['encerrado_nome']) : '';
+  $sit = $r['status'] === 'substituido' ? '<br><span class="cf-tag">substituído' . ($r['subst_numero'] ? ' pelo ' . h($r['subst_numero']) : '') . $quando . $quem . '</span>'
+       : ($r['status'] === 'cancelado' ? '<br><span class="cf-tag cf-grave">cancelado' . $quando . $quem . '</span>' . ($r['motivo'] ? '<br><small class="cf-raw">' . h((string)$r['motivo']) . '</small>' : '') : ''); ?>
+<tr data-id="<?= (int)$r['id'] ?>" class="<?= $r['status'] !== 'atual' ? 'ro-encerrado' : '' ?>"><td><input type="checkbox" class="h-sel"></td><td><b><?= h($r['numero']) ?></b><?= $sit ?></td><td><?= cf_data_br($r['data_recibo']) ?></td><td><?= h($r['fornecedor_nome']) ?><br><small class="cf-raw"><?= h($r['fornecedor_doc']) ?></small></td>
 <td><?= h(strtoupper($r['conta'])) ?></td><td class="cf-num"><?= cf_brl($r['valor']) ?></td>
-<td><small><?php foreach ($its as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? '—')) ?><br><?php endforeach; ?></small></td>
-<td><small><?= h((string)$r['validado']) ?></small></td><td><small><?= h(substr((string)$r['gerado_em'], 0, 16)) ?><br><?= h((string)$r['por']) ?></small></td>
-<td><a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>&ver=1" target="_blank" title="ver">📄</a> <a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>" title="baixar">⬇</a></td></tr>
+<td><small><?php foreach ($its as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? ($it['cod_manual'] ?? '—'))) ?><br><?php endforeach; ?></small></td>
+<td><small><?= h((string)$r['validado']) ?><br><span class="cf-raw"><?= $r['origem'] === 'api' ? 'API' : '.xlsx' ?></span></small></td><td><small><?= h(substr((string)$r['gerado_em'], 0, 16)) ?><br><?= h((string)$r['por']) ?></small></td>
+<td style="white-space:nowrap"><a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>&ver=1" target="_blank" title="ver">📄</a> <a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>" title="baixar">⬇</a><?php if ($gestor && $r['status'] === 'atual'): ?> <a class="cf-x ro-cancelar" href="#" data-num="<?= h($r['numero']) ?>" title="cancelar este recibo (fica guardado como cancelado)">✖</a><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <p><a class="btn cf-btn-sec" id="h-zip" href="#" style="display:none">⬇ ZIP dos selecionados</a></p>
 <?php endif; ?>
@@ -287,7 +308,7 @@ portal_header('Recibos do Omie', $u);
     const trs = [...document.querySelectorAll('.ro-sel:checked')].map(c => c.closest('tr'));
     const bloq = trs.filter(tr => tr.dataset.nao === '1' && !forcar);
     if (bloq.length) { alert(bloq.length + ' título(s) selecionado(s) não foram encontrados no Omie. Cadastre lá primeiro ou marque "incluir títulos não encontrados".'); return; }
-    const itens = trs.map(tr => JSON.parse(tr.dataset.t)); if (!itens.length) return;
+    const itens = trs.map(tr => { const t = JSON.parse(tr.dataset.t); const ci = tr.querySelector('.ro-cod-in'); if (ci && ci.value.trim()) t.cod_manual = ci.value.trim(); return t; }); if (!itens.length) return;
     bg.disabled = true;
     const r = await fetch('/recibos-omie/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({csrf, acao:'gerar', itens, agrupar: document.getElementById('ro-agrupar').checked ? 1 : 0, data: document.getElementById('ro-data').value, substituir: document.getElementById('ro-subst').checked ? 1 : 0})});
     let j = null; try { j = await r.json(); } catch(e) {}
@@ -297,6 +318,15 @@ portal_header('Recibos do Omie', $u);
   });
   function hz(){ const ids = [...document.querySelectorAll('.h-sel:checked')].map(c => +c.closest('tr').dataset.id); const z = document.getElementById('h-zip'); if (!z) return; z.style.display = ids.length ? '' : 'none'; z.href = '?zip=' + ids.join(','); z.textContent = '⬇ ZIP (' + ids.length + ')'; }
   document.querySelectorAll('.h-sel').forEach(c => c.addEventListener('change', hz));
+  document.querySelectorAll('.ro-cancelar').forEach(a => a.addEventListener('click', async e => {
+    e.preventDefault();
+    const motivo = prompt('Cancelar o recibo ' + a.dataset.num + '?\nEle sai da lista de atuais e fica guardado como cancelado (o PDF continua disponível no filtro "cancelados").\n\nMotivo (opcional):');
+    if (motivo === null) return;
+    const r = await fetch('/recibos-omie/', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({csrf, acao:'cancelar', id: +a.closest('tr').dataset.id, motivo})});
+    let j = null; try { j = await r.json(); } catch(err) {}
+    if (!j || !j.ok) { alert(j && j.erro ? j.erro : ('erro ' + r.status + ': a página pode ter expirado — atualize e tente de novo')); return; }
+    location.reload();
+  }));
   const ht = document.getElementById('h-todos'); if (ht) ht.addEventListener('change', () => { document.querySelectorAll('.h-sel').forEach(c => c.checked = ht.checked); hz(); });
 })();
 </script>

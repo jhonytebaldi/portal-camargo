@@ -52,6 +52,16 @@ function ro_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabelas ro_fornecedores/ro_categorias';
     }
+    // cancelamento / substituição com rastro (quem, quando, motivo, por qual recibo)
+    $col = fn(string $t, string $c) => (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $pdo->quote($t) . " AND COLUMN_NAME = " . $pdo->quote($c))->fetchColumn() > 0;
+    if ($tem('ro_recibos') && !$col('ro_recibos', 'encerrado_em')) {
+        $pdo->exec("ALTER TABLE ro_recibos MODIFY status ENUM('atual','substituido','cancelado') NOT NULL DEFAULT 'atual',
+            ADD COLUMN substituido_por INT UNSIGNED NULL AFTER status,
+            ADD COLUMN motivo VARCHAR(200) NULL AFTER substituido_por,
+            ADD COLUMN encerrado_por INT UNSIGNED NULL AFTER motivo,
+            ADD COLUMN encerrado_em DATETIME NULL AFTER encerrado_por");
+        $feitos[] = 'ro_recibos: status cancelado + substituido_por/motivo/encerrado_por/encerrado_em';
+    }
     if (!(int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='recibos-omie'")->fetchColumn()) {
         $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem) VALUES ('recibos-omie','Recibos do Omie','Recibos de comissão a partir das contas a pagar do Omie (relatório ou API)','🧾','/recibos-omie/',1,31)")->execute();
         $feitos[] = 'tool:recibos-omie';
