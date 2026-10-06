@@ -51,16 +51,77 @@ final class OmieEnvio
         return $cat;
     }
 
-    private static function paginar(string $empresa, string $path, string $metodo, string $lista): array
+    private static function paginar(string $empresa, string $path, string $metodo, string $lista, int $porPagina = 200): array
     {
         $out = []; $pag = 1;
         do {
-            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => 200]); }
+            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina]); }
             catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) break; throw $e; }
             foreach ($r[$lista] ?? [] as $x) $out[] = $x;
             $tot = (int)($r['total_de_paginas'] ?? 1); $pag++;
-        } while ($pag <= $tot && $pag < 30);
+        } while ($pag <= $tot && $pag < 200);
         return $out;
+    }
+
+    /* ---------------- listas em cache (consultas que NUNCA erram) ----------------
+       Regra do Omie: a 10ª requisição consecutiva com erro no mesmo IP+AppKey+Método bloqueia por 30 min — e "erro" inclui
+       "Lançamento não cadastrado" / "Não existem registros". Por isso NÃO se consulta título a título nem cliente a cliente:
+       carrega-se a lista inteira (sempre sucesso), guarda em cache curto e confere localmente. */
+    public const LISTA_CACHE_SEG = 600;
+
+    private static function cacheArq(string $nome): string
+    {
+        $d = (defined('CF_DATA_DIR') ? CF_DATA_DIR : dirname(__DIR__, 3) . '/capa-dados') . '/omie-cache';
+        if (!is_dir($d)) @mkdir($d, 0750, true);
+        if (!is_dir($d) || !is_writable($d)) { $d = sys_get_temp_dir() . '/portal-omie-cache'; if (!is_dir($d)) @mkdir($d, 0700, true); }
+        return $d . '/' . $nome . '.json';
+    }
+    private static function listaCache(string $nome, callable $carrega, bool $forcar = false): array
+    {
+        $f = self::cacheArq($nome);
+        if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j)) return $j; }
+        $lista = $carrega();
+        @file_put_contents($f, json_encode($lista, JSON_UNESCAPED_UNICODE));
+        return $lista;
+    }
+    /** títulos da empresa/tipo indexados pelo código de integração (só os nossos: 1234-P001) */
+    public static function titulos(string $empresa, string $tipo, bool $forcar = false): array
+    {
+        return self::listaCache("titulos-$empresa-$tipo", function () use ($empresa, $tipo) {
+            $out = [];
+            foreach (self::paginar($empresa, self::path($tipo), 'Listar' . ($tipo === 'P' ? 'ContasPagar' : 'ContasReceber'), 'conta_' . ($tipo === 'P' ? 'pagar' : 'receber') . '_cadastro', 500) as $t) {
+                $ci = (string)($t['codigo_lancamento_integracao'] ?? '');
+                $reg = ['omie_id' => (int)($t['codigo_lancamento_omie'] ?? 0), 'forn' => (int)($t['codigo_cliente_fornecedor'] ?? 0), 'valor' => (float)($t['valor_documento'] ?? 0),
+                        'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => (float)($t['valor_pag'] ?? 0), 'doc' => (string)($t['numero_documento'] ?? '')];
+                if ($ci !== '') $out['por_codigo'][$ci] = $reg;
+                $out['por_forn'][$reg['forn']][] = $reg + ['codigo' => $ci];
+            }
+            return $out + ['por_codigo' => [], 'por_forn' => []];
+        }, $forcar);
+    }
+    /** cadastros de clientes/fornecedores da empresa: por documento (só dígitos) e por nome (key) */
+    public static function cadastros(string $empresa, bool $forcar = false): array
+    {
+        return self::listaCache("cadastros-$empresa", function () use ($empresa) {
+            $out = ['por_doc' => [], 'por_nome' => []];
+            foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100) as $c) {
+                $reg = ['codigo_cliente_omie' => (int)$c['codigo_cliente_omie'], 'razao_social' => (string)($c['razao_social'] ?? ''), 'nome_fantasia' => (string)($c['nome_fantasia'] ?? ''),
+                        'cnpj_cpf' => (string)($c['cnpj_cpf'] ?? ''), 'inativo' => (string)($c['inativo'] ?? 'N'), 'dadosBancarios' => ['cChavePix' => (string)($c['dadosBancarios']['cChavePix'] ?? '')]];
+                $dig = preg_replace('/\D+/', '', $reg['cnpj_cpf']);
+                if ($dig !== '') $out['por_doc'][$dig][] = $reg;
+                foreach (array_unique(array_filter([CapaParser::key($reg['razao_social']), CapaParser::key($reg['nome_fantasia'])])) as $k) $out['por_nome'][$k][] = $reg;
+            }
+            return $out;
+        }, $forcar);
+    }
+    /** depois de incluir/excluir um título: atualiza o cache local sem nova chamada */
+    public static function lembrarTitulo(string $empresa, string $tipo, string $codigo, ?array $t): void
+    {
+        $f = self::cacheArq("titulos-$empresa-$tipo"); if (!is_file($f)) return;
+        $j = json_decode((string)file_get_contents($f), true); if (!is_array($j)) return;
+        if ($t === null) unset($j['por_codigo'][$codigo]);
+        else $j['por_codigo'][$codigo] = ['omie_id' => (int)($t['codigo_lancamento_omie'] ?? 0), 'forn' => (int)($t['codigo_cliente_fornecedor'] ?? 0), 'valor' => (float)($t['valor_documento'] ?? 0), 'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => 0.0, 'doc' => (string)($t['numero_documento'] ?? '')];
+        @file_put_contents($f, json_encode($j, JSON_UNESCAPED_UNICODE)); @touch($f, filemtime($f));
     }
 
     /* ---------------- fornecedor / cliente ---------------- */
@@ -74,17 +135,19 @@ final class OmieEnvio
         static $cache = [];
         $dig = preg_replace('/\D+/', '', $doc); $k = $empresa . '|' . $dig . '|' . CapaParser::key($nome);
         if (isset($cache[$k])) return $cache[$k];
-        $achou = null;
+        $cad = self::cadastros($empresa); $achou = null;
         if (in_array(strlen($dig), [11, 14], true)) {
-            foreach (self::listarClientes($empresa, ['cnpj_cpf' => $doc]) as $c) if (preg_replace('/\D+/', '', (string)($c['cnpj_cpf'] ?? '')) === $dig) { $achou = $c; break; }
+            $achou = $cad['por_doc'][$dig][0] ?? null;
             if ($achou) return $cache[$k] = ['status' => 'ok', 'cadastro' => $achou, 'msg' => 'cadastrado no Omie: ' . ($achou['razao_social'] ?? '') . ' (cód. ' . $achou['codigo_cliente_omie'] . ')'];
         }
         $lista = [];
         if ($nome !== '') {
-            $lista = self::listarClientes($empresa, ['razao_social' => $nome]);
             $kn = CapaParser::key($nome);
-            $exatos = array_values(array_filter($lista, fn($c) => CapaParser::key((string)($c['razao_social'] ?? '')) === $kn || CapaParser::key((string)($c['nome_fantasia'] ?? '')) === $kn));
-            if ($exatos) $lista = $exatos;
+            $lista = $cad['por_nome'][$kn] ?? [];
+            if (!$lista) { // parcial: nome contido na razão social (ex.: "MAYKON WYLLYAN" × "MAYKON WYLLYAN DE SOUZA")
+                foreach ($cad['por_nome'] as $kk => $regs) if ($kn !== '' && (str_contains($kk, $kn) || str_contains($kn, $kk))) foreach ($regs as $rg) $lista[$rg['codigo_cliente_omie']] = $rg;
+                $lista = array_values($lista);
+            }
         }
         if (count($lista) === 1) {
             $c = $lista[0]; $cd = (string)($c['cnpj_cpf'] ?? '');
@@ -206,7 +269,8 @@ final class OmieEnvio
         // já existe no Omie? (mesmo código de integração) e possível duplicidade (mesmo doc + vencimento + valor)
         $existente = null;
         if ($ped['codigo_lancamento_integracao'] !== '' && !$erros) {
-            $ex = self::consultar($empresa, $tipo, $ped['codigo_lancamento_integracao']);
+            $tit = self::titulos($empresa, $tipo); $ex0 = $tit['por_codigo'][$ped['codigo_lancamento_integracao']] ?? null;
+            $ex = $ex0 ? ['codigo_lancamento_omie' => $ex0['omie_id'], 'valor_documento' => $ex0['valor'], 'data_vencimento' => $ex0['venc'], 'status_titulo' => $ex0['status']] : null;
             if ($ex) {
                 // o código de integração é nosso: se o título já está lá com o mesmo valor e vencimento, é este lançamento (envio anterior
                 // que deu erro de comunicação, p.ex.) → não reenvia, vincula. Se difere, é conflito e bloqueia.
@@ -214,11 +278,9 @@ final class OmieEnvio
                 if ($bate) { $existente = $ex; $avisos[] = 'já existe no Omie com este código (cód. ' . ($ex['codigo_lancamento_omie'] ?? '?') . ', status ' . ($ex['status_titulo'] ?? '?') . ') — será vinculado, não reenviado'; }
                 else $erros[] = 'já existe no Omie um título com este código de integração mas com valor/vencimento DIFERENTES (cód. Omie ' . ($ex['codigo_lancamento_omie'] ?? '?') . ', ' . ($ex['valor_documento'] ?? '?') . ' venc. ' . ($ex['data_vencimento'] ?? '?') . ') — confira no Omie';
             } elseif ($cadastro && $prev !== '') {
-                try {
-                    $r = OmieApi::call($empresa, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 50, 'cNatureza' => $tipo, 'cCPFCNPJCliente' => (string)($cadastro['cnpj_cpf'] ?? ''), 'dDtVencDe' => self::br($prev), 'dDtVencAte' => self::br($prev)]);
-                    foreach ($r['titulosEncontrados'] ?? [] as $t) { $h = $t['cabecTitulo'] ?? $t;
-                        if (abs((float)($h['nValorTitulo'] ?? 0) - $valor) < 0.005) { $avisos[] = 'possível duplicidade: já há no Omie um título deste ' . ($tipo === 'P' ? 'fornecedor' : 'cliente') . ' com o mesmo valor e vencimento (cód. ' . ($h['nCodTitulo'] ?? '?') . ', doc. ' . ($h['cNumDocFiscal'] ?? $h['cCodIntTitulo'] ?? '') . ')'; break; } }
-                } catch (RuntimeException $e) { /* sem títulos = ok */ }
+                foreach ($tit['por_forn'][(int)$cadastro['codigo_cliente_omie']] ?? [] as $t) {
+                    if (abs($t['valor'] - $valor) < 0.005 && $t['venc'] === ($ped['data_vencimento'] ?? '')) { $avisos[] = 'possível duplicidade: já há no Omie um título deste ' . ($tipo === 'P' ? 'fornecedor' : 'cliente') . ' com o mesmo valor e vencimento (cód. ' . $t['omie_id'] . ($t['codigo'] ? ', código ' . $t['codigo'] : ($t['doc'] ? ', doc. ' . $t['doc'] : '')) . ')'; break; }
+                }
             }
         }
         return ['pedido' => $ped, 'erros' => array_values(array_unique($erros)), 'avisos' => array_values(array_unique($avisos)), 'cadastro' => $cadastro, 'existente' => $existente];
@@ -229,17 +291,19 @@ final class OmieEnvio
     private static function path(string $tipo): string { return $tipo === 'P' ? 'financas/contapagar/' : 'financas/contareceber/'; }
     private static function sufixo(string $tipo): string { return $tipo === 'P' ? 'ContaPagar' : 'ContaReceber'; }
 
-    /** título pelo código de integração, ou null se não existe */
+    /** título pelo código de integração, ou null se não existe — via lista em cache (nunca dispara "não cadastrado" no Omie) */
     public static function consultar(string $empresa, string $tipo, string $codigo): ?array
     {
-        try { return OmieApi::call($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => $codigo]); }
-        catch (RuntimeException $e) { if (preg_match('/n[ãa]o cadastrado|n[ãa]o (foi )?(encontrad|localizad)|Client-105|Client-8020/iu', $e->getMessage())) return null; throw $e; }
+        $t0 = self::titulos($empresa, $tipo)['por_codigo'][$codigo] ?? null;
+        if (!$t0) return null;
+        return self::consultarPorOmieId($empresa, $tipo, (int)$t0['omie_id']);
     }
 
     public static function incluir(string $empresa, string $tipo, array $pedido): array
     {
         $r = OmieApi::call($empresa, self::path($tipo), 'Incluir' . self::sufixo($tipo), $pedido);
         OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => (string)($pedido['codigo_lancamento_integracao'] ?? '')]);
+        self::lembrarTitulo($empresa, $tipo, (string)($pedido['codigo_lancamento_integracao'] ?? ''), $pedido + ['codigo_lancamento_omie' => (int)($r['codigo_lancamento_omie'] ?? 0), 'status_titulo' => 'A VENCER']);
         return $r;
     }
     /** conferência depois de incluir: consulta pelo código Omie (chamada diferente da pré-checagem, não cai no "consumo redundante") */
@@ -253,14 +317,16 @@ final class OmieEnvio
     /** Exclui se ainda não foi baixado. @return array{ok: bool, msg: string} */
     public static function excluir(string $empresa, string $tipo, string $codigo): array
     {
-        $t = self::consultar($empresa, $tipo, $codigo);
-        if (!$t) return ['ok' => true, 'msg' => 'já não existia no Omie'];
+        $tit = self::titulos($empresa, $tipo); $t0 = $tit['por_codigo'][$codigo] ?? null;
+        $t = $t0 ? self::consultarPorOmieId($empresa, $tipo, (int)$t0['omie_id']) : null;   // consulta por id só quando sabemos que existe (não gera erro)
+        if (!$t) { self::lembrarTitulo($empresa, $tipo, $codigo, null); return ['ok' => true, 'msg' => 'já não existia no Omie']; }
         $st = (string)($t['status_titulo'] ?? ''); $pago = (float)($t['valor_pag'] ?? 0);
         if ($pago > 0 || in_array(strtoupper($st), ['PAGO', 'RECEBIDO', 'LIQUIDADO', 'PAGO PARC', 'RECEBIDO PARC'], true) || preg_match('/PAG|RECEB|LIQ/i', $st))
             return ['ok' => false, 'msg' => "não excluído: o título já tem baixa no Omie (status $st, pago " . number_format($pago, 2, ',', '.') . ') — trate manualmente'];
         $chave = $tipo === 'P' ? ['codigo_lancamento_integracao' => $codigo] : ['codigo_lancamento_integracao' => $codigo];
         OmieApi::call($empresa, self::path($tipo), 'Excluir' . self::sufixo($tipo), $chave);
         OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => $codigo]);
+        self::lembrarTitulo($empresa, $tipo, $codigo, null);
         return ['ok' => true, 'msg' => 'excluído no Omie (status era ' . $st . ')'];
     }
 
@@ -271,7 +337,8 @@ final class OmieEnvio
      */
     public static function corrigirPix(string $empresa, string $codigo, string $chave): array
     {
-        $t = self::consultar($empresa, 'P', $codigo);
+        $t0 = self::titulos($empresa, 'P')['por_codigo'][$codigo] ?? null;
+        $t = $t0 ? self::consultarPorOmieId($empresa, 'P', (int)$t0['omie_id']) : null;
         if (!$t) return ['status' => 'erro', 'msg' => 'título não existe no Omie com este código de integração', 'antes' => null, 'depois' => null];
         $cnab = $t['cnab_integracao_bancaria'] ?? [];
         $forma = (string)($cnab['codigo_forma_pagamento'] ?? '');
