@@ -81,6 +81,12 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   ("já comprei", "não quero mais", número errado) → "encerrar".
 - SEM conversa no GHL (tem_conversa=false): use obs + andamentos como referência.
   Se nem isso der sinal e estiver parado 45+ dias → "encerrar".
+- Cliente PAUSADO no Robust (campo pausado_ate com data FUTURA): a pausa é uma
+  decisão do corretor (ex.: "resolver pendências financeiras"). NÃO gere tarefa
+  de retomada/follow-up/reativar antes dessa data — o sistema já segura o
+  cliente fora do plano até lá. Só aja se o cliente mandou mensagem nova
+  ("responder cliente") ou se houver motivo claro de "encerrar". Pausa com data
+  já vencida é o contrário: retomar é a tarefa do dia.
 
 ## REGRA DE TITULARIDADE (quando titularidade_divergente=true)
 Contexto: no WeSales, cada corretor tem a própria instância de WhatsApp e o
