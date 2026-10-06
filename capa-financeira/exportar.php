@@ -69,6 +69,30 @@ function cf_exp_conferir_clientes(string $empresa, array $clientes): array
     return $out;
 }
 
+/** monta a linha (regras da planilha) e confere para a API; devolve [montada, conferida] */
+function cf_exp_conferir_api(PDO $pdo, string $empresa, string $tipo, array $l, array $pessoas, array $emp, array $opts, array $cat, string $porQuem): array
+{
+    $p = $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null;
+    $m = Exportacao::montar($l, cf_exp_capa($l), $p, $emp, $opts);
+    return OmieEnvio::conferir($empresa, $tipo, $l, cf_exp_capa($l), $p, $emp, $m, $opts, $cat, $porQuem);
+}
+function cf_exp_log_envio(PDO $pdo, ?int $expId, array $l, string $empresa, string $tipo, string $acao, string $status, ?int $omieId, ?array $pedido, ?array $resposta, ?string $msg, int $por, bool $verificado = false): void
+{
+    $pdo->prepare('INSERT INTO cf_envios_omie (exportacao_id, lancamento_id, empresa, tipo, codigo_integracao, acao, status, omie_id, pedido, resposta, mensagem, verificado, por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$expId, (int)$l['id'], $empresa, $tipo, (string)$l['codigo_integracao'], $acao, $status, $omieId,
+                   $pedido !== null ? json_encode($pedido, JSON_UNESCAPED_UNICODE) : null, $resposta !== null ? json_encode($resposta, JSON_UNESCAPED_UNICODE) : null, $msg, $verificado ? 1 : 0, $por]);
+}
+/** exclui no Omie o título de uma linha exportada pela API e devolve a linha para 'confirmado'. @return array{ok:bool,msg:string} */
+function cf_exp_desfazer_linha(PDO $pdo, array $l, string $empresa, int $por): array
+{
+    $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
+    try { $r = OmieEnvio::excluir($empresa, $tipo, (string)$l['codigo_integracao']); }
+    catch (Throwable $e) { $r = ['ok' => false, 'msg' => 'erro ao excluir no Omie: ' . $e->getMessage()]; }
+    cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipo, 'excluir', $r['ok'] ? 'ok' : 'recusado', $l['omie_id'] ? (int)$l['omie_id'] : null, null, null, $r['msg'], $por);
+    if ($r['ok']) $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL, omie_id = NULL, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([(int)$l['id']]);
+    return $r;
+}
+
 /* ---------- ações JSON ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
