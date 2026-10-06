@@ -16,6 +16,8 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
 "alinhar titularidade"
 
 ## Como ler as mensagens (campos "por" e "via")
+- Os horários das mensagens já estão no fuso de Brasília (formato
+  AAAA-MM-DD HH:MM) — cite-os como estão, sem converter nada.
 - "por" em mensagem outbound = o CORRETOR que enviou (pelo app ou pelo próprio
   celular — a rotina já resolveu a instância, inclusive áudios sem remetente
   identificado, atribuídos à linha da conversa). Outbound sem "por": se
