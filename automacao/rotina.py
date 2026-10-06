@@ -328,17 +328,22 @@ def preparar():
         dono_linha = None
         for _m, _s, _b in pre:
             if _s and INST.get(_s): dono_linha = INST[_s]
+        def dt_local(x):
+            # GHL manda horário em UTC — converte pro fuso de Brasília antes
+            # de entregar pra análise (senão 20h38 vira 23h38 nos textos)
+            t = parse_iso(x)
+            return t.astimezone(TZ).strftime("%Y-%m-%d %H:%M") if t else x
         msgs = []
         for m, slug, body in pre:
             if m.get("messageType") == "TYPE_INTERNAL_COMMENT":
                 # comentário INTERNO do corretor/equipe (o cliente não vê):
                 # contexto valioso pra análise, nunca é mensagem da conversa
-                d = {"dir": "nota", "date": m.get("dateAdded"), "body": body[:280]}
+                d = {"dir": "nota", "date": dt_local(m.get("dateAdded")), "body": body[:280]}
                 u = m.get("userId")
                 if u and ghl2nome.get(u): d["por"] = ghl2nome[u]
                 msgs.append(d)
                 continue
-            d = {"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
+            d = {"dir": m.get("direction"), "src": m.get("source"), "date": dt_local(m.get("dateAdded")),
                  "body": body[:280]}
             # autor da mensagem manual (qual corretor enviou) — essencial p/ julgar
             # a titularidade. Mensagem de workflow NUNCA ganha autor (é automação,
