@@ -374,16 +374,18 @@ final class OmieEnvio
         $atual = (string)($t['numero_documento_fiscal'] ?? '');
         if ($atual === $nf) return ['status' => 'ja_ok', 'msg' => 'Nota Fiscal já está "' . $nf . '"', 'antes' => $atual, 'depois' => $atual];
         if (preg_match('/CANCEL/i', (string)($t['status_titulo'] ?? ''))) return ['status' => 'pulado', 'msg' => 'título cancelado no Omie — não mexi', 'antes' => $atual, 'depois' => null];
-        $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie'], 'codigo_lancamento_integracao' => $codigo, 'numero_documento_fiscal' => mb_substr($nf, 0, 20)];
-        foreach (['codigo_cliente_fornecedor', 'data_vencimento', 'valor_documento', 'codigo_categoria', 'data_previsao', 'id_conta_corrente', 'data_emissao', 'numero_documento', 'observacao', 'numero_parcela', 'codigo_projeto'] as $k) if (isset($t[$k]) && $t[$k] !== '' && $t[$k] !== 0) $ped[$k] = $t[$k];
-        if (!empty($t['cnab_integracao_bancaria']['codigo_forma_pagamento'])) $ped['cnab_integracao_bancaria'] = $t['cnab_integracao_bancaria'];
-        if (!empty($t['distribuicao'])) $ped['distribuicao'] = $t['distribuicao'];
+        // pedido mínimo: só o id do título e a Nota Fiscal. O Omie mantém todos os outros campos (testado: forma Pix, categoria, datas, observação ficam iguais);
+        // reenviar o bloco de forma de pagamento é que dava erro (Client-1035: pix_qrcode obrigatório), porque a consulta não devolve a chave.
+        $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie'], 'numero_documento_fiscal' => mb_substr($nf, 0, 20)];
+        $antesTudo = $t;
         OmieApi::call($empresa, 'financas/contapagar/', 'AlterarContaPagar', $ped);
         OmieApi::esquecer($empresa, 'financas/contapagar/', 'ConsultarContaPagar', ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']]);
         sleep(2);
         $v = self::consultarPorOmieId($empresa, 'P', (int)$t['codigo_lancamento_omie']); $dep = (string)($v['numero_documento_fiscal'] ?? '');
+        $outros = [];   // conferência: nenhum outro campo pode ter mudado
+        foreach (array_unique(array_merge(array_keys($antesTudo), array_keys($v ?? []))) as $k) if (!in_array($k, ['numero_documento_fiscal', 'info'], true) && json_encode($antesTudo[$k] ?? null) !== json_encode($v[$k] ?? null)) $outros[] = $k;
         $ok = $dep === mb_substr($nf, 0, 20);
-        return ['status' => $ok ? 'corrigido' : 'erro', 'msg' => $ok ? 'Nota Fiscal "' . ($atual ?: 'vazia') . '" → "' . $nf . '"' : 'o Omie aceitou a alteração mas a consulta de volta mostra "' . $dep . '" — confira no Omie', 'antes' => $atual, 'depois' => $dep];
+        return ['status' => $ok && !$outros ? 'corrigido' : 'erro', 'msg' => $ok && !$outros ? 'Nota Fiscal "' . ($atual ?: 'vazia') . '" → "' . $nf . '"' : (!$ok ? 'o Omie aceitou a alteração mas a consulta de volta mostra "' . $dep . '" — confira no Omie' : 'a Nota Fiscal mudou, mas outros campos também vieram diferentes na consulta (' . implode(', ', $outros) . ') — confira o título no Omie'), 'antes' => $atual, 'depois' => $dep];
     }
 
     /* ---------------- util ---------------- */
