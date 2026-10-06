@@ -307,8 +307,7 @@ def preparar():
         except Exception: arr = []
         pre = []
         for m in arr:
-            if (m.get("messageType", "").startswith("TYPE_ACTIVITY")
-                    or m.get("messageType") == "TYPE_INTERNAL_COMMENT"): continue
+            if m.get("messageType", "").startswith("TYPE_ACTIVITY"): continue
             body = m.get("body") or ""
             # "Source: <slug>" no fim do corpo = instância (aparelho) por onde a
             # mensagem passou; vem TAMBÉM nas recebidas — nunca é autor de inbound.
@@ -327,6 +326,14 @@ def preparar():
             if _s and INST.get(_s): dono_linha = INST[_s]
         msgs = []
         for m, slug, body in pre:
+            if m.get("messageType") == "TYPE_INTERNAL_COMMENT":
+                # comentário INTERNO do corretor/equipe (o cliente não vê):
+                # contexto valioso pra análise, nunca é mensagem da conversa
+                d = {"dir": "nota", "date": m.get("dateAdded"), "body": body[:280]}
+                u = m.get("userId")
+                if u and ghl2nome.get(u): d["por"] = ghl2nome[u]
+                msgs.append(d)
+                continue
             d = {"dir": m.get("direction"), "src": m.get("source"), "date": m.get("dateAdded"),
                  "body": body[:280]}
             # autor da mensagem manual (qual corretor enviou) — essencial p/ julgar
@@ -364,9 +371,10 @@ def preparar():
         if c.get("last_msg"): datas.append(datetime.fromtimestamp(c["last_msg"]/1000, TZ))
         dias = (agora - max(datas)).days if datas else 999
         c["dias_parado"] = dias
-        if msgs and msgs[-1]["dir"] == "inbound":
+        ultm = next((x for x in reversed(msgs) if x.get("dir") in ("inbound", "outbound")), None)
+        if ultm and ultm["dir"] == "inbound":
             h = 0
-            d = parse_iso(msgs[-1].get("date"))
+            d = parse_iso(ultm.get("date"))
             if d: h = max(0, (agora - d).total_seconds()/3600)
             pre += 25 + min(10, int(h/12)); flags.append(f"cliente_esperando_{int(h)}h")
         criado = parse_iso(c.get("criado"))
