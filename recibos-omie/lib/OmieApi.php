@@ -90,10 +90,11 @@ final class OmieApi
         if (!is_array($j)) throw new RuntimeException("resposta inesperada do Omie (HTTP $code)");
         if (isset($j['faultstring'])) {
             $msg = 'Omie: ' . $j['faultstring'] . (isset($j['faultcode']) ? ' [' . $j['faultcode'] . ']' : '');
-            @file_put_contents($fe, json_encode(['n' => (int)$erros['n'] + 1, 'q' => time()]));
+            if (str_contains($msg, 'Client-1013')) $msg = 'o serviço "' . trim($path, '/') . '" do Omie está indisponível no momento (resposta "Dados do WebService não foram encontrados" para qualquer chamada) — é instabilidade do Omie, não um problema dos dados; aguarde e tente mais tarde';
+            else @file_put_contents($fe, json_encode(['n' => (int)$erros['n'] + 1, 'q' => time()]));
             if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
             // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
-            elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad|foram encontrad)|Client-103|Client-105|Client-5113|Client-1013/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
+            elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
             elseif (!$leitura) @file_put_contents($fw, $msg);   // lembra a gravação recusada (ver acima)
             throw new RuntimeException($msg);
         }
