@@ -191,7 +191,7 @@ function cf_nivel_flag(string $f): string
     return str_starts_with($f, 'GRAVE:') ? 'grave' : 'leve';
 }
 /** Flags que não são alerta para conferir (informativas ou resolvidas por outro campo). */
-const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE'];
+const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE', 'CONDICAO_DO_BLOCO_CORRETORES'];
 /** código curto do alerta (sem GRAVE:, sem detalhes) */
 function cf_flag_codigo(string $f): string
 {
@@ -218,6 +218,8 @@ function cf_flag_curto(string $f): string
         case 'CONSTRUTORA_HIST_DIFERE_CAPA': return 'Construtora ≠ capa: ' . $q($det('CONSTRUTORA_HIST_DIFERE_CAPA'));
         case 'DATA_VENDA_HIST_DIFERE_G3': return 'Data da venda no histórico ≠ capa: ' . $q($det('DATA_VENDA_HIST_DIFERE_G3'));
         case 'COD_HIST_DIFERE_B6': return 'COD no histórico ≠ capa: ' . $q($det('COD_HIST_DIFERE_B6'));
+        case 'CONDICAO_DIVERGE_BLOCO': return 'Condição do lançamento ≠ bloco de corretores: ' . str_replace(["lançamento='", "bloco de corretores='", "'"], ['', '', ''], $q($det('GRAVE:CONDICAO_DIVERGE_BLOCO')));
+        case 'CONDICAO_NAO_APLICADA': return 'Condição do bloco de corretores sem lançamento: ' . $q($det('GRAVE:CONDICAO_NAO_APLICADA'));
         case 'CONDICAO_DIVERGE': return 'Condição da coluna G ≠ prefixo: ' . str_replace(["G='", "prefixo='", "'"], ['G=', 'prefixo=', ''], $q($det('CONDICAO_DIVERGE')));
         case 'POSSIVEL_DUPLICATA': if (preg_match('/linha (\d+)/', $f, $m)) return "Possível duplicata da linha {$m[1]} (mesmo favorecido, valor e data)"; return 'Possível duplicata nesta capa';
         case 'PARECE_BONUS': return 'Está como COMISSAO mas parece BÔNUS (valor bate com o bloco de bônus / coluna G)';
@@ -300,6 +302,11 @@ function cf_flag_texto(string $f): string
     if (str_starts_with($f, 'FLUXO_NAO_PAREADO')) return 'Os recebimentos não batem 1:1 com o bloco FLUXO DE PAGAMENTO da capa — parcelas numeradas pela ordem dos lançamentos ' . substr($f, strlen('FLUXO_NAO_PAREADO '));
     if (str_starts_with($f, 'ARQUIVO_IDENTICO_JA_ENVIADO')) return 'Este arquivo é idêntico a um já enviado ' . substr($f, strlen('ARQUIVO_IDENTICO_JA_ENVIADO '));
     if (str_starts_with($f, 'LINHAS_REMOVIDAS_NA_NOVA_VERSAO')) return 'Linhas da versão anterior que não existem mais nesta ' . substr($f, strlen('LINHAS_REMOVIDAS_NA_NOVA_VERSAO '));
+    if (str_starts_with($f, 'GRAVE:CONDICAO_DIVERGE_BLOCO')) return 'A condição do lançamento (coluna G/prefixo) é diferente da que está no bloco "PAGAMENTO PARA CORRETORES" — corrija a capa para as duas baterem ' . substr($f, strlen('GRAVE:CONDICAO_DIVERGE_BLOCO '));
+    if (str_starts_with($f, 'GRAVE:CONDICAO_NAO_APLICADA')) return 'Há uma condição no bloco "PAGAMENTO PARA CORRETORES" que não casou com nenhum lançamento a pagar (valor + data) — confira se o lançamento existe e se valor/data batem; sem isso a Nota Fiscal sai vazia ' . substr($f, strlen('GRAVE:CONDICAO_NAO_APLICADA '));
+    if (str_starts_with($f, 'CONDICAO_DO_BLOCO_CORRETORES')) return 'Condição lida do bloco "PAGAMENTO PARA CORRETORES" (não estava na coluna G nem no histórico) ' . substr($f, strlen('CONDICAO_DO_BLOCO_CORRETORES '));
+    if (str_starts_with($f, 'CONDICAO_BLOCO_FORA_DO_DICIONARIO')) return 'O bloco de corretores tem uma anotação que não é condição conhecida — se for condição de pagamento, cadastre no dicionário (Configurações) ou escreva na coluna G do lançamento; se não, ignore ' . substr($f, strlen('CONDICAO_BLOCO_FORA_DO_DICIONARIO '));
+    if (str_starts_with($f, 'CONDICAO_AMBIGUA_BLOCO')) return 'Mais de uma condição no bloco de corretores para o mesmo valor e data — não dá para saber qual vale; informe a condição na coluna G ' . substr($f, strlen('CONDICAO_AMBIGUA_BLOCO '));
     if (str_starts_with($f, 'CONDICAO_DIVERGE')) return 'Condição da coluna G difere do prefixo do histórico — decida qual vale ' . substr($f, strlen('CONDICAO_DIVERGE '));
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA_CORTADA:')) return 'Condição não está no dicionário e passou de 20 caracteres: ' . substr($f, 30);
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA:')) return 'Condição não está no dicionário: ' . substr($f, 22);

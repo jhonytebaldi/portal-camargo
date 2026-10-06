@@ -266,6 +266,11 @@ function cf_migrar(PDO $pdo): array
         $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='nf_dict'")->execute([json_encode($nfAtual, JSON_UNESCAPED_UNICODE)]);
         $feitos[] = 'config:nf_dict ENTREGA CHAVES/IMOVEL';
     }
+    if ($nfAtual && !isset($nfAtual['SE ASSINAR CONTRATO'])) {
+        $nfAtual += ['SE ASSINAR CONTRATO' => 'ASSINAR CONTRATO', 'ENTREGA DE CHAVES' => 'ENTREGA CHAVES'];
+        $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='nf_dict'")->execute([json_encode($nfAtual, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:nf_dict SE ASSINAR CONTRATO / ENTREGA DE CHAVES';
+    }
     if ($catAtual && !isset($catAtual['REPASSE'])) {
         $catAtual += ['REPASSE' => 'Repasse a Terceiros', 'REPASSE_FUTURO' => 'Repasse a Terceiros Futuro', 'RECEBER_REPASSE' => 'Recebidos de repasse imediato', 'RECEBER_REPASSE_FUTURO' => 'Recebidos de repasse futuro'];
         $pdo->prepare("UPDATE cf_config SET valor = ? WHERE chave='categorias'")->execute([json_encode($catAtual, JSON_UNESCAPED_UNICODE)]);

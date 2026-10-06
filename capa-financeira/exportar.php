@@ -303,6 +303,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $q = $pdo->prepare("SELECT COUNT(*) FROM cf_lancamentos l WHERE l.exportacao_id = ? AND l.tipo = 'P' AND l.status = 'exportado' AND NOT EXISTS (SELECT 1 FROM cf_envios_omie e WHERE e.lancamento_id = l.id AND e.acao = 'alterar' AND e.status = 'ok')"); $q->execute([$id]);
             exit(json_encode(['ok' => true, 'linhas' => $res, 'restam' => (int)$q->fetchColumn()], JSON_UNESCAPED_UNICODE));
         }
+        if ($acao === 'conferir_nf') {
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            // reprocessa a capa guardada de cada exportação a pagar com o leitor atual e compara a Nota Fiscal com o que foi enviado (sem chamar o Omie)
+            $st = $pdo->prepare("SELECT e.id, e.modo, e.gerado_em FROM cf_exportacoes e WHERE e.empresa = ? AND e.tipo = 'P' AND e.status = 'gerada' ORDER BY e.id"); $st->execute([$empresa]);
+            $parser = cf_parser(); $out = []; $capas = [];
+            foreach ($st->fetchAll() as $ex) {
+                $q = $pdo->prepare("SELECT l.id, l.capa_id, l.codigo_integracao, l.nota_fiscal, l.chave_exata, l.chave_estavel, l.linha_xlsx, l.omie_id, l.cf_raw, l.valor, l.data_prevista, l.natureza, c.arquivo_path, c.cod AS capa_cod, c.cliente AS capa_cliente,
+                                    (SELECT COUNT(*) FROM cf_envios_omie v WHERE v.lancamento_id = l.id AND v.acao = 'alterar' AND v.status = 'ok' AND v.mensagem LIKE 'Nota Fiscal%') AS nf_corrigida
+                                    FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.exportacao_id = ? AND l.tipo = 'P' AND l.status = 'exportado' ORDER BY l.codigo_integracao"); $q->execute([(int)$ex['id']]);
+                foreach ($q->fetchAll() as $l) {
+                    $cid = (int)$l['capa_id'];
+                    if (!isset($capas[$cid])) {
+                        try { $capas[$cid] = is_file((string)$l['arquivo_path']) ? $parser->parse((string)$l['arquivo_path']) : ['erro' => 'arquivo da capa não está mais no servidor']; }
+                        catch (Throwable $e) { $capas[$cid] = ['erro' => 'não consegui reler a capa: ' . $e->getMessage()]; }
+                    }
+                    $r = $capas[$cid]; $nova = null; $obs = null;
+                    if (isset($r['erro'])) $obs = $r['erro'];
+                    else {
+                        $ach = null;
+                        foreach ($r['linhas'] as $x) if ($x['tipo'] === 'PAGAR' && ($x['chave_exata'] ?? '') === $l['chave_exata']) { $ach = $x; break; }
+                        if (!$ach) foreach ($r['linhas'] as $x) if ($x['tipo'] === 'PAGAR' && (int)$x['linha_xlsx'] === (int)$l['linha_xlsx']) { $ach = $x; break; }
+                        if (!$ach) $obs = 'linha não encontrada na capa guardada (a capa mudou depois da exportação)';
+                        else { $nova = (string)($ach['nota_fiscal'] ?? ''); foreach ($ach['flags'] as $f) if (str_starts_with($f, 'CONDICAO_') || str_starts_with($f, 'GRAVE:CONDICAO')) $obs = cf_flag_curto($f); }
+                    }
+                    $atual = (string)($l['nota_fiscal'] ?? '');
+                    if ($nova !== null && $nova !== $atual) $out[] = ['exportacao' => (int)$ex['id'], 'modo' => (string)($ex['modo'] ?? 'planilha'), 'quando' => substr((string)$ex['gerado_em'], 0, 10), 'id' => (int)$l['id'], 'codigo' => (string)$l['codigo_integracao'], 'capa' => (string)$l['capa_cod'] . ' ' . mb_substr((string)$l['capa_cliente'], 0, 28),
+                        'favorecido' => (string)$l['cf_raw'], 'valor' => (float)$l['valor'], 'data' => (string)$l['data_prevista'], 'nf_atual' => $atual, 'nf_nova' => $nova, 'obs' => $obs, 'corrigida' => (int)$l['nf_corrigida'] > 0, 'omie_id' => (int)$l['omie_id']];
+                    elseif ($obs && $nova === null) $out[] = ['exportacao' => (int)$ex['id'], 'modo' => (string)($ex['modo'] ?? 'planilha'), 'quando' => substr((string)$ex['gerado_em'], 0, 10), 'id' => (int)$l['id'], 'codigo' => (string)$l['codigo_integracao'], 'capa' => (string)$l['capa_cod'],
+                        'favorecido' => (string)$l['cf_raw'], 'valor' => (float)$l['valor'], 'data' => (string)$l['data_prevista'], 'nf_atual' => $atual, 'nf_nova' => null, 'obs' => $obs, 'corrigida' => false, 'omie_id' => (int)$l['omie_id']];
+                }
+            }
+            exit(json_encode(['ok' => true, 'linhas' => $out, 'exportacoes' => $st->rowCount()], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'corrigir_nf') {
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            // aplica no Omie a Nota Fiscal relida da capa (lista de ids vinda de conferir_nf), poucos por vez
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa — as chaves ficam no omie.php da configuração do portal');
+            if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('API do Omie bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
+            $itens = array_slice((array)($in['itens'] ?? []), 0, 5); $res = [];
+            foreach ($itens as $it) {
+                $st = $pdo->prepare("SELECT l.*, c.empresa AS emp FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.tipo = 'P' AND l.status = 'exportado'"); $st->execute([(int)($it['id'] ?? 0)]);
+                if (!($l = $st->fetch()) || $l['emp'] !== $empresa) { $res[] = ['id' => (int)($it['id'] ?? 0), 'codigo' => '?', 'status' => 'erro', 'msg' => 'linha não encontrada ou não é desta empresa']; continue; }
+                $nf = mb_substr(trim((string)($it['nf'] ?? '')), 0, 20); $cod = (string)$l['codigo_integracao'];
+                try { $r = OmieEnvio::corrigirNf($empresa, $cod, $l['omie_id'] ? (int)$l['omie_id'] : null, $nf); }
+                catch (Throwable $e) { $r = ['status' => 'erro', 'msg' => 'erro na API do Omie: ' . $e->getMessage() . (OmieEnvio::erroTemporario($e->getMessage()) ? ' — aguarde alguns minutos e tente de novo' : ''), 'antes' => null, 'depois' => null]; }
+                $stLog = in_array($r['status'], ['corrigido', 'ja_ok'], true) ? 'ok' : ($r['status'] === 'pulado' ? 'recusado' : 'erro');
+                cf_exp_log_envio($pdo, (int)$l['exportacao_id'], $l, $empresa, 'P', 'alterar', $stLog, $l['omie_id'] ? (int)$l['omie_id'] : null, ['nf_antes' => $r['antes']], ['nf_depois' => $r['depois']], 'Nota Fiscal: ' . $r['msg'], (int)$u['id'], $r['status'] === 'corrigido');
+                if (in_array($r['status'], ['corrigido', 'ja_ok'], true)) $pdo->prepare("UPDATE cf_lancamentos SET nota_fiscal = ? WHERE id = ?")->execute([$nf !== '' ? $nf : null, (int)$l['id']]);
+                $res[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'status' => $r['status'], 'msg' => $r['msg']];
+                if ($r['status'] === 'erro' && OmieEnvio::erroTemporario($r['msg'])) break;
+            }
+            exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'vincular_linha') {
             // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
             $id = (int)($in['id'] ?? 0); $omieId = (int)($in['omie_id'] ?? 0);
@@ -564,6 +617,10 @@ portal_header('Exportar para o Omie', $u);
 <?php endif; ?>
 
 <h2 class="cf-h2">Exportações anteriores <small><?= h($emp['nome']) ?></small></h2>
+<?php if ($tipo === 'P' && $historico): ?>
+<p><button type="button" class="btn cf-btn-sec" id="btn-conferir-nf" title="relê a capa guardada de cada exportação a pagar com o leitor atual (que agora também lê a condição do bloco 'PAGAMENTO PARA CORRETORES') e lista os títulos cuja Nota Fiscal ficou diferente do que foi enviado. Não altera nada por si só.">🧾 conferir Nota Fiscal das exportações</button></p>
+<div id="nf-res"></div>
+<?php endif; ?>
 <?php if (!$historico): ?><p class="home-sub">Nenhuma ainda.</p><?php else: ?>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl">
 <thead><tr><th>#</th><th>Quando</th><th>Tipo</th><th>Linhas</th><th>Total</th><th>Arquivo</th><th>Avisos</th><th>Status</th><th></th></tr></thead>
@@ -689,6 +746,37 @@ portal_header('Exportar para o Omie', $u);
     const falt = todas.filter(l => !l.ok);
     toast(falt.length ? falt.length + ' título(s) faltando/divergente(s) no Omie' : 'Todos os ' + todas.length + ' títulos estão no Omie');
   }));
+  const bnf = document.getElementById('btn-conferir-nf');
+  if (bnf) bnf.addEventListener('click', async () => {
+    bnf.disabled = true; bnf.textContent = 'relendo as capas…';
+    const j = await post({acao:'conferir_nf'}); bnf.disabled = false; bnf.textContent = '🧾 conferir Nota Fiscal das exportações';
+    if (!j) return;
+    const box = document.getElementById('nf-res'); const esc = s => String(s ?? '').replace(/</g,'&lt;');
+    const dif = j.linhas.filter(l => l.nf_nova !== null), prob = j.linhas.filter(l => l.nf_nova === null);
+    if (!dif.length && !prob.length) { box.innerHTML = '<div class="cf-flag cf-ok">Conferi ' + j.exportacoes + ' exportação(ões): a Nota Fiscal de todos os títulos enviados bate com a leitura atual da capa.</div>'; return; }
+    let html = '<div class="cf-flag cf-leve">' + dif.length + ' título(s) com Nota Fiscal diferente da leitura atual da capa' + (prob.length ? ' · ' + prob.length + ' sem como conferir' : '') + '. Marque os que devem ser corrigidos no Omie (só o campo Nota Fiscal muda; os já pagos também são atualizados, os cancelados são pulados).</div>';
+    html += '<div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-nf"><thead><tr><th><input type="checkbox" id="nf-todos" checked></th><th>Exp.</th><th>Código</th><th>Capa</th><th>Favorecido</th><th>Valor</th><th>Data</th><th>NF enviada</th><th>NF pela capa</th><th>Observação</th><th>Resultado</th></tr></thead><tbody>';
+    dif.forEach(l => { html += '<tr data-id="' + l.id + '" data-nf="' + esc(l.nf_nova) + '"><td><input type="checkbox" class="nf-sel" ' + (l.corrigida ? '' : 'checked') + '></td><td>#' + l.exportacao + ' <small class="cf-raw">' + l.modo + ' ' + l.quando + '</small></td><td><b>' + esc(l.codigo) + '</b></td><td>' + esc(l.capa) + '</td><td>' + esc(l.favorecido) + '</td><td class="cf-num">' + brl(l.valor) + '</td><td>' + (l.data ? l.data.split('-').reverse().join('/') : '') + '</td><td>' + (l.nf_atual ? esc(l.nf_atual) : '<span class="cf-raw">vazia</span>') + '</td><td><b>' + (l.nf_nova ? esc(l.nf_nova) : '<span class="cf-raw">vazia</span>') + '</b></td><td><small>' + esc(l.obs) + (l.corrigida ? ' <span class="cf-tag">já corrigida antes</span>' : '') + '</small></td><td class="nf-out"></td></tr>'; });
+    prob.forEach(l => { html += '<tr class="cf-tem-grave"><td></td><td>#' + l.exportacao + '</td><td><b>' + esc(l.codigo) + '</b></td><td>' + esc(l.capa) + '</td><td>' + esc(l.favorecido) + '</td><td class="cf-num">' + brl(l.valor) + '</td><td></td><td>' + esc(l.nf_atual) + '</td><td>—</td><td><small>' + esc(l.obs) + '</small></td><td></td></tr>'; });
+    html += '</tbody></table></div><p><button type="button" class="btn" id="btn-corrigir-nf">Corrigir no Omie os marcados (5 por vez)</button> <span class="cf-raw" id="nf-prog"></span></p>';
+    box.innerHTML = html;
+    document.getElementById('nf-todos').addEventListener('change', e => document.querySelectorAll('.nf-sel').forEach(c => c.checked = e.target.checked));
+    const bc = document.getElementById('btn-corrigir-nf');
+    bc.addEventListener('click', async () => {
+      const trs = [...document.querySelectorAll('#tbl-nf .nf-sel:checked')].map(c => c.closest('tr'));
+      if (!trs.length) { toast('Nenhum título marcado'); return; }
+      if (!confirm('Alterar a Nota Fiscal de ' + trs.length + ' título(s) no Omie? Cada alteração fica registrada no log de envios e pode ser revista.')) return;
+      bc.disabled = true; const cls = {corrigido:'cf-ok', ja_ok:'cf-ok', pulado:'cf-leve', erro:'cf-grave'}; let feitos = 0, parou = false;
+      for (let i = 0; i < trs.length && !parou; i += 5) {
+        const lote = trs.slice(i, i + 5); document.getElementById('nf-prog').textContent = 'processando ' + Math.min(i + 5, trs.length) + ' de ' + trs.length + '…';
+        const r = await post({acao:'corrigir_nf', itens: lote.map(tr => ({id: +tr.dataset.id, nf: tr.dataset.nf}))}); if (!r) { parou = true; break; }
+        r.linhas.forEach(x => { const tr = document.querySelector('#tbl-nf tr[data-id="' + x.id + '"]'); if (!tr) return; tr.querySelector('.nf-out').innerHTML = '<div class="cf-flag ' + cls[x.status] + '">' + esc(x.msg) + '</div>'; if (x.status === 'corrigido') feitos++; if (x.status === 'corrigido' || x.status === 'ja_ok') tr.querySelector('.nf-sel').checked = false; if (x.status === 'erro' && /aguarde/.test(x.msg)) parou = true; });
+        if (r.linhas.length < lote.length) parou = true;
+      }
+      document.getElementById('nf-prog').textContent = parou ? 'parei por erro temporário da API — espere alguns minutos e clique de novo (os já corrigidos ficam desmarcados)' : 'concluído';
+      bc.disabled = false; toast(feitos + ' título(s) com a Nota Fiscal corrigida');
+    });
+  });
   document.querySelectorAll('.exp-corrigir-pix').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const qtd = parseInt(prompt('Quantos títulos corrigir agora (um lote de cada vez; os já corrigidos são pulados)?', '5') || '0', 10); if (!qtd) return;
     b.disabled = true; b.textContent = 'corrigindo…';
