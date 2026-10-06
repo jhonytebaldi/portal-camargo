@@ -163,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $gestor) {
                     catch (Throwable $e) { $t['validado'] = 'erro ao consultar: ' . $e->getMessage(); continue; }
                     $ach = null;
                     foreach ($cache[$k] as $c) if (abs((float)($c['cabecTitulo']['nValorTitulo'] ?? 0) - (float)$t['valor']) < 0.005) { $ach = $c; break; }
-                    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . ($ach['cabecTitulo']['cStatus'] ?? '?'); $t = Titulo::normalizar($t); }
+                    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . ($ach['cabecTitulo']['cStatus'] ?? '?'); $t['obs_baixa'] = Titulo::obsBaixa($ach); $t = Titulo::normalizar($t); }
                     else $t['validado'] = 'NÃO ENCONTRADO no Omie';
                 }
                 unset($t);
