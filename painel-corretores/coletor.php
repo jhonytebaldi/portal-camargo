@@ -690,6 +690,27 @@ function render_started_page(bool $spawned, string $extra = ''): void {
 }
 
 /* =====================================================================
+   Watchdog da coleta pesada
+   A coleta pesada (presenca_agg.json) roda de hora em hora pelo cron. Se um
+   tick horário falhar (o cron não dispara ou o processo morre cedo), os dados
+   ficam velhos até alguém reparar. Como o delta da fila roda a cada 5 min de
+   forma confiável, ele serve de rede de segurança: se o agregado pesado estiver
+   velho além de ~70 min (ou seja, perdeu pelo menos um tick), dispara uma
+   recuperação incremental. Em operação normal o agregado nunca passa de ~65 min,
+   então isto só age de fato após uma falha. A trava própria da pesada evita
+   recuperações duplicadas.
+   ===================================================================== */
+function heavy_catchup_if_stale(int $maxAgeSec = 4200): bool {
+    $f = painel_data_dir() . '/presenca_agg.json';
+    $age = is_readable($f) ? (time() - (int)@filemtime($f)) : PHP_INT_MAX;
+    if ($age <= $maxAgeSec) return false;
+    painel_log(sprintf('watchdog: agregado pesado com ~%d min — recuperando (--incr)',
+        $age === PHP_INT_MAX ? -1 : intdiv($age, 60)));
+    run_collection('incremental');
+    return true;
+}
+
+/* =====================================================================
    Roteamento CLI x Web
    ===================================================================== */
 if (PHP_SAPI === 'cli') {
@@ -698,10 +719,12 @@ if (PHP_SAPI === 'cli') {
     foreach ($args as $a) {
         if ($a === '--full') $mode='full';
         elseif ($a === '--incr') $mode='incremental';
-        elseif ($a === '--fila') $mode='fila';   // delta leve da fila (cron a cada 2 min)
+        elseif ($a === '--fila') $mode='fila';   // delta leve da fila (cron a cada 5 min)
         elseif (preg_match('/^\d{4}-\d{2}$/', $a)) { $mode='month'; $monthArg=$a; }
     }
     run_collection($mode, $monthArg);
+    // Rede de segurança: a fila (5/5min) recupera a pesada se ela perdeu um tick.
+    if ($mode === 'fila') heavy_catchup_if_stale();
     exit;
 }
 
@@ -712,6 +735,36 @@ if (!$u || $u['papel'] !== 'admin') { http_response_code(403); exit('Apenas admi
 portal_load_config();
 header('Content-Type: text/html; charset=utf-8');
 $log = painel_data_dir() . '/coletor.log';
+
+/* Diagnóstico (só admin): estado dos arquivos + status.json + fim do log. ?peek=1
+   Somente leitura — não dispara nem altera nada. Serve para conferir por que uma
+   coleta não atualizou (ex.: tick horário perdido). */
+if (($_GET['peek'] ?? '') === '1') {
+    header('Content-Type: text/plain; charset=utf-8');
+    $d   = painel_data_dir();
+    $tz  = new DateTimeZone('-03:00');
+    $fmt = function ($ts) use ($tz) {
+        if (!$ts) return '—';
+        $s = time() - $ts;
+        $rel = $s < 60 ? $s.'s' : ($s < 3600 ? intdiv($s,60).'min' : round($s/3600,1).'h');
+        return (new DateTime('@'.$ts))->setTimezone($tz)->format('d/m H:i:s')." ({$rel} atrás)";
+    };
+    echo 'AGORA (BRT): '.(new DateTime('now',$tz))->format('d/m/Y H:i:s')."\n\n";
+    echo "Arquivos de dados:\n";
+    foreach (['status.json','presenca_agg.json','painel_live.json','aguardando.json'] as $fn) {
+        echo sprintf("  %-20s %s\n", $fn, $fmt(@filemtime($d.'/'.$fn)));
+    }
+    echo "\n--- status.json ---\n".(is_readable($d.'/status.json') ? file_get_contents($d.'/status.json') : '(ausente)')."\n";
+    echo "\n--- coletor.log (últimas 80 linhas) ---\n";
+    if (is_readable($log)) {
+        $lines = @file($log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        echo implode("\n", array_slice($lines, -80));
+    } else {
+        echo '(sem log)';
+    }
+    echo "\n";
+    exit;
+}
 // Recoleta COMPLETA do mês corrente (recomputa todos os dias, ignorando o
 // cache) — usar quando muda o formato dos dados coletados (ex.: passou a
 // contar mensagens recebidas por dia). ?full=1
