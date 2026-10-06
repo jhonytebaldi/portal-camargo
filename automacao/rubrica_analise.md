@@ -52,7 +52,20 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   apê", feedback depois da data) ou em andamento com relato pós-visita
   ("visitou", "gostou", "não gostou"). Estar no stage 3 (Visita) por si só NÃO
   é confirmação.
-- Visita realizada e CONFIRMADA sem desdobramento → "pós-visita".
+- Visita realizada e CONFIRMADA sem desdobramento → "pós-visita". MAS se um
+  andamento já traz o RELATO do corretor sobre a visita (campos feedback /
+  feedback_obs — ex.: o que o cliente achou, objeções, o que ficou combinado),
+  o pós-visita JÁ FOI FEITO (presencialmente ou por outro canal): NÃO gere
+  "perguntar o que achou". A próxima ação sai do próprio relato — ex.: cliente
+  negociando entrada e corretor combinou "atualizo assim que tiver mais
+  informações" → "aguardar retorno" com cobrar_em (ou follow-up do ponto
+  específico se o prazo já venceu).
+- CRONOLOGIA conversa × andamentos: monte a linha do tempo com TUDO — mensagens
+  E andamentos/feedbacks têm data (created_at / feedback_at / date_init). Um
+  registro feito DEPOIS das últimas mensagens é o estado mais atual do
+  atendimento e pode já responder a pergunta que a conversa deixou aberta
+  (coisas acontecem fora do WhatsApp: visita, ligação, encontro no plantão).
+  Nunca gere tarefa pra apurar algo que um registro posterior já respondeu.
 - REGRA DE ESTÁGIO PÓS-VISITA: cliente que comprovadamente VEIO à visita tem
   que estar em Visita, Proposta ou Negociado no Robust. Se há indícios claros
   de que a visita ACONTECEU (confirmada como acima) e o stage é 0, 1 ou 2,
