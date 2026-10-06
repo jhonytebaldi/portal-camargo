@@ -59,67 +59,14 @@ function cf_exp_capa(array $l): array
  */
 function cf_exp_conferir_clientes(string $empresa, array $clientes): array
 {
+    // usa a lista de cadastros em cache (uma chamada que sempre dá certo) — nunca uma consulta por CPF que "erra" quando não existe
     $out = [];
     foreach ($clientes as $txt => $nome) {
         $txt = (string)$txt; $dig = preg_replace('/\D+/', '', $txt); $porDoc = in_array(strlen($dig), [11, 14], true);
-        try {
-            $achou = null;
-            if ($porDoc) {
-                try {
-                    $r = OmieApi::call($empresa, 'geral/clientes/', 'ListarClientes', ['pagina' => 1, 'registros_por_pagina' => 5, 'apenas_importado_api' => 'N', 'clientesFiltro' => ['cnpj_cpf' => $txt]]);
-                    foreach ($r['clientes_cadastro'] ?? [] as $c) if (preg_replace('/\D+/', '', (string)($c['cnpj_cpf'] ?? '')) === $dig) { $achou = $c; break; }
-                } catch (RuntimeException $e) { if (!preg_match('/n[ãa]o existem registros|SOAP-ENV:Client-5113|n[ãa]o (foi )?(encontrad|localizad)/iu', $e->getMessage())) throw $e; }
-                if ($achou) { $out[$txt] = ['status' => 'ok', 'msg' => 'cadastrado no Omie: ' . ($achou['razao_social'] ?? $achou['nome_fantasia'] ?? '') . ' (cód. ' . ($achou['codigo_cliente_omie'] ?? '?') . ')']; continue; }
-            }
-            // por nome (o texto da coluna, quando é nome; ou o nome do comprador, quando o texto é o CPF que não achou)
-            $busca = $porDoc ? (string)$nome : $txt;
-            $lista = [];
-            if ($busca !== '') {
-                try { $r = OmieApi::call($empresa, 'geral/clientes/', 'ListarClientes', ['pagina' => 1, 'registros_por_pagina' => 50, 'apenas_importado_api' => 'N', 'clientesFiltro' => ['razao_social' => $busca]]); $lista = $r['clientes_cadastro'] ?? []; }
-                catch (RuntimeException $e) { if (!preg_match('/n[ãa]o existem registros|SOAP-ENV:Client-5113/iu', $e->getMessage())) throw $e; }   // "Não existem registros para a página" = lista vazia
-                $k = CapaParser::key($busca);
-                $exatos = array_values(array_filter($lista, fn($c) => CapaParser::key((string)($c['razao_social'] ?? '')) === $k));
-                if ($exatos) $lista = $exatos;
-            }
-            if (count($lista) === 1) {
-                $c = $lista[0]; $doc = preg_replace('/\D+/', '', (string)($c['cnpj_cpf'] ?? ''));
-                $out[$txt] = $porDoc
-                    ? ['status' => 'so_nome', 'msg' => 'CPF não está no Omie, mas existe cadastro com esse nome: ' . ($c['razao_social'] ?? '') . ' (cód. ' . ($c['codigo_cliente_omie'] ?? '?') . ($doc ? ', CPF/CNPJ ' . $c['cnpj_cpf'] : ', sem CPF') . ') — corrija o CPF no cadastro do Omie ou use o nome']
-                    : ['status' => 'ok', 'msg' => 'cadastrado no Omie: ' . ($c['razao_social'] ?? '') . ' (cód. ' . ($c['codigo_cliente_omie'] ?? '?') . ($doc ? ', CPF/CNPJ ' . $c['cnpj_cpf'] : ', sem CPF') . ')'];
-            } elseif (count($lista) > 1) {
-                $out[$txt] = ['status' => 'varios', 'msg' => count($lista) . ' cadastros com esse nome no Omie — informe o CPF em "cliente Omie" para não dar ambiguidade'];
-            } else {
-                $out[$txt] = ['status' => 'nao', 'msg' => 'NÃO encontrado no Omie' . ($porDoc ? ' (nem pelo CPF nem pelo nome)' : ' (pelo nome)') . ' — cadastre o cliente com CPF antes de importar'];
-            }
-        } catch (Throwable $e) {
-            $out[$txt] = ['status' => 'erro', 'msg' => 'não deu para conferir: ' . $e->getMessage()];
-        }
+        try { $out[$txt] = OmieEnvio::localizarCadastro($empresa, $porDoc ? $txt : '', $porDoc ? (string)$nome : $txt); unset($out[$txt]['cadastro']); }
+        catch (Throwable $e) { $out[$txt] = ['status' => 'erro', 'msg' => 'não deu para conferir: ' . $e->getMessage()]; }
     }
     return $out;
-}
-
-/** monta a linha (regras da planilha) e confere para a API; devolve [montada, conferida] */
-function cf_exp_conferir_api(PDO $pdo, string $empresa, string $tipo, array $l, array $pessoas, array $emp, array $opts, array $cat, string $porQuem): array
-{
-    $p = $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null;
-    $m = Exportacao::montar($l, cf_exp_capa($l), $p, $emp, $opts);
-    return OmieEnvio::conferir($empresa, $tipo, $l, cf_exp_capa($l), $p, $emp, $m, $opts, $cat, $porQuem);
-}
-function cf_exp_log_envio(PDO $pdo, ?int $expId, array $l, string $empresa, string $tipo, string $acao, string $status, ?int $omieId, ?array $pedido, ?array $resposta, ?string $msg, int $por, bool $verificado = false): void
-{
-    $pdo->prepare('INSERT INTO cf_envios_omie (exportacao_id, lancamento_id, empresa, tipo, codigo_integracao, acao, status, omie_id, pedido, resposta, mensagem, verificado, por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        ->execute([$expId, (int)$l['id'], $empresa, $tipo, (string)$l['codigo_integracao'], $acao, $status, $omieId,
-                   $pedido !== null ? json_encode($pedido, JSON_UNESCAPED_UNICODE) : null, $resposta !== null ? json_encode($resposta, JSON_UNESCAPED_UNICODE) : null, $msg, $verificado ? 1 : 0, $por]);
-}
-/** exclui no Omie o título de uma linha exportada pela API e devolve a linha para 'confirmado'. @return array{ok:bool,msg:string} */
-function cf_exp_desfazer_linha(PDO $pdo, array $l, string $empresa, int $por): array
-{
-    $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
-    try { $r = OmieEnvio::excluir($empresa, $tipo, (string)$l['codigo_integracao']); }
-    catch (Throwable $e) { $r = ['ok' => false, 'msg' => 'erro ao excluir no Omie: ' . $e->getMessage()]; }
-    cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipo, 'excluir', $r['ok'] ? 'ok' : 'recusado', $l['omie_id'] ? (int)$l['omie_id'] : null, null, null, $r['msg'], $por);
-    if ($r['ok']) $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL, omie_id = NULL, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([(int)$l['id']]);
-    return $r;
 }
 
 /* ---------- ações JSON ---------- */
