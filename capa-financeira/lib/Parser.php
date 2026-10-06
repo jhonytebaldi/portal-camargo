@@ -37,6 +37,8 @@ final class CapaParser
         'AGUARDAR APROVACAO'         => 'AGUARDA APROVACAO',
         'RESERVA 50%'                => 'RESERVA 50%',
         'RESERVA 50% (FALTA ALVARA)' => 'RESERVA 50% ALVARA',
+        'SE ASSINAR CONTRATO'        => 'ASSINAR CONTRATO',
+        'ENTREGA DE CHAVES'          => 'ENTREGA CHAVES',
         'BONUS'                      => 'BONUS',
     ];
 
@@ -300,6 +302,48 @@ final class CapaParser
         return $vals;
     }
 
+    /**
+     * Bloco "PAGAMENTO PARA CORRETORES" (A função · B nome · D valor · E data · F condição). É onde a capa registra
+     * "SE ASSINAR CONTRATO", "SE ENTREGAR IMOVEL" etc.; nem sempre a condição é copiada para a coluna G / prefixo do lançamento.
+     * @return list<array{linha:int,funcao:string,nome:string,valor:?float,data:?string,condicao:?string}>
+     */
+    private static function readBlocoCorretores(Xlsx $ws, int $hdr): array
+    {
+        $out = []; $start = null;
+        for ($r = 1; $r < $hdr; $r++) if (str_starts_with(self::key($ws->cell($r, 1)), 'PAGAMENTO PARA CORRETORES')) { $start = $r + 1; break; }
+        if (!$start) return $out;
+        for ($r = $start; $r < $hdr; $r++) {
+            $a = self::key($ws->cell($r, 1));
+            if ($a === 'TOTAL' || str_starts_with($a, 'MODELO DE DESCRI')) break;
+            $valor = self::money($ws->cell($r, 4));
+            if ($a === '' || $valor === null) continue;   // cabeçalho do bloco / linhas vazias
+            $e = $ws->cell($r, 5);
+            $out[] = ['linha' => $r, 'funcao' => preg_replace('/\s+\d+$/', '', $a), 'nome' => self::norm($ws->cell($r, 2)), 'valor' => $valor,
+                      'data' => $e !== null ? self::parseDateCell($e)[0] : null, 'condicao' => self::norm($ws->cell($r, 6)) !== '' ? self::norm($ws->cell($r, 6)) : null];
+        }
+        return $out;
+    }
+
+    /** linhas do bloco de corretores que casam com um lançamento: mesmo valor (±1 centavo, o bloco não é arredondado) e mesma data (ou bloco sem data legível); desempate por função e pelo nome */
+    private static function casaBloco(array $bloco, ?float $valor, ?string $data, ?string $funcao, string $cf, ?string $favHist): array
+    {
+        if ($valor === null) return [];
+        $cand = array_filter($bloco, fn($b) => abs(($b['valor'] ?? 0) - $valor) < 0.011 && ($b['data'] === null || $data === null || $b['data'] === $data), ARRAY_FILTER_USE_BOTH);
+        if (count($cand) > 1 && $funcao) {
+            $fk = str_replace('Ç', 'C', self::key($funcao));
+            $pf = array_filter($cand, fn($b) => str_replace('Ç', 'C', $b['funcao']) === $fk);
+            if ($pf) $cand = $pf;
+        }
+        if (count($cand) > 1) {   // mesmo valor, data e função (ex.: dois corretores com o mesmo valor): decide pelo nome
+            $alvo = self::key($cf . ' ' . ($favHist ?? ''));
+            $pontos = [];
+            foreach ($cand as $i => $b) { $n = 0; foreach (preg_split('/\s+/', self::key($b['nome'])) ?: [] as $tok) if (mb_strlen($tok) > 2 && str_contains($alvo, $tok)) $n++; $pontos[$i] = $n; }
+            $max = max($pontos);
+            if ($max > 0 && count(array_keys($pontos, $max, true)) === 1) $cand = [array_keys($pontos, $max, true)[0] => $cand[array_keys($pontos, $max, true)[0]]];
+        }
+        return $cand;
+    }
+
     private static function readFluxo(Xlsx $ws, int $hdr): array
     {
         $out = []; $start = null;
@@ -330,6 +374,7 @@ final class CapaParser
         }
         $bonusVals = self::readBonusBlock($ws, $hdr);
         $fluxo = self::readFluxo($ws, $hdr);
+        $bloco = self::readBlocoCorretores($ws, $hdr); $blocoUsado = [];
         $linhas = [];
         for ($r = $hdr + 1; $r <= $ws->maxRow(); $r++) {
             $a = $ws->cell($r, 1); $c = $ws->cell($r, 3); $d = $ws->cell($r, 4);
@@ -382,6 +427,21 @@ final class CapaParser
             }
             if ($h['cod_hist'] && $capa['cod'] && $h['cod_hist'] != $capa['cod']) $flags[] = "COD_HIST_DIFERE_B6 ({$h['cod_hist']} × {$capa['cod']})";
             $colG = self::norm($g) !== '' ? self::norm($g) : null;
+            if ($tipoCol === 'PAGAR' && !$repasse && $bloco) {
+                // condição registrada no bloco "PAGAMENTO PARA CORRETORES" (coluna F): vale quando o lançamento não tem G nem prefixo
+                $cand = self::casaBloco($bloco, $valor, $data, $h['funcao'], $cf, $h['favorecido']);
+                foreach ($cand as $i => $b) $blocoUsado[$i] = true;
+                $conds = array_values(array_unique(array_map(fn($b) => $b['condicao'] ?? '', $cand)));
+                $cl = $colG ?: $h['prefixo'];
+                if (count($conds) > 1) $flags[] = 'CONDICAO_AMBIGUA_BLOCO (' . implode(' / ', array_map(fn($c) => $c === '' ? 'sem condição' : $c, $conds)) . ')';
+                elseif ($conds && $conds[0] !== '') {
+                    $cb = $conds[0];
+                    $conhecida = isset($this->nfDict[self::key($cb)]) || str_starts_with(self::key($cb), 'SE ');
+                    if (!$cl && $conhecida) { $colG = $cb; $flags[] = 'CONDICAO_DO_BLOCO_CORRETORES (' . $cb . ')'; }
+                    elseif (!$cl) $flags[] = "CONDICAO_BLOCO_FORA_DO_DICIONARIO ('{$cb}' no bloco de corretores — não é uma condição conhecida, não foi copiada para a Nota Fiscal)";
+                    elseif (self::key($cb) !== self::key($cl) && ($this->nfDict[self::key($cb)] ?? '§') !== ($this->nfDict[self::key($cl)] ?? '¶')) $flags[] = "GRAVE:CONDICAO_DIVERGE_BLOCO (lançamento='{$cl}' × bloco de corretores='{$cb}')";
+                }
+            }
             if ($repasse) { $nf = 'REPASSE'; $cond = $colG && self::key($colG) !== 'REPASSE' ? $colG : null; }
             elseif ($tipoCol === 'PAGAR') [$nf, $cond] = $this->buildNf($h['natureza'], $colG, $h['prefixo'], $flags);
             else { $nf = null; $cond = $colG; }
@@ -393,6 +453,11 @@ final class CapaParser
                 'status_imovel' => $h['status_imovel'], 'data_venda_hist' => $h['data_venda_hist'],
                 'nota_fiscal' => $nf, 'condicao' => $cond, 'flags' => $flags,
             ];
+        }
+        // condição no bloco de corretores que não casou com nenhum lançamento (valor+data): não pode passar em silêncio
+        foreach ($bloco as $i => $b) if ($b['condicao'] && !isset($blocoUsado[$i]) && self::key($b['condicao']) !== 'BONUS') {
+            $dv = $b['data'] ? DateTimeImmutable::createFromFormat('Y-m-d', $b['data']) : null;
+            $capaFlags[] = 'GRAVE:CONDICAO_NAO_APLICADA (' . $b['funcao'] . ' ' . number_format((float)$b['valor'], 2, ',', '.') . ' em ' . ($dv ? $dv->format('d/m/Y') : '?') . ' "' . $b['condicao'] . '" — linha ' . $b['linha'] . ' do bloco de corretores não bate com nenhum lançamento a pagar)';
         }
         // sequência de datas por grupo
         $grupos = [];

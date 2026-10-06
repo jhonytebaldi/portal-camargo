@@ -364,6 +364,28 @@ final class OmieEnvio
         return ['status' => $ok ? 'corrigido' : 'erro', 'msg' => $ok ? 'corrigido para Transferência por chave PIX (' . $chave . ')' : 'o Omie aceitou a alteração mas a consulta de volta não mostra a nova forma — confira no Omie', 'antes' => $cnab, 'depois' => $dep];
     }
 
+    /** corrige a Nota Fiscal (numero_documento_fiscal) de um título a pagar já no Omie, mantendo todo o resto (inclusive a forma Pix) */
+    public static function corrigirNf(string $empresa, string $codigo, ?int $omieId, string $nf): array
+    {
+        $t0 = self::titulos($empresa, 'P')['por_codigo'][$codigo] ?? null;
+        $id = $omieId ?: (int)($t0['omie_id'] ?? 0);
+        $t = $id ? self::consultarPorOmieId($empresa, 'P', $id) : null;
+        if (!$t) return ['status' => 'erro', 'msg' => 'título não existe no Omie com este código de integração — se foi excluído por lá, devolva a linha e envie de novo', 'antes' => null, 'depois' => null];
+        $atual = (string)($t['numero_documento_fiscal'] ?? '');
+        if ($atual === $nf) return ['status' => 'ja_ok', 'msg' => 'Nota Fiscal já está "' . $nf . '"', 'antes' => $atual, 'depois' => $atual];
+        if (preg_match('/CANCEL/i', (string)($t['status_titulo'] ?? ''))) return ['status' => 'pulado', 'msg' => 'título cancelado no Omie — não mexi', 'antes' => $atual, 'depois' => null];
+        $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie'], 'codigo_lancamento_integracao' => $codigo, 'numero_documento_fiscal' => mb_substr($nf, 0, 20)];
+        foreach (['codigo_cliente_fornecedor', 'data_vencimento', 'valor_documento', 'codigo_categoria', 'data_previsao', 'id_conta_corrente', 'data_emissao', 'numero_documento', 'observacao', 'numero_parcela', 'codigo_projeto'] as $k) if (isset($t[$k]) && $t[$k] !== '' && $t[$k] !== 0) $ped[$k] = $t[$k];
+        if (!empty($t['cnab_integracao_bancaria']['codigo_forma_pagamento'])) $ped['cnab_integracao_bancaria'] = $t['cnab_integracao_bancaria'];
+        if (!empty($t['distribuicao'])) $ped['distribuicao'] = $t['distribuicao'];
+        OmieApi::call($empresa, 'financas/contapagar/', 'AlterarContaPagar', $ped);
+        OmieApi::esquecer($empresa, 'financas/contapagar/', 'ConsultarContaPagar', ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']]);
+        sleep(2);
+        $v = self::consultarPorOmieId($empresa, 'P', (int)$t['codigo_lancamento_omie']); $dep = (string)($v['numero_documento_fiscal'] ?? '');
+        $ok = $dep === mb_substr($nf, 0, 20);
+        return ['status' => $ok ? 'corrigido' : 'erro', 'msg' => $ok ? 'Nota Fiscal "' . ($atual ?: 'vazia') . '" → "' . $nf . '"' : 'o Omie aceitou a alteração mas a consulta de volta mostra "' . $dep . '" — confira no Omie', 'antes' => $atual, 'depois' => $dep];
+    }
+
     /* ---------------- util ---------------- */
 
     public static function br(string $iso): string { return preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $iso, $m) ? "$m[3]/$m[2]/$m[1]" : $iso; }
