@@ -56,7 +56,8 @@ final class OmieEnvio
         $out = []; $pag = 1;
         do {
             try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina]); }
-            catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) break; throw $e; }
+            // lista vazia vem como erro: "Não existem registros" (5113) ou, em empresa sem nenhum registro, "Dados do WebService não foram encontrados" (1013)
+            catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113|n[ãa]o foram encontrados|Client-1013/iu', $e->getMessage())) break; throw $e; }
             foreach ($r[$lista] ?? [] as $x) $out[] = $x;
             $tot = (int)($r['total_de_paginas'] ?? 1); $pag++;
         } while ($pag <= $tot && $pag < 200);
