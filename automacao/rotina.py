@@ -296,9 +296,18 @@ def preparar():
         c = cli[aid]
         j = rget(f"{RB}/andamentos?atendimento_id={aid}&per_page=100")
         ands = sorted((j or {}).get("data", []), key=lambda a: a.get("created_at") or "")[-6:]
-        c["andamentos"] = [{"tipo": a.get("tipo"), "acao": a.get("acao"),
-            "descricao": (a.get("descricao") or "")[:400], "stage_current": a.get("stage_current"),
-            "date_init": a.get("date_init"), "created_at": a.get("created_at")} for a in ands]
+        def _and(a):
+            d = {"tipo": a.get("tipo"), "acao": a.get("acao"),
+                 "descricao": (a.get("descricao") or "")[:400], "stage_current": a.get("stage_current"),
+                 "date_init": a.get("date_init"), "created_at": a.get("created_at")}
+            # feedback do corretor sobre a ação (ex.: relato pós-visita) — costuma
+            # ser o registro mais rico E mais recente do atendimento; feedback_at
+            # diz QUANDO foi registrado (essencial pra cronologia vs a conversa)
+            if a.get("feedback"): d["feedback"] = str(a["feedback"])[:200]
+            if a.get("feedback_obs"): d["feedback_obs"] = str(a["feedback_obs"])[:500]
+            if a.get("feedback_at"): d["feedback_at"] = a["feedback_at"]
+            return d
+        c["andamentos"] = [_and(a) for a in ands]
     def busca_msgs(aid):
         c = cli[aid]; c["msgs"] = []
         if not c.get("ghl_conv"): return
