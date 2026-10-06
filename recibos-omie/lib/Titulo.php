@@ -14,6 +14,7 @@ final class Titulo
     /** cabeçalhos do relatório → chave interna */
     private const COLS = ['Situação' => 'situacao', 'Parcela' => 'parcela', 'Nota Fiscal' => 'nota_fiscal', 'Fornecedor (Nome Fantasia)' => 'fantasia',
         'Previsão de Pagamento' => 'previsao', 'Valor da Conta' => 'valor', 'Valor a Pagar' => 'valor_aberto', 'Valor Pago' => 'valor_pago', 'Categoria' => 'categoria',
+        'Desconto' => 'desconto', 'Impostos Retidos' => 'impostos', 'Juros e Multa' => 'juros',
         'Conta Corrente' => 'conta_corrente', 'Vencimento' => 'vencimento', 'Data de Emissão' => 'emissao', 'Fornecedor (Razão Social)' => 'razao', 'Fornecedor (CNPJ/CPF)' => 'doc', 'Observação' => 'observacao'];
 
     /** lê o relatório do Omie (.xlsx, aba "financas"). Devolve ['conta' => id|null, 'empresa_txt' => …, 'titulos' => [...]] */
@@ -43,6 +44,8 @@ final class Titulo
                 'nota_fiscal' => (string)$get($r, 'nota_fiscal'), 'razao' => trim((string)$get($r, 'razao')) ?: trim((string)$get($r, 'fantasia')), 'fantasia' => (string)$get($r, 'fantasia'), 'doc' => $doc,
                 'previsao' => $data($get($r, 'previsao')), 'vencimento' => $data($get($r, 'vencimento')), 'emissao' => $data($get($r, 'emissao')),
                 'valor' => round((float)$valor, 2), 'valor_pago' => round((float)$get($r, 'valor_pago'), 2), 'categoria' => (string)$get($r, 'categoria'), 'conta_corrente' => (string)$get($r, 'conta_corrente'),
+                // "Pago Parcialmente" no Omie = título com desconto / impostos retidos / juros: o recibo mostra os ajustes e o valor final
+                'desconto' => round((float)$get($r, 'desconto'), 2), 'impostos' => round((float)$get($r, 'impostos'), 2), 'juros' => round((float)$get($r, 'juros'), 2), 'valor_aberto' => round((float)$get($r, 'valor_aberto'), 2),
                 'observacao' => str_replace("\r", '', (string)$get($r, 'observacao')),
             ]);
         }
@@ -60,7 +63,20 @@ final class Titulo
             'doc' => (string)($c['cCPFCNPJCliente'] ?? ($forn['cnpj_cpf'] ?? '')), 'previsao' => OmieApi::iso($c['dDtPrevisao'] ?? null), 'vencimento' => OmieApi::iso($c['dDtVenc'] ?? null), 'emissao' => OmieApi::iso($c['dDtEmissao'] ?? null),
             'valor' => round((float)($c['nValorTitulo'] ?? 0), 2), 'valor_pago' => round((float)($res['nValPago'] ?? 0), 2), 'categoria' => $categorias[(string)($c['cCodCateg'] ?? '')] ?? (string)($c['cCodCateg'] ?? ''),
             'conta_corrente' => '', 'observacao' => str_replace('|', "\n", (string)($c['observacao'] ?? '')), 'liquidado' => ($res['cLiquidado'] ?? 'N') === 'S',
+            'desconto' => round((float)($res['nDesconto'] ?? 0), 2), 'impostos' => 0.0, 'juros' => round((float)($res['nJuros'] ?? 0) + (float)($res['nMulta'] ?? 0), 2), 'valor_aberto' => round((float)($res['nValAberto'] ?? 0), 2),
+            'obs_baixa' => self::obsBaixa($t),
         ]);
+    }
+
+    /** observação digitada na baixa com desconto/juros/multa (PesquisarLancamentos → lancamentos[].cObsLanc). Vem na mesma resposta da pesquisa: nenhuma chamada extra à API. */
+    public static function obsBaixa(array $t): string
+    {
+        $obs = [];
+        foreach ($t['lancamentos'] ?? [] as $l) {
+            if ((float)($l['nDesconto'] ?? 0) <= 0 && (float)($l['nJuros'] ?? 0) <= 0 && (float)($l['nMulta'] ?? 0) <= 0) continue;
+            $o = trim((string)($l['cObsLanc'] ?? '')); if ($o !== '' && !in_array($o, $obs, true)) $obs[] = $o;
+        }
+        return implode(' / ', $obs);
     }
 
     private static function situacao(string $s): string
@@ -141,6 +157,7 @@ final class Titulo
     {
         $o = $t['obs'];
         return ['id' => $t['fingerprint'], 'codigo_integracao' => $numero, 'valor' => $t['valor'], 'natureza' => $o['natureza'], 'funcao' => $o['funcao'] ?: self::funcaoDaCategoria((string)$t['categoria']),
+            'desconto' => (float)($t['desconto'] ?? 0), 'impostos' => (float)($t['impostos'] ?? 0), 'juros' => (float)($t['juros'] ?? 0), 'obs_baixa' => (string)($t['obs_baixa'] ?? ''),
             'cf_raw' => $pessoa['nome'], 'capa_cliente' => $o['cliente'] ?? '', 'capa_construtora' => $o['construtora'] ?? '', 'unidade' => $o['imovel'] ?? '', 'capa_unidade' => '',
             'status_imovel' => $o['status'] ?? '', 'capa_data_venda' => $o['venda'] ? OmieApi::iso($o['venda']) : null, 'capa_cod' => $o['cod'] ?? '', 'data_prevista' => $t['previsao'] ?: $t['vencimento']];
     }
