@@ -56,8 +56,9 @@ final class OmieEnvio
         $out = []; $pag = 1;
         do {
             try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina]); }
-            // lista vazia vem como erro: "Não existem registros" (5113) ou, em empresa sem nenhum registro, "Dados do WebService não foram encontrados" (1013)
-            catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113|n[ãa]o foram encontrados|Client-1013/iu', $e->getMessage())) break; throw $e; }
+            // lista vazia vem como erro "Não existem registros" (5113). Já "Dados do WebService não foram encontrados" (1013) é o serviço
+            // do Omie fora do ar (visto em 06/10/2026 no contapagar das 3 empresas ao mesmo tempo) — não é lista vazia, é indisponibilidade.
+            catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) break; throw $e; }
             foreach ($r[$lista] ?? [] as $x) $out[] = $x;
             $tot = (int)($r['total_de_paginas'] ?? 1); $pag++;
         } while ($pag <= $tot && $pag < 200);
@@ -313,7 +314,7 @@ final class OmieEnvio
         try { return OmieApi::call($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => $omieId]); }
         catch (RuntimeException $e) { if (preg_match('/n[ãa]o cadastrado|n[ãa]o (foi )?(encontrad|localizad)|Client-105|Client-103/iu', $e->getMessage())) return null; throw $e; }
     }
-    public static function erroTemporario(string $msg): bool { return (bool)preg_match('/REDUNDANT|MISUSE|Client-6\]|bloqueada temporariamente|indispon[ií]vel|timed out|timeout/iu', $msg); }
+    public static function erroTemporario(string $msg): bool { return (bool)preg_match('/REDUNDANT|MISUSE|Client-6\]|bloqueada temporariamente|indispon[ií]vel|timed out|timeout|Client-1013|pausa preventiva/iu', $msg); }
 
     /** Exclui se ainda não foi baixado. @return array{ok: bool, msg: string} */
     public static function excluir(string $empresa, string $tipo, string $codigo): array
