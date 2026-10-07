@@ -75,6 +75,7 @@ portal_header('Revisar capa', $u);
 if ($compradores): ?><div class="aviso" style="background:#f4f6f8"><b>Compradores (capa):</b>
   <?php foreach ($compradores as $i => $cp): ?><?= $i ? ' · ' : '' ?><?= h($cp['nome']) ?><?= $cp['cpf'] ? ' — CPF ' . h(cf_fmt_doc($cp['cpf'])) : ' — <i>sem CPF</i>' ?><?= $cp['nascimento'] ? ' — nasc. ' . h(cf_data_br($cp['nascimento'])) : '' ?><?php endforeach; ?></div>
 <?php endif; ?>
+<?php if (!empty($capa['obs_final'])): ?><div class="aviso" style="background:#fff8d6;border-left-color:#c9a227;font-size:15px"><b>⚠ OBSERVAÇÃO escrita no fim da capa — leia antes de confirmar:</b><div style="margin-top:6px;white-space:pre-line;font-weight:600"><?= h($capa['obs_final']) ?></div></div><?php endif; ?>
 <?php if ($capa['obs_capa']): ?><div class="aviso">Observação na capa (C8): <b><?= h($capa['obs_capa']) ?></b></div><?php endif; ?>
 <?php
 // nomes divergentes entre capa e histórico: oferece as opções para padronizar (vale para observação do Omie e recibo)

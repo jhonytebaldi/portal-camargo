@@ -58,14 +58,14 @@ $pessoas = cf_pessoas(false);   // desligados também: quem saiu ainda recebe pa
 
 $pdo->beginTransaction();
 try {
-    $st = $pdo->prepare('INSERT INTO cf_capas (cod, versao, empresa, cliente, compradores, construtora, bairro, unidade, data_venda, valor_contrato, vgv, valor_bonus, obs_capa,
+    $st = $pdo->prepare('INSERT INTO cf_capas (cod, versao, empresa, cliente, compradores, construtora, bairro, unidade, data_venda, valor_contrato, vgv, valor_bonus, obs_capa, obs_final,
         arquivo_nome, arquivo_path, sha256, capa_flags, total_pagar, total_receber, status, capa_anterior_id, enviado_por)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'revisao\',?,?)');
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'revisao\',?,?)');
     $st->execute([
         $capa['cod'] !== null ? (string)$capa['cod'] : null, $versao, $empresa, $capa['cliente'],
         !empty($capa['compradores']) ? json_encode($capa['compradores'], JSON_UNESCAPED_UNICODE) : null,
         $capa['construtora'], $capa['bairro'], $capa['unidade'],
-        $capa['data_venda'], $capa['valor_contrato'], $capa['vgv'], $capa['valor_bonus'], $capa['obs_c8'],
+        $capa['data_venda'], $capa['valor_contrato'], $capa['vgv'], $capa['valor_bonus'], $capa['obs_c8'], $res['observacao_final'] ?? null,
         $nomeOrig, $destino, $res['sha256'], json_encode($capaFlags, JSON_UNESCAPED_UNICODE),
         $res['total_pagar'] ?? 0, $res['total_receber'] ?? 0, $anterior['id'] ?? null, $u['id'],
     ]);

@@ -199,6 +199,11 @@ function cf_migrar(PDO $pdo): array
         $feitos[] = 'tabela cf_envios_omie';
     }
     // modelo de capa 09/2026: compradores (nome, CPF, nascimento) vêm da capa
+    // bloco "OBSERVAÇÃO:" do fim da planilha (texto livre do financeiro) — mostrado em destaque na revisão
+    if (!$colExiste('cf_capas', 'obs_final')) {
+        $pdo->exec("ALTER TABLE cf_capas ADD COLUMN obs_final TEXT NULL AFTER obs_capa");
+        $feitos[] = 'cf_capas.obs_final';
+    }
     if (!$colExiste('cf_capas', 'compradores')) {
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN compradores JSON NULL AFTER cliente");
         $feitos[] = 'cf_capas.compradores';
