@@ -239,7 +239,7 @@ portal_header('Recibos do Omie', $u);
     <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo</label>
     <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-forcar"> incluir títulos não encontrados no Omie</label>
   </div>
-  <div class="cf-acoes"><button class="btn" id="btn-gerar">Gerar recibos (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button></div>
+  <div class="cf-acoes"><div style="text-align:right"><button class="btn" id="btn-gerar">Gerar <span id="ro-rot">recibos</span> (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button><div class="cf-raw" id="ro-resumo" style="margin-top:4px"></div></div></div>
 </div>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-ro">
 <thead><tr><th><input type="checkbox" id="ro-todos" checked></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
@@ -249,7 +249,7 @@ portal_header('Recibos do Omie', $u);
   $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
   // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
   $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE'; ?>
-<tr class="cf-row <?= $naoAchou ? 'cf-tem-grave' : '' ?>" data-t="<?= h(json_encode($t, JSON_UNESCAPED_UNICODE)) ?>" data-valor="<?= (float)$t['valor'] ?>" data-nao="<?= $naoAchou ? 1 : 0 ?>" data-ja="<?= $ja ? 1 : 0 ?>">
+<tr class="cf-row <?= $naoAchou ? 'cf-tem-grave' : '' ?>" data-t="<?= h(json_encode($t, JSON_UNESCAPED_UNICODE)) ?>" data-valor="<?= (float)$t['valor'] ?>" data-final="<?= round((float)$t['valor'] - (float)($t['desconto'] ?? 0) - (float)($t['impostos'] ?? 0) + (float)($t['juros'] ?? 0), 2) ?>" data-grupo="<?= h($t['conta'] . '|' . $t['doc_digitos'] . '|' . ($t['previsao'] ?: $t['vencimento'])) ?>" data-nao="<?= $naoAchou ? 1 : 0 ?>" data-ja="<?= $ja ? 1 : 0 ?>">
   <td><input type="checkbox" class="ro-sel" <?= $naoAchou || $pago || $ja || $repasse ? '' : 'checked' ?>></td>
   <td><?= h($t['situacao']) ?><?= $t['nota_fiscal'] ? '<br><small class="cf-raw">NF: ' . h($t['nota_fiscal']) . '</small>' : '' ?></td>
   <td><b><?= cf_data_br($t['previsao'] ?: $t['vencimento']) ?></b><?= $t['previsao'] && $t['previsao'] !== $t['vencimento'] ? '<br><small class="cf-raw" title="vencimento original do título">venc. ' . cf_data_br($t['vencimento']) . '</small>' : '' ?></td>
@@ -298,7 +298,20 @@ portal_header('Recibos do Omie', $u);
   const csrf = document.querySelector('meta[name=csrf]').content;
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   document.querySelectorAll('.ro-per button').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('.ro-per button').forEach(x => x.classList.remove('on')); b.classList.add('on'); document.getElementById('ro-periodo').value = b.dataset.p; document.getElementById('ro-custom').style.display = b.dataset.p === 'custom' ? '' : 'none'; }));
-  function soma(){ const sel = [...document.querySelectorAll('.ro-sel:checked')]; const n = document.getElementById('ro-n'); if (!n) return; let t = 0; sel.forEach(c => t += parseFloat(c.closest('tr').dataset.valor) || 0); n.textContent = sel.length; document.getElementById('ro-total').textContent = brl(t); document.getElementById('btn-gerar').disabled = !sel.length; }
+  // contador do botão: nº de recibos que vão sair de fato (agrupado = um por fornecedor+previsão) e o valor final (já com descontos/impostos/juros)
+  function soma(){
+    const sel = [...document.querySelectorAll('.ro-sel:checked')]; const n = document.getElementById('ro-n'); if (!n) return;
+    const agrupar = document.getElementById('ro-agrupar').checked, dataFixa = document.getElementById('ro-data').value;
+    let bruto = 0, fin = 0; const grupos = new Set();
+    sel.forEach(c => { const tr = c.closest('tr'); bruto += parseFloat(tr.dataset.valor) || 0; fin += parseFloat(tr.dataset.final) || 0;
+      const g = tr.dataset.grupo.split('|'); grupos.add(agrupar ? g[0] + '|' + g[1] + '|' + (dataFixa || g[2]) : tr.dataset.t); });
+    const nRec = agrupar ? grupos.size : sel.length;
+    n.textContent = nRec; document.getElementById('ro-rot').textContent = nRec === 1 ? 'recibo' : 'recibos';
+    document.getElementById('ro-total').textContent = brl(fin);
+    document.getElementById('ro-resumo').textContent = sel.length ? sel.length + ' título(s)' + (Math.abs(bruto - fin) > 0.005 ? ' · bruto ' + brl(bruto) + ' · descontos ' + brl(bruto - fin) : '') : '';
+    document.getElementById('btn-gerar').disabled = !sel.length;
+  }
+  ['ro-agrupar', 'ro-data'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('change', soma); });
   document.querySelectorAll('.ro-sel').forEach(c => c.addEventListener('change', soma)); soma();
   const todos = document.getElementById('ro-todos'); if (todos) todos.addEventListener('change', () => { document.querySelectorAll('.ro-sel').forEach(c => c.checked = todos.checked); soma(); });
   const bg = document.getElementById('btn-gerar');
