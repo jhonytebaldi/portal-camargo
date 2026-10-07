@@ -51,11 +51,11 @@ final class OmieEnvio
         return $cat;
     }
 
-    private static function paginar(string $empresa, string $path, string $metodo, string $lista, int $porPagina = 200): array
+    private static function paginar(string $empresa, string $path, string $metodo, string $lista, int $porPagina = 200, bool $fresco = false): array
     {
         $out = []; $pag = 1;
         do {
-            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina]); }
+            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina], $fresco); }
             // lista vazia vem como erro "Não existem registros" (5113). Já "Dados do WebService não foram encontrados" (1013) é o serviço
             // do Omie fora do ar (visto em 06/10/2026 no contapagar das 3 empresas ao mesmo tempo) — não é lista vazia, é indisponibilidade.
             catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) break; throw $e; }
@@ -104,9 +104,9 @@ final class OmieEnvio
     /** cadastros de clientes/fornecedores da empresa: por documento (só dígitos) e por nome (key) */
     public static function cadastros(string $empresa, bool $forcar = false): array
     {
-        return self::listaCache("cadastros-$empresa", function () use ($empresa) {
+        return self::listaCache("cadastros-$empresa", function () use ($empresa, $forcar) {
             $out = ['por_doc' => [], 'por_nome' => []];
-            foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100) as $c) {
+            foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100, $forcar) as $c) {
                 $reg = ['codigo_cliente_omie' => (int)$c['codigo_cliente_omie'], 'razao_social' => (string)($c['razao_social'] ?? ''), 'nome_fantasia' => (string)($c['nome_fantasia'] ?? ''),
                         'cnpj_cpf' => (string)($c['cnpj_cpf'] ?? ''), 'inativo' => (string)($c['inativo'] ?? 'N'), 'dadosBancarios' => ['cChavePix' => (string)($c['dadosBancarios']['cChavePix'] ?? '')]];
                 $dig = preg_replace('/\D+/', '', $reg['cnpj_cpf']);
@@ -132,15 +132,32 @@ final class OmieEnvio
      * Localiza o cadastro no Omie: por CPF/CNPJ (exato) e, se não achar, pelo nome (razão social exata; senão a lista).
      * @return array{status: 'ok'|'so_nome'|'varios'|'nao', cadastro: ?array, msg: string}
      */
-    public static function localizarCadastro(string $empresa, string $doc, string $nome): array
+    public static function localizarCadastro(string $empresa, string $doc, string $nome, bool $jaAtualizou = false): array
     {
-        static $cache = [];
-        $dig = preg_replace('/\D+/', '', $doc); $k = $empresa . '|' . $dig . '|' . CapaParser::key($nome);
+        static $cache = []; static $atualizou = [];
+        $dig = preg_replace('/\D+/', '', $doc); if (preg_match('/^0+$/', $dig)) $dig = '';   // "000.000.000-00" não é documento (bate com o "Cliente Consumidor" do Omie)
+        $k = $empresa . '|' . $dig . '|' . CapaParser::key($nome);
         if (isset($cache[$k])) return $cache[$k];
+        $r = self::localizarNaLista($empresa, $dig, $doc, $nome);
+        // não achou? a lista em cache pode ser de antes de o usuário cadastrar no Omie: recarrega a lista UMA vez por requisição
+        // (só se o cache tem ≥60 s — repetir a mesma chamada antes disso dá REDUNDANT) e procura de novo
+        if (in_array($r['status'], ['nao', 'so_nome'], true) && !$jaAtualizou && empty($atualizou[$empresa])) {
+            $f = self::cacheArq("cadastros-$empresa");
+            if (!is_file($f) || (time() - filemtime($f)) >= 60) {
+                $atualizou[$empresa] = true;
+                try { self::cadastros($empresa, true); $cache = []; $r = self::localizarNaLista($empresa, $dig, $doc, $nome); }
+                catch (Throwable $e) { $r['msg'] .= ' (não consegui atualizar a lista de cadastros agora: ' . $e->getMessage() . ')'; }
+            } else $r['msg'] .= ' — lista de cadastros atualizada há ' . (time() - filemtime($f)) . ' s; se acabou de cadastrar, confira de novo em 1 min';
+        }
+        return $cache[$k] = $r;
+    }
+
+    private static function localizarNaLista(string $empresa, string $dig, string $doc, string $nome): array
+    {
         $cad = self::cadastros($empresa); $achou = null;
         if (in_array(strlen($dig), [11, 14], true)) {
             $achou = $cad['por_doc'][$dig][0] ?? null;
-            if ($achou) return $cache[$k] = ['status' => 'ok', 'cadastro' => $achou, 'msg' => 'cadastrado no Omie: ' . ($achou['razao_social'] ?? '') . ' (cód. ' . $achou['codigo_cliente_omie'] . ')'];
+            if ($achou) return ['status' => 'ok', 'cadastro' => $achou, 'msg' => 'cadastrado no Omie: ' . ($achou['razao_social'] ?? '') . ' (cód. ' . $achou['codigo_cliente_omie'] . ')'];
         }
         $lista = [];
         if ($nome !== '') {
@@ -158,7 +175,7 @@ final class OmieEnvio
                 : ['status' => 'ok', 'cadastro' => $c, 'msg' => "cadastrado no Omie: {$c['razao_social']} (cód. {$c['codigo_cliente_omie']}" . ($cd ? ", doc. $cd" : ', sem documento') . ')'];
         } elseif (count($lista) > 1) $r = ['status' => 'varios', 'cadastro' => null, 'msg' => count($lista) . ' cadastros com esse nome no Omie — informe o CPF/CNPJ para não dar ambiguidade'];
         else $r = ['status' => 'nao', 'cadastro' => null, 'msg' => 'NÃO encontrado no Omie' . ($dig !== '' ? " (nem pelo documento $doc nem pelo nome \"$nome\")" : " (pelo nome \"$nome\")") . ' — cadastre antes de enviar'];
-        return $cache[$k] = $r;
+        return $r;
     }
 
     private static function listarClientes(string $empresa, array $filtro): array
