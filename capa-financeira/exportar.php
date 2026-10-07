@@ -149,6 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
             if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
             $cat = OmieEnvio::catalogo($empresa, true);
+            try { OmieEnvio::cadastros($empresa, true); } catch (Throwable $e) {}   // clientes/fornecedores recém-cadastrados no Omie
             exit(json_encode(['ok' => true, 'contas' => count($cat['contas']), 'categorias' => count($cat['categorias']), 'departamentos' => count($cat['departamentos']), 'projetos' => count($cat['projetos'])]));
         }
         if ($acao === 'conferir_api' || $acao === 'enviar_api') {
