@@ -173,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $gestor) {
                     catch (Throwable $e) { $t['validado'] = 'erro ao consultar: ' . $e->getMessage(); continue; }
                     $ach = null;
                     foreach ($cache[$k] as $c) if (abs((float)($c['cabecTitulo']['nValorTitulo'] ?? 0) - (float)$t['valor']) < 0.005) { $ach = $c; break; }
-                    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . ($ach['cabecTitulo']['cStatus'] ?? '?'); $t['obs_baixa'] = Titulo::obsBaixa($ach); $t = Titulo::normalizar($t); }
+                    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . Titulo::situacaoCompleta($ach); $t['obs_baixa'] = Titulo::obsBaixa($ach); $t = Titulo::normalizar($t); }
                     else $t['validado'] = 'NÃO ENCONTRADO no Omie';
                 }
                 unset($t);
@@ -234,24 +234,25 @@ portal_header('Recibos do Omie', $u);
 <?php if (!$titulos): ?><p class="home-sub">Nenhum título.</p><?php else: ?>
 <div class="cf-barra">
   <div class="cf-pend ok" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-    <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-agrupar"> agrupar num só recibo os títulos do mesmo fornecedor e mesma data</label>
-    <label>Data do recibo <input type="date" id="ro-data" class="cf-in" title="vazio = previsão de pagamento de cada título"></label>
+    <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-agrupar"> agrupar num só recibo os títulos do mesmo fornecedor e mesma <b>previsão de pagamento</b></label>
+    <label>Data do recibo <input type="date" id="ro-data" class="cf-in" title="vazio = previsão de pagamento de cada título (se não houver previsão, o vencimento)"></label>
     <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo</label>
     <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-forcar"> incluir títulos não encontrados no Omie</label>
   </div>
   <div class="cf-acoes"><button class="btn" id="btn-gerar">Gerar recibos (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button></div>
 </div>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-ro">
-<thead><tr><th><input type="checkbox" id="ro-todos" checked></th><th>Situação</th><th>Vencimento</th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
+<thead><tr><th><input type="checkbox" id="ro-todos" checked></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
 <tbody>
 <?php foreach ($titulos as $t): $p = Titulo::pessoaPorDoc($pessoas, $t['doc']); $o = $t['obs'];
   $q = $pdo->prepare("SELECT r.id, r.numero FROM ro_recibo_itens i JOIN ro_recibos r ON r.id = i.recibo_id WHERE i.fingerprint = ? AND r.status = 'atual' LIMIT 1"); $q->execute([$t['fingerprint']]); $ja = $q->fetch();
-  $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);
-  $repasse = stripos((string)$t['categoria'], 'repasse') !== false || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE'; ?>
+  $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
+  // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
+  $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE'; ?>
 <tr class="cf-row <?= $naoAchou ? 'cf-tem-grave' : '' ?>" data-t="<?= h(json_encode($t, JSON_UNESCAPED_UNICODE)) ?>" data-valor="<?= (float)$t['valor'] ?>" data-nao="<?= $naoAchou ? 1 : 0 ?>" data-ja="<?= $ja ? 1 : 0 ?>">
   <td><input type="checkbox" class="ro-sel" <?= $naoAchou || $pago || $ja || $repasse ? '' : 'checked' ?>></td>
   <td><?= h($t['situacao']) ?><?= $t['nota_fiscal'] ? '<br><small class="cf-raw">NF: ' . h($t['nota_fiscal']) . '</small>' : '' ?></td>
-  <td><?= cf_data_br($t['vencimento']) ?><?= $t['previsao'] && $t['previsao'] !== $t['vencimento'] ? '<br><small class="cf-raw">prev. ' . cf_data_br($t['previsao']) . '</small>' : '' ?></td>
+  <td><b><?= cf_data_br($t['previsao'] ?: $t['vencimento']) ?></b><?= $t['previsao'] && $t['previsao'] !== $t['vencimento'] ? '<br><small class="cf-raw" title="vencimento original do título">venc. ' . cf_data_br($t['vencimento']) . '</small>' : '' ?></td>
   <td><?= h($t['razao']) ?><br><small class="cf-raw"><?= h($t['doc']) ?></small></td>
   <td><?= $p ? h($p['nome']) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>' ?></td>
   <td><?= h((string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria']))) ?><?= $o['natureza'] === 'BONUS' ? ' <span class="cf-tag">BONUS</span>' : '' ?><?= $repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '' ?><br><small class="cf-raw"><?= h((string)$t['categoria']) ?></small></td>
