@@ -55,13 +55,15 @@ final class OmieApi
     }
 
     /** chamada única; lança RuntimeException com a mensagem do Omie */
-    public static function call(string $conta, string $path, string $method, array $param = []): array
+    /** $fresco = ignora o cache de leitura (ex.: o usuário acabou de cadastrar algo no Omie e quer ver agora). Só use com ≥60 s desde a última chamada igual (REDUNDANT). */
+    public static function call(string $conta, string $path, string $method, array $param = [], bool $fresco = false): array
     {
         $c = self::contas()[$conta] ?? null;
         if (!$c) throw new RuntimeException("conta Omie '$conta' não configurada (OMIE_CONTAS no config.php)");
         $leitura = self::ehLeitura($method);
         $chave = self::cacheDir() . '/r-' . md5($conta . '|' . $path . '|' . $method . '|' . json_encode($param));
-        if ($leitura && is_file($chave) && (time() - filemtime($chave)) < self::CACHE_LEITURA_SEG) {
+        if ($fresco && $leitura && is_file($chave) && (time() - filemtime($chave)) < 60) $fresco = false;   // repetir em <60 s dá REDUNDANT: usa o cache mesmo
+        if (!$fresco && $leitura && is_file($chave) && (time() - filemtime($chave)) < self::CACHE_LEITURA_SEG) {
             $j = json_decode((string)file_get_contents($chave), true);
             if (is_array($j)) { if (isset($j['__erro'])) throw new RuntimeException($j['__erro']); return $j; }
         }
