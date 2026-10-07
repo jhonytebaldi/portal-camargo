@@ -58,7 +58,7 @@ final class Titulo
         $c = $t['cabecTitulo'] ?? $t; $res = $t['resumo'] ?? [];
         $forn = !empty($c['nCodCliente']) ? OmieApi::fornecedor($pdo, $conta, (int)$c['nCodCliente']) : [];
         return self::normalizar([
-            'origem' => 'api', 'conta' => $conta, 'omie_id' => (int)($c['nCodTitulo'] ?? 0), 'cod_int' => (string)($c['cCodIntTitulo'] ?? ''), 'situacao' => self::situacao((string)($c['cStatus'] ?? '')),
+            'origem' => 'api', 'conta' => $conta, 'omie_id' => (int)($c['nCodTitulo'] ?? 0), 'cod_int' => (string)($c['cCodIntTitulo'] ?? ''), 'situacao' => self::situacaoCompleta($t),
             'parcela' => (string)($c['cNumParcela'] ?? ''), 'nota_fiscal' => (string)($c['cNumDocFiscal'] ?? ''), 'razao' => (string)($forn['razao_social'] ?? ''), 'fantasia' => (string)($forn['nome_fantasia'] ?? ''),
             'doc' => (string)($c['cCPFCNPJCliente'] ?? ($forn['cnpj_cpf'] ?? '')), 'previsao' => OmieApi::iso($c['dDtPrevisao'] ?? null), 'vencimento' => OmieApi::iso($c['dDtVenc'] ?? null), 'emissao' => OmieApi::iso($c['dDtEmissao'] ?? null),
             'valor' => round((float)($c['nValorTitulo'] ?? 0), 2), 'valor_pago' => round((float)($res['nValPago'] ?? 0), 2), 'categoria' => $categorias[(string)($c['cCodCateg'] ?? '')] ?? (string)($c['cCodCateg'] ?? ''),
@@ -81,8 +81,23 @@ final class Titulo
 
     private static function situacao(string $s): string
     {
-        $m = ['A VENCER' => 'A vencer', 'VENCE HOJE' => 'Vence hoje', 'ATRASADO' => 'Atrasado', 'PAGO' => 'Pago', 'PAGO PARC.' => 'Pago parcial', 'CANCELADO' => 'Cancelado'];
+        $m = ['A VENCER' => 'A vencer', 'VENCE HOJE' => 'Vence hoje', 'ATRASADO' => 'Atrasado', 'PAGO' => 'Pago', 'PAGO PARC.' => 'Pago parcialmente', 'CANCELADO' => 'Cancelado'];
         return $m[strtoupper(trim($s))] ?? $s;
+    }
+
+    /**
+     * Situação completa de um título vindo de PesquisarLancamentos. O cStatus vem "PAGO" mesmo quando a baixa foi parcial
+     * (ex.: só o desconto baixado e o resto em aberto) — o que diz a verdade é o resumo: cLiquidado + nValPago + nValAberto.
+     */
+    public static function situacaoCompleta(array $t): string
+    {
+        $c = $t['cabecTitulo'] ?? $t; $res = $t['resumo'] ?? [];
+        $pago = (float)($res['nValPago'] ?? 0); $aberto = (float)($res['nValAberto'] ?? 0); $liq = ($res['cLiquidado'] ?? 'N') === 'S';
+        $base = self::situacao((string)($c['cStatus'] ?? ''));
+        if ($base === 'Cancelado') return $base;
+        if ($liq || ($pago > 0 && $aberto <= 0.005)) return 'Pago';
+        if ($pago > 0 && $aberto > 0.005) return 'Pago parcialmente (pago ' . number_format($pago, 2, ',', '.') . ' · em aberto ' . number_format($aberto, 2, ',', '.') . ')';
+        return $base === 'Pago' ? 'A vencer' : $base;
     }
 
     /** completa o registro com a observação interpretada, o fingerprint e o texto do recibo */
