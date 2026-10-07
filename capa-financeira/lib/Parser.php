@@ -344,6 +344,25 @@ final class CapaParser
         return $cand;
     }
 
+    /**
+     * Bloco "OBSERVAÇÃO:" no fim da planilha (depois dos lançamentos): texto livre do financeiro, na íntegra — a linha do rótulo
+     * (sem o rótulo) e as linhas seguintes até 3 linhas em branco. Junta todas as colunas de cada linha.
+     */
+    private static function readObservacaoFinal(Xlsx $ws, int $linhaRotulo): ?string
+    {
+        $partes = []; $vazias = 0;
+        for ($r = $linhaRotulo; $r <= $ws->maxRow() && $vazias < 3; $r++) {
+            $cols = [];
+            for ($c = 1; $c <= 12; $c++) { $v = $ws->cell($r, $c); if ($v === null) continue; $t = $v instanceof DateTimeInterface ? $v->format('d/m/Y') : trim((string)$v); if ($t !== '') $cols[] = $t; }
+            $txt = trim(implode(' ', $cols));
+            if ($r === $linhaRotulo) $txt = trim((string)preg_replace('/^\s*OBSERV[A-ZÇÃ]*\s*:?\s*/iu', '', $txt));
+            if ($txt === '') { $vazias++; continue; }
+            $vazias = 0; $partes[] = $txt;
+        }
+        $txt = trim(implode("\n", $partes));
+        return $txt !== '' ? $txt : null;
+    }
+
     private static function readFluxo(Xlsx $ws, int $hdr): array
     {
         $out = []; $start = null;
@@ -375,11 +394,11 @@ final class CapaParser
         $bonusVals = self::readBonusBlock($ws, $hdr);
         $fluxo = self::readFluxo($ws, $hdr);
         $bloco = self::readBlocoCorretores($ws, $hdr); $blocoUsado = [];
-        $linhas = [];
+        $linhas = []; $obsFinal = null;
         for ($r = $hdr + 1; $r <= $ws->maxRow(); $r++) {
             $a = $ws->cell($r, 1); $c = $ws->cell($r, 3); $d = $ws->cell($r, 4);
             $e = $ws->cell($r, 5); $f = $ws->cell($r, 6); $g = $ws->cell($r, 7);
-            if (str_starts_with(self::key($a), 'OBSERV')) break;
+            if (str_starts_with(self::key($a), 'OBSERV')) { $obsFinal = self::readObservacaoFinal($ws, $r); break; }
             if ($c === null && $d === null && $e === null && $f === null) continue;
             $flags = [];
             $tipoCol = $f !== null ? 'PAGAR' : 'RECEBER';
@@ -508,7 +527,7 @@ final class CapaParser
                 $linhas[$i]['chave_exata'] = substr(sha1($ex), 0, 12);
             }
         }
-        return $base + ['capa_flags' => $capaFlags, 'cabecalho_linha' => $hdr, 'bonus_bloco' => $bonusVals,
+        return $base + ['capa_flags' => $capaFlags, 'observacao_final' => $obsFinal, 'cabecalho_linha' => $hdr, 'bonus_bloco' => $bonusVals,
                         'fluxo' => $fluxo, 'total_pagar' => $tp, 'total_receber' => $tr, 'linhas' => $linhas];
     }
 }
