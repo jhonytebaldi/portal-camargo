@@ -57,6 +57,8 @@ function cf_pendencias(PDO $pdo, array $capa): array
 {
     $p = [];
     if ($capa['cod'] === null || $capa['cod'] === '') $p[] = 'Capa sem COD do imóvel — informe o código (Robust)';
+    $ok = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: [];
+    foreach (json_decode((string)($capa['capa_flags'] ?? ''), true) ?: [] as $cf) if (str_starts_with($cf, 'GRAVE:') && !in_array(cf_flag_codigo($cf), $ok, true)) $p[] = 'Capa: ' . cf_flag_curto($cf) . ' — confirme no aviso da capa';
     $st = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE capa_id = ? AND status = 'revisao' ORDER BY linha_xlsx");
     $st->execute([$capa['id']]);
     $n = 0;
@@ -176,6 +178,15 @@ case 'restaurar':
     $resp['pendencias'] = cf_pendencias($pdo, $capa);
     break;
 
+case 'conferir_capa_flag':
+    // o usuário leu um aviso grave da capa (ex.: comprador com CNPJ) e confirmou que está certo
+    $cod = preg_replace('/[^A-Z_]/', '', (string)($in['codigo'] ?? '')); if ($cod === '') falha('código do aviso vazio');
+    $ok = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: [];
+    if (!empty($in['desfazer'])) $ok = array_values(array_diff($ok, [$cod])); elseif (!in_array($cod, $ok, true)) $ok[] = $cod;
+    $pdo->prepare('UPDATE cf_capas SET capa_flags_ok = ? WHERE id = ?')->execute([json_encode($ok), $capaId]);
+    $capa['capa_flags_ok'] = json_encode($ok);
+    $resp['pendencias'] = cf_pendencias($pdo, $capa);
+    break;
 case 'editar_capa':
     $campo = (string)($in['campo'] ?? '');
     if ($campo === 'cod') {

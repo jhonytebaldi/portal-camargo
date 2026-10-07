@@ -37,6 +37,8 @@ $funcoes = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRACAO', 'DIRETOR', 'PRE
 
 // pendências
 $pend = [];
+$capaOkIni = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: [];
+foreach ($capaFlags as $cf) if (str_starts_with($cf, 'GRAVE:') && !in_array(cf_flag_codigo($cf), $capaOkIni, true)) $pend[] = 'Capa: ' . cf_flag_curto($cf) . ' — confirme no aviso da capa';
 foreach ($linhas as $l) {
     if ($l['status'] !== 'revisao') continue;
     $fl = json_decode((string)$l['flags'], true) ?: [];
@@ -65,7 +67,11 @@ portal_header('Revisar capa', $u);
 </div>
 
 <?php if ($capaFlags): ?>
-<div class="aviso"><b>Avisos da capa:</b><ul class="cf-flags"><?php foreach ($capaFlags as $f): ?><li><?= h(cf_flag_texto($f)) ?></li><?php endforeach; ?></ul></div>
+<?php $capaOk = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: []; ?>
+<div class="aviso"><b>Avisos da capa:</b><ul class="cf-flags"><?php foreach ($capaFlags as $f): $grave = str_starts_with($f, 'GRAVE:'); $cod = cf_flag_codigo($f); $conf = in_array($cod, $capaOk, true); ?>
+  <li class="<?= $grave ? 'cf-grave' : '' ?>" data-cod="<?= h($cod) ?>" style="<?= $grave && !$conf ? 'font-weight:600' : '' ?>"><?= h(cf_flag_texto($f)) ?>
+    <?php if ($grave && $editavel): ?> <button type="button" class="cf-x cf-capa-ok" data-cod="<?= h($cod) ?>" data-desfazer="<?= $conf ? 1 : 0 ?>"><?= $conf ? '✔ confirmado (desfazer)' : '✔ confirmo, está certo' ?></button><?php elseif ($grave && $conf): ?> <span class="cf-tag">confirmado</span><?php endif; ?></li>
+<?php endforeach; ?></ul></div>
 <?php endif; ?>
 <?php if ($editavel && ($capa['cod'] === null || $capa['cod'] === '')): ?>
 <div class="aviso"><b>Capa sem COD do imóvel.</b> Informe o código do imóvel no Robust para continuar:
@@ -73,7 +79,7 @@ portal_header('Revisar capa', $u);
 <?php endif; ?>
 <?php $compradores = json_decode((string)($capa['compradores'] ?? ''), true) ?: [];
 if ($compradores): ?><div class="aviso" style="background:#f4f6f8"><b>Compradores (capa):</b>
-  <?php foreach ($compradores as $i => $cp): ?><?= $i ? ' · ' : '' ?><?= h($cp['nome']) ?><?= $cp['cpf'] ? ' — CPF ' . h(cf_fmt_doc($cp['cpf'])) : ' — <i>sem CPF</i>' ?><?= $cp['nascimento'] ? ' — nasc. ' . h(cf_data_br($cp['nascimento'])) : '' ?><?php endforeach; ?></div>
+  <?php foreach ($compradores as $i => $cp): ?><?= $i ? ' · ' : '' ?><?= h($cp['nome']) ?><?= $cp['cpf'] ? ' — ' . (strlen($cp['cpf']) === 14 ? '<b style="color:#b4512f">CNPJ</b> ' : 'CPF ') . h(cf_fmt_doc($cp['cpf'])) : ' — <i>sem CPF</i>' ?><?= $cp['nascimento'] ? ' — nasc. ' . h(cf_data_br($cp['nascimento'])) : '' ?><?php endforeach; ?></div>
 <?php endif; ?>
 <?php if (!empty($capa['obs_final'])): ?><div class="aviso" style="background:#fff8d6;border-left-color:#c9a227;font-size:15px"><b>⚠ OBSERVAÇÃO escrita no fim da capa — leia antes de confirmar:</b><div style="margin-top:6px;white-space:pre-line;font-weight:600"><?= h($capa['obs_final']) ?></div></div><?php endif; ?>
 <?php if ($capa['obs_capa']): ?><div class="aviso">Observação na capa (C8): <b><?= h($capa['obs_capa']) ?></b></div><?php endif; ?>
@@ -253,6 +259,13 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     if (j.pendencias.length) { box.className = 'cf-pend'; box.innerHTML = '<b>' + j.pendencias.length + ' pendência(s) antes de confirmar:</b><ul>' + j.pendencias.slice(0,12).map(p => '<li>' + p + '</li>').join('') + '</ul>'; btn.disabled = true; }
     else { box.className = 'cf-pend ok'; box.textContent = 'Tudo revisado. Pode confirmar.'; btn.disabled = false; }
   }
+  document.querySelectorAll('.cf-capa-ok').forEach(b => b.addEventListener('click', async () => {
+    const desfazer = b.dataset.desfazer === '1';
+    if (!desfazer && !confirm('Confirmar que este aviso da capa está correto e pode seguir assim?')) return;
+    const j = await acao({acao:'conferir_capa_flag', codigo: b.dataset.cod, desfazer: desfazer ? 1 : 0}); if (!j) return;
+    b.dataset.desfazer = desfazer ? '0' : '1'; b.textContent = desfazer ? '✔ confirmo, está certo' : '✔ confirmado (desfazer)'; b.closest('li').style.fontWeight = desfazer ? '600' : '';
+    atualizaPend(j); toast(desfazer ? 'Confirmação desfeita' : 'Aviso confirmado');
+  }));
   function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3500); }
   function setPix(row, val){ const px = row && row.querySelector('.cf-pix'); if (!px) return; px.value = val || ''; px.dispatchEvent(new Event('input')); const sp = row.querySelector('.cf-pix-salvar'); if (sp && val) sp.parentElement.remove(); }
   function aplicarPessoa(tr, pid, ids, pix){

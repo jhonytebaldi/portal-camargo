@@ -200,6 +200,11 @@ function cf_migrar(PDO $pdo): array
     }
     // modelo de capa 09/2026: compradores (nome, CPF, nascimento) vêm da capa
     // bloco "OBSERVAÇÃO:" do fim da planilha (texto livre do financeiro) — mostrado em destaque na revisão
+    // avisos graves da capa (não de linha) que o usuário confirmou — códigos; ex. COMPRADOR_COM_CNPJ
+    if (!$colExiste('cf_capas', 'capa_flags_ok')) {
+        $pdo->exec("ALTER TABLE cf_capas ADD COLUMN capa_flags_ok JSON NULL AFTER capa_flags");
+        $feitos[] = 'cf_capas.capa_flags_ok';
+    }
     if (!$colExiste('cf_capas', 'obs_final')) {
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN obs_final TEXT NULL AFTER obs_capa");
         $feitos[] = 'cf_capas.obs_final';

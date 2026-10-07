@@ -218,6 +218,8 @@ function cf_flag_curto(string $f): string
         case 'CONSTRUTORA_HIST_DIFERE_CAPA': return 'Construtora ≠ capa: ' . $q($det('CONSTRUTORA_HIST_DIFERE_CAPA'));
         case 'DATA_VENDA_HIST_DIFERE_G3': return 'Data da venda no histórico ≠ capa: ' . $q($det('DATA_VENDA_HIST_DIFERE_G3'));
         case 'COD_HIST_DIFERE_B6': return 'COD no histórico ≠ capa: ' . $q($det('COD_HIST_DIFERE_B6'));
+        case 'COMPRADOR_COM_CNPJ': return 'Comprador com CNPJ em vez de CPF: ' . $q($det('GRAVE:COMPRADOR_COM_CNPJ'));
+        case 'COMPRADOR_DOC_INVALIDO': return 'Documento do comprador inválido: ' . $q($det('GRAVE:COMPRADOR_DOC_INVALIDO'));
         case 'CONDICAO_DIVERGE_BLOCO': return 'Condição do lançamento ≠ bloco de corretores: ' . str_replace(["lançamento='", "bloco de corretores='", "'"], ['', '', ''], $q($det('GRAVE:CONDICAO_DIVERGE_BLOCO')));
         case 'CONDICAO_NAO_APLICADA': return 'Condição do bloco de corretores sem lançamento: ' . $q($det('GRAVE:CONDICAO_NAO_APLICADA'));
         case 'CONDICAO_DIVERGE': return 'Condição da coluna G ≠ prefixo: ' . str_replace(["G='", "prefixo='", "'"], ['G=', 'prefixo=', ''], $q($det('CONDICAO_DIVERGE')));
@@ -302,6 +304,8 @@ function cf_flag_texto(string $f): string
     if (str_starts_with($f, 'FLUXO_NAO_PAREADO')) return 'Os recebimentos não batem 1:1 com o bloco FLUXO DE PAGAMENTO da capa — parcelas numeradas pela ordem dos lançamentos ' . substr($f, strlen('FLUXO_NAO_PAREADO '));
     if (str_starts_with($f, 'ARQUIVO_IDENTICO_JA_ENVIADO')) return 'Este arquivo é idêntico a um já enviado ' . substr($f, strlen('ARQUIVO_IDENTICO_JA_ENVIADO '));
     if (str_starts_with($f, 'LINHAS_REMOVIDAS_NA_NOVA_VERSAO')) return 'Linhas da versão anterior que não existem mais nesta ' . substr($f, strlen('LINHAS_REMOVIDAS_NA_NOVA_VERSAO '));
+    if (str_starts_with($f, 'GRAVE:COMPRADOR_COM_CNPJ')) return 'O documento do comprador na capa é um CNPJ (14 dígitos), não um CPF — se o comprador é pessoa jurídica, confirme; se for erro de digitação, corrija a capa e envie de novo. O cliente do contas a receber será procurado no Omie por esse documento ' . substr($f, strlen('GRAVE:COMPRADOR_COM_CNPJ '));
+    if (str_starts_with($f, 'GRAVE:COMPRADOR_DOC_INVALIDO')) return 'O documento do comprador na capa não é CPF (11 dígitos) nem CNPJ (14) — corrija a capa ou confirme que vai seguir sem documento ' . substr($f, strlen('GRAVE:COMPRADOR_DOC_INVALIDO '));
     if (str_starts_with($f, 'GRAVE:CONDICAO_DIVERGE_BLOCO')) return 'A condição do lançamento (coluna G/prefixo) é diferente da que está no bloco "PAGAMENTO PARA CORRETORES" — corrija a capa para as duas baterem ' . substr($f, strlen('GRAVE:CONDICAO_DIVERGE_BLOCO '));
     if (str_starts_with($f, 'GRAVE:CONDICAO_NAO_APLICADA')) return 'Há uma condição no bloco "PAGAMENTO PARA CORRETORES" que não casou com nenhum lançamento a pagar (valor + data) — confira se o lançamento existe e se valor/data batem; sem isso a Nota Fiscal sai vazia ' . substr($f, strlen('GRAVE:CONDICAO_NAO_APLICADA '));
     if (str_starts_with($f, 'CONDICAO_DO_BLOCO_CORRETORES')) return 'Condição lida do bloco "PAGAMENTO PARA CORRETORES" (não estava na coluna G nem no histórico) ' . substr($f, strlen('CONDICAO_DO_BLOCO_CORRETORES '));
