@@ -256,12 +256,15 @@ final class CapaParser
         $cod = $val('COD');
         // Modelo 09/2026: compradores em linhas "COMPRADOR 01/02" (B nome, C nascimento, D CPF) e data da venda
         // ao lado do rótulo "DATA DA VENDA". Modelo antigo: "CLIENTE" em B2 e data em G3 (sem rótulo).
-        $compradores = [];
+        $compradores = []; $docFlags = [];
         for ($r = 1; $r < 10; $r++) if (str_starts_with(self::key($ws->cell($r, 1)), 'COMPRADOR')) {   // o rótulo pode repetir ("COMPRADOR 01" duas vezes)
             $nome = self::norm($ws->cell($r, 2)); if ($nome === '') continue;
             $cpf = preg_replace('/\D+/', '', (string)$ws->cell($r, 4));
             $nasc = $ws->cell($r, 3) !== null ? self::parseDateCell($ws->cell($r, 3))[0] : null;
             $compradores[] = ['nome' => $nome, 'cpf' => $cpf !== '' ? $cpf : null, 'nascimento' => $nasc];
+            // documento do comprador: 11 dígitos = CPF (esperado); 14 = CNPJ (pessoa jurídica? ou erro de digitação) — pede confirmação
+            if (strlen($cpf) === 14) $docFlags[] = 'GRAVE:COMPRADOR_COM_CNPJ (' . $nome . ': ' . substr($cpf, 0, 2) . '.' . substr($cpf, 2, 3) . '.' . substr($cpf, 5, 3) . '/' . substr($cpf, 8, 4) . '-' . substr($cpf, 12) . ')';
+            elseif ($cpf !== '' && strlen($cpf) !== 11) $docFlags[] = 'GRAVE:COMPRADOR_DOC_INVALIDO (' . $nome . ': "' . trim((string)$ws->cell($r, 4)) . '" tem ' . strlen($cpf) . ' dígitos)';
         }
         $cliente = $compradores ? implode(' E ', array_column($compradores, 'nome')) : self::norm($val('CLIENTE'));
         $dvCell = null;
@@ -284,6 +287,7 @@ final class CapaParser
             'valor_contrato' => self::money($val('VALOR CONTRATO')), 'vgv' => self::money($val('VGV')),
             'valor_bonus' => self::money($val('VALOR BONUS')),
             'obs_c8' => self::norm($ws->ref('C8')) !== '' ? self::norm($ws->ref('C8')) : null,
+            'doc_flags' => $docFlags,
         ], $dataVenda];
     }
 
@@ -384,6 +388,8 @@ final class CapaParser
         [$capa, $dataVenda] = self::readCapaHeader($ws);
         $capaFlags = [];
         if (!$capa['cod']) $capaFlags[] = 'CAPA_SEM_COD';
+        foreach ($capa['doc_flags'] ?? [] as $df) $capaFlags[] = $df;
+        unset($capa['doc_flags']);
         if (!$dataVenda) $capaFlags[] = 'CAPA_SEM_DATA_VENDA';
         $hdr = self::findHeader($ws);
         $base = ['arquivo' => basename($path), 'sha256' => substr(hash_file('sha256', $path), 0, 16), 'capa' => $capa];
