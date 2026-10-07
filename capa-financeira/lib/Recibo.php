@@ -45,7 +45,12 @@ final class Recibo
         ]);
         $p->espaco(18);
         foreach ($linhas as $l) {
-            $p->paragrafo([[self::rotulo($l) . ': ' . self::descricao($l, $pessoa) . ', ', false], ['Valor: ' . self::brl((float)$l['valor']), true]]);
+            $trechos = [[self::rotulo($l) . ': ' . self::descricao($l, $pessoa) . ', ', false], ['Valor: ' . self::brl((float)$l['valor']), true]];
+            // o bloco de um título (texto + faixa de desconto) não fica partido entre páginas quando cabe inteiro numa página
+            $alt = $p->alturaParagrafo($trechos); $descT = (float)($l['desconto'] ?? 0) > 0 || (float)($l['impostos'] ?? 0) > 0 || (float)($l['juros'] ?? 0) > 0;
+            if ($descT) $alt += $p->alturaParagrafo([[(string)($l['obs_baixa'] ?? ''), false], ['Valor final: R$ 0,00', true]]) + 14;
+            if ($alt < 300) $p->garantir($alt + 8);
+            $p->paragrafo($trechos);
             // ajustes (título "Pago Parcialmente" no Omie): desconto, impostos retidos, juros/multa → valor final
             $desc = (float)($l['desconto'] ?? 0); $imp = (float)($l['impostos'] ?? 0); $jur = (float)($l['juros'] ?? 0);
             if ($desc > 0 || $imp > 0 || $jur > 0) {
@@ -56,7 +61,7 @@ final class Recibo
                 $obsB = trim((string)($l['obs_baixa'] ?? ''));
                 if ($imp > 0) $tr[] = [($tr ? ' · ' : '') . 'Impostos retidos: ' . self::brl($imp), false];
                 if ($jur > 0) $tr[] = [($tr ? ' · ' : '') . 'Juros e multa: ' . self::brl($jur), false];
-                if ($obsB !== '') $tr[] = [' — ' . $obsB, false];
+                if ($obsB !== '') $tr[] = [(str_contains($obsB, "\n") ? "\n" : ' — ') . $obsB . (str_contains($obsB, "\n") ? "\n" : ''), false];
                 $tr[] = ['   Valor final: ' . self::brl($final), true];
                 $p->paragrafoComFundo($tr);
                 $total += $final;
@@ -69,8 +74,9 @@ final class Recibo
         $p->paragrafo([['Desta forma, dou plena, geral, irrevogável, irretratável quitação das comissões, para nada mais reclamar em juízo ou fora dele.', false]]);
         $p->espaco(18);
         $p->paragrafo([['Por ser verdade, firmo o presente.', false]]);
-        // assinatura sempre perto do rodapé (mas nunca antes do texto)
-        $p->setY(max($p->y() + 80, 560));
+        // assinatura sempre perto do rodapé (mas nunca antes do texto); se não couber, vai para a próxima página
+        $p->garantir(80 + 50);
+        $p->setY(max($p->y() + 80, min(560, $p->limiteInferior() - 50)));
         $p->linhaPontilhada(380);
         $p->espaco(6);
         $p->linha($recebedor, 'Helvetica-Bold', 11, 'C');

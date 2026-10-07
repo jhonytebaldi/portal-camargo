@@ -20,7 +20,8 @@ final class Pdf
     private string $cur = '';
     private bool $iniciada = false;
     private float $y = 0;
-    public float $margemEsq = 56.7, $margemDir = 56.7, $margemTopo = 42.5;
+    public float $margemEsq = 56.7, $margemDir = 56.7, $margemTopo = 42.5, $margemBase = 56.7;
+    public bool $numerarPaginas = true;   // "página x de y" no rodapé quando houver mais de uma
 
     public function __construct() { $this->novaPagina(); }
 
@@ -30,6 +31,10 @@ final class Pdf
         $this->iniciada = true; $this->cur = ''; $this->y = $this->margemTopo;
     }
     public function y(): float { return $this->y; }
+    public function limiteInferior(): float { return self::A4_H - $this->margemBase; }
+    /** garante espaço vertical; se não couber, abre nova página */
+    public function garantir(float $altura): void { if ($this->y + $altura > $this->limiteInferior()) $this->novaPagina(); }
+    public function numeroPagina(): int { return count($this->pages) + 1; }
     public function setY(float $y): void { $this->y = $y; }
     public function larguraUtil(): float { return self::A4_W - $this->margemEsq - $this->margemDir; }
 
@@ -64,6 +69,7 @@ final class Pdf
     /** linha simples alinhada (E/C/D), avança y */
     public function linha(string $txt, string $fonte = 'Helvetica', float $tam = 11, string $alinha = 'E', float $entrelinha = 1.35): void
     {
+        $this->garantir($tam * $entrelinha);
         $w = $this->largura($txt, $fonte, $tam);
         $x = $alinha === 'C' ? (self::A4_W - $w) / 2 : ($alinha === 'D' ? self::A4_W - $this->margemDir - $w : $this->margemEsq);
         $this->textoEm($x, $this->y, $txt, $fonte, $tam);
@@ -73,32 +79,52 @@ final class Pdf
     public function espaco(float $pt): void { $this->y += $pt; }
 
     /**
-     * Parágrafo com trechos [texto, negrito?] — quebra por palavra, justificado
-     * (menos a última linha). Avança y.
+     * Quebra os trechos [texto, negrito?] em linhas (por palavra); "\n" no texto força quebra de linha.
+     * @return list<array{0: list<array>, 1: float, 2: bool}>  [tokens, largura, quebraForcada]
      */
-    public function paragrafo(array $trechos, float $tam = 11, float $entrelinha = 1.45, bool $justificar = true): void
+    private function quebrar(array $trechos, float $tam): array
     {
-        // quebra em tokens (palavra + espaço) mantendo o estilo
         $tokens = [];
         foreach ($trechos as [$t, $b]) {
             $f = $b ? 'Helvetica-Bold' : 'Helvetica';
-            foreach (preg_split('/(\s+)/u', $t, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY) as $p) $tokens[] = [$p, $f, $this->largura($p, $f, $tam), trim($p) === ''];
+            foreach (preg_split('/(\n|\s+)/u', str_replace("\r", '', $t), -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY) as $p) {
+                if ($p === "\n") { $tokens[] = ["\n", $f, 0, true, true]; continue; }
+                $tokens[] = [$p, $f, $this->largura($p, $f, $tam), trim($p) === '', false];
+            }
         }
         $maxW = $this->larguraUtil(); $linhas = []; $atual = []; $wAtual = 0;
+        $fecha = function (bool $forcada) use (&$linhas, &$atual, &$wAtual) {
+            while ($atual && end($atual)[3]) { $wAtual -= end($atual)[2]; array_pop($atual); }
+            $linhas[] = [$atual, $wAtual, $forcada]; $atual = []; $wAtual = 0;
+        };
         foreach ($tokens as $tk) {
+            if ($tk[4]) { $fecha(true); continue; }
             if ($tk[3]) { if ($atual) { $atual[] = $tk; $wAtual += $tk[2]; } continue; }
-            if ($atual && $wAtual + $tk[2] > $maxW) {
-                while ($atual && end($atual)[3]) { $wAtual -= end($atual)[2]; array_pop($atual); }
-                $linhas[] = [$atual, $wAtual]; $atual = []; $wAtual = 0;
-            }
+            if ($atual && $wAtual + $tk[2] > $maxW) $fecha(false);
             $atual[] = $tk; $wAtual += $tk[2];
         }
         while ($atual && end($atual)[3]) { $wAtual -= end($atual)[2]; array_pop($atual); }
-        if ($atual) $linhas[] = [$atual, $wAtual];
-        $n = count($linhas);
-        foreach ($linhas as $i => [$tks, $w]) {
+        if ($atual) $linhas[] = [$atual, $wAtual, true];
+        return $linhas;
+    }
+
+    /** altura que um parágrafo vai ocupar (para decidir se cabe na página) */
+    public function alturaParagrafo(array $trechos, float $tam = 11, float $entrelinha = 1.45): float
+    {
+        return count($this->quebrar($trechos, $tam)) * $tam * $entrelinha;
+    }
+
+    /**
+     * Parágrafo com trechos [texto, negrito?] — quebra por palavra, justificado (menos a última linha de cada
+     * bloco e as linhas terminadas por "\n"). Avança y; passa para a próxima página quando chega no rodapé.
+     */
+    public function paragrafo(array $trechos, float $tam = 11, float $entrelinha = 1.45, bool $justificar = true): void
+    {
+        $linhas = $this->quebrar($trechos, $tam); $maxW = $this->larguraUtil();
+        foreach ($linhas as [$tks, $w, $forcada]) {
+            $this->garantir($tam * $entrelinha);
             $espacos = count(array_filter($tks, fn($t) => $t[3]));
-            $extra = ($justificar && $i < $n - 1 && $espacos > 0) ? ($maxW - $w) / $espacos : 0;
+            $extra = ($justificar && !$forcada && $espacos > 0) ? ($maxW - $w) / $espacos : 0;
             $x = $this->margemEsq;
             foreach ($tks as $t) {
                 if (!$t[3]) $this->textoEm($x, $this->y, $t[0], $t[1], $tam);
@@ -111,6 +137,7 @@ final class Pdf
     /** parágrafo com fundo colorido (faixa da margem esquerda à direita), cor em 0..1 */
     public function paragrafoComFundo(array $trechos, array $rgb = [1, 0.97, 0.80], float $tam = 11, float $entrelinha = 1.45, float $folga = 4): void
     {
+        $this->garantir($this->alturaParagrafo($trechos, $tam, $entrelinha) + $folga * 1.5);   // a faixa não pode ficar partida entre páginas
         $antes = $this->cur; $y0 = $this->y;
         $this->y += $folga;
         $this->paragrafo($trechos, $tam, $entrelinha, false);
@@ -135,6 +162,11 @@ final class Pdf
     public function bytes(): string
     {
         $pages = $this->pages; $pages[] = $this->cur;
+        if ($this->numerarPaginas && count($pages) > 1) foreach ($pages as $i => &$c) {
+            $txt = 'Página ' . ($i + 1) . ' de ' . count($pages); $w = $this->largura($txt, 'Helvetica', 8);
+            $c .= sprintf("BT /F1 8 Tf %.2f %.2f Td (%s) Tj ET\n", self::A4_W - $this->margemDir - $w, $this->margemBase * 0.5, self::esc(self::win($txt)));
+        }
+        unset($c);
         $objs = [];
         $objs[] = '<< /Type /Catalog /Pages 2 0 R >>';                                   // 1
         $objs[] = '';                                                                       // 2 (pages, preenchido depois)
