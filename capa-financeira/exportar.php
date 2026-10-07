@@ -168,7 +168,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $porQuem = (string)($u['nome'] ?? $u['login'] ?? 'portal');
             if ($acao === 'conferir_api') {
                 $res = [];
-                foreach ($linhas as $l) { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente'])]; }
+                foreach ($linhas as $l) {
+                    $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem);
+                    $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente'])];
+                    // conferiu sem erro: o erro do último envio (ex. "cliente não encontrado") já não vale — limpa para não ficar aparecendo
+                    if (!$r['erros'] && !empty($l['omie_erro'])) $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = NULL WHERE id = ?')->execute([(int)$l['id']]);
+                }
                 exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
             }
             // enviar: linha a linha; cada uma independente (o Omie não tem transação entre títulos)
@@ -528,6 +533,7 @@ portal_header('Exportar para o Omie', $u);
   <a class="<?= $tipo === 'R' ? 'on' : '' ?>" href="?empresa=<?= h($empresa) ?>&tipo=R">Contas a receber (<?= $contagem[$empresa]['R'] ?? 0 ?>)</a>
 </div>
 
+<div id="exp-resultado" style="display:none;margin:0 0 10px;padding:12px 14px;border-radius:8px;font-size:15px;font-weight:600"></div>
 <?php if (!$linhas): ?>
   <p class="home-sub">Nada pendente de exportação para <?= h($emp['nome']) ?> (<?= $tipo === 'P' ? 'contas a pagar' : 'contas a receber' ?>). Confirme capas na revisão para elas aparecerem aqui.</p>
 <?php else: ?>
@@ -803,7 +809,7 @@ portal_header('Exportar para o Omie', $u);
       let html = '';
       r.erros.forEach(e => html += '<div class="cf-flag cf-grave">API: ' + e.replace(/</g, '&lt;') + '</div>');
       r.avisos.forEach(a => html += '<div class="cf-flag cf-leve">API: ' + a.replace(/</g, '&lt;') + '</div>');
-      if (!r.erros.length) html += '<div class="cf-flag cf-ok">API: ' + (r.existente ? 'já está no Omie — ao enviar, só vincula' : 'pronto para enviar') + (r.fornecedor ? ' (fornecedor cód. ' + r.fornecedor + ')' : '') + '</div>';
+      if (!r.erros.length) { html += '<div class="cf-flag cf-ok">API: ' + (r.existente ? 'já está no Omie — ao enviar, só vincula' : 'pronto para enviar') + (r.fornecedor ? ' (fornecedor cód. ' + r.fornecedor + ')' : '') + '</div>'; tr.querySelectorAll('.cf-flag[title="último envio pela API"]').forEach(x => x.remove()); }
       box.innerHTML = html;
       const sel = tr.querySelector('.exp-sel'); if (r.erros.length) { sel.checked = false; nErr++; } else nOk++;
     });
@@ -822,7 +828,17 @@ portal_header('Exportar para o Omie', $u);
     }
     bca.disabled = false; bca.textContent = 'Conferir para envio';
     const r = mostraConferencia(linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
+    const tot = r.nOk + r.nErr;
+    banner(r.nErr === 0 ? 'ok' : (r.nOk ? 'parcial' : 'erro'), r.nErr === 0 ? '✔ Conferência: ' + tot + ' de ' + tot + ' título(s) prontos para envio (100%)' : '⚠ Conferência: ' + r.nOk + ' pronto(s) · ' + r.nErr + ' para revisar (desmarcados — veja o motivo em vermelho na linha)');
   });
+  function banner(tipo, texto, detalhe){
+    const b = document.getElementById('exp-resultado'); if (!b) return;
+    const cores = {ok:['#e6f4ea','#1e7b34','#2e6b3a'], parcial:['#fff8d6','#c9a227','#6b5a00'], erro:['#fde8e4','#b4512f','#8a3418']};
+    const c = cores[tipo] || cores.parcial; b.style.display = ''; b.style.background = c[0]; b.style.border = '1px solid ' + c[1]; b.style.color = c[2];
+    b.innerHTML = texto.replace(/</g,'&lt;') + (detalhe ? '<details style="margin-top:6px;font-weight:400;font-size:13px"><summary>detalhes</summary><pre style="white-space:pre-wrap;margin:6px 0 0">' + detalhe.replace(/</g,'&lt;') + '</pre></details>' : '');
+    b.scrollIntoView({block:'nearest'});
+  }
+  try { const salvo = sessionStorage.getItem('exp-resultado'); if (salvo) { const o = JSON.parse(salvo); banner(o.tipo, o.texto, o.detalhe); sessionStorage.removeItem('exp-resultado'); } } catch(e) {}
   const be = document.getElementById('btn-enviar');
   if (be) be.addEventListener('click', async () => {
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
@@ -837,11 +853,14 @@ portal_header('Exportar para o Omie', $u);
       j.enviadas.push(...r.enviadas); j.falhas.push(...r.falhas); j.avisos.push(...r.avisos); j.total += r.total; if (r.exportacao_id) j.exportacao_id = r.exportacao_id;
       if (r.parou) { ids.slice(i + BL).forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
     }
-    let msg = 'Enviados: ' + j.enviadas.length + ' título(s) (' + brl(j.total) + ')';
-    if (j.enviadas.length) msg += '\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
-    if (j.falhas.length) msg += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
-    if (j.avisos.length) msg += '\n\nAvisos:\n' + j.avisos.map(a => '  ' + a).join('\n');
-    alert(msg); location.reload();
+    let det = '';
+    if (j.enviadas.length) det += 'Enviados (' + j.enviadas.length + '):\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
+    if (j.falhas.length) det += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
+    if (j.avisos.length) det += '\n\nAvisos:\n' + j.avisos.map(a => '  ' + a).join('\n');
+    const n = j.enviadas.length, f = j.falhas.length;
+    const texto = f === 0 ? '✔ Envio concluído: ' + n + ' de ' + n + ' título(s) no Omie (100%) — ' + brl(j.total) : (n ? '⚠ Envio parcial: ' + n + ' enviado(s) (' + brl(j.total) + ') · ' + f + ' para revisar — continuam na lista com o motivo em vermelho' : '✖ Nenhum título enviado: ' + f + ' para revisar — veja o motivo em vermelho em cada linha');
+    try { sessionStorage.setItem('exp-resultado', JSON.stringify({tipo: f === 0 ? 'ok' : (n ? 'parcial' : 'erro'), texto, detalhe: det.trim()})); } catch(e) { alert(texto + '\n\n' + det); }
+    location.reload();
   });
   document.querySelectorAll('.exp-ajustado').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const j = await post({acao:'ajustado', id: +tr.dataset.id}); if (j) tr.remove();
