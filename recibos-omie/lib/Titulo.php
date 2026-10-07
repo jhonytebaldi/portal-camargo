@@ -74,9 +74,10 @@ final class Titulo
         $obs = [];
         foreach ($t['lancamentos'] ?? [] as $l) {
             if ((float)($l['nDesconto'] ?? 0) <= 0 && (float)($l['nJuros'] ?? 0) <= 0 && (float)($l['nMulta'] ?? 0) <= 0) continue;
-            $o = trim((string)($l['cObsLanc'] ?? '')); if ($o !== '' && !in_array($o, $obs, true)) $obs[] = $o;
+            // o Omie guarda o Enter da observação como "|": vira quebra de linha no recibo
+            $o = trim(preg_replace('/\s*\|\s*/u', "\n", (string)($l['cObsLanc'] ?? '')) ?? ''); if ($o !== '' && !in_array($o, $obs, true)) $obs[] = $o;
         }
-        return implode(' / ', $obs);
+        return implode("\n", $obs);
     }
 
     private static function situacao(string $s): string
