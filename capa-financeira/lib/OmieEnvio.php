@@ -280,10 +280,11 @@ final class OmieEnvio
             elseif (preg_replace('/\D+/', '', $pixCad) !== preg_replace('/\D+/', '', $pix) && mb_strtolower($pixCad) !== mb_strtolower($pix)) $avisos[] = "chave Pix do cadastro no Omie ($pixCad) é diferente da nossa ($pix)";
         }
 
-        // observação: quem enviou + padrão + Pix
-        $obs = 'ENVIADO POR: ' . mb_strtoupper(self::semAcento($porQuem)) . ' ' . (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format('d/m/Y H:i') . ' | ' . (string)($c['S']['s'] ?? '');
+        // observação: padrão (cliente e construtora primeiro) + Pix + quem enviou por último
+        $obs = (string)($c['S']['s'] ?? '');
         if ($tipo === 'P' && $pix !== '') $obs .= ' | PIX: ' . $pix;
-        $ped['observacao'] = $obs;
+        $obs .= ' | ENVIADO POR: ' . mb_strtoupper(self::semAcento($porQuem)) . ' ' . (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format('d/m/Y H:i');
+        $ped['observacao'] = ltrim($obs, ' |');
 
         // já existe no Omie? (mesmo código de integração) e possível duplicidade (mesmo doc + vencimento + valor)
         $existente = null;
