@@ -125,7 +125,10 @@ function cf_add_alias(int $pessoaId, string $alias): void
  */
 function cf_observacao(array $capa, array $l, ?string $favorecido = null): string
 {
+    // ordem: cliente e construtora primeiro (quem lê a observação no Omie procura por eles); quem enviou vai por último (OmieEnvio)
     $p = [];
+    $p[] = 'CLIENTE: ' . $capa['cliente'];
+    $p[] = 'CONSTRUTORA: ' . $capa['construtora'];
     if (!empty($l['codigo_integracao'])) $p[] = 'RECIBO: ' . $l['codigo_integracao'];
     if (($l['tipo'] ?? '') === 'P') {
         $fav = $favorecido ?: ($l['cf_raw'] ?? '');
@@ -136,8 +139,6 @@ function cf_observacao(array $capa, array $l, ?string $favorecido = null): strin
         if (($l['natureza'] ?? '') === 'REPASSE') $p[] = 'NATUREZA: REPASSE';
         if (!empty($l['parcela']) && !empty($l['total_parcelas'])) $p[] = 'PARCELA: ' . (int)$l['parcela'] . '/' . (int)$l['total_parcelas'];
     }
-    $p[] = 'CLIENTE: ' . $capa['cliente'];
-    $p[] = 'CONSTRUTORA: ' . $capa['construtora'];
     if (!empty($l['unidade'])) $p[] = 'IMOVEL: ' . $l['unidade'];
     elseif (!empty($capa['unidade'])) $p[] = 'IMOVEL: ' . $capa['unidade'] . ($capa['bairro'] ? ' - ' . $capa['bairro'] : '');
     if (!empty($l['status_imovel'])) $p[] = 'STATUS: ' . $l['status_imovel'];
