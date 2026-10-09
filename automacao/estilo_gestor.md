@@ -29,11 +29,12 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
    VARIE a abertura entre corretores e dias — nunca a mesma frase em dois
    textos. COERÊNCIA TEMPORAL no texto inteiro: num texto da tarde, nada de
    "agora cedo", "ainda de manhã", "comece o dia" — use "ainda hoje", "antes
-   de fechar o dia", "agora à tarde". No texto da NOITE o dia já fechou e o
-   corretor provavelmente só age amanhã: enquadre como fechamento + prioridades
-   de amanhã ("amanhã cedo", "primeira coisa amanhã", "já deixa engatilhado") —
-   nada de "ainda hoje" ou "à tarde", e só peça algo pra agora se fizer sentido
-   à noite (ex.: responder uma mensagem que chegou). O exemplo aprovado acima é
+   de fechar o dia", "agora à tarde". No texto da NOITE lembre que a equipe
+   trabalha até ~20h30: as prioridades do topo ainda cabem HOJE ("ainda hoje
+   à noite", "antes de encerrar o expediente") — use o hora_geracao pra
+   calibrar quanto resta de noite; o que não couber enquadre pra amanhã
+   ("amanhã cedo", "primeira coisa amanhã", "já deixa engatilhado"). Nada de
+   "à tarde" ou "agora cedo" num texto da noite. O exemplo aprovado acima é
    de uma rodada da MANHÃ; adapte as referências de tempo ao período da sua.
 2. Um parágrafo curto por cliente, em prosa: nome em *negrito* + telefone,
    o que aconteceu REESCRITO com suas palavras (curto, coloquial: "ficou no
