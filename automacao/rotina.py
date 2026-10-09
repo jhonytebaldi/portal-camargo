@@ -88,6 +88,7 @@ def preparar():
     # no fim do corpo (instancias.json: slug → corretor; null = institucional)
     INST = json.load(open(os.path.join(os.path.dirname(DIR), "instancias.json")))
     RE_SRC = re.compile(r"\s*Source:\s*([A-Za-z0-9\-]+)[^\n]*\s*$")
+    AUDIO_EXT = (".ogg", ".oga", ".opus", ".mp3", ".m4a", ".webm", ".amr", ".aac", ".wav")
     inst_desconhecidas = set()
     escopo = [r for r in escopo if r in rob2broker]
     nomes_rob = {}
@@ -369,6 +370,11 @@ def preparar():
             elif m.get("direction") != "outbound" and slug:
                 # inbound: mensagem DO CLIENTE; "via" só diz em que linha chegou
                 d["via"] = INST.get(slug) or "linha institucional"
+            # anexo de áudio (voice note): guarda a URL pra transcrição no 5b
+            for _att in (m.get("attachments") or []):
+                _u = _att if isinstance(_att, str) else (_att or {}).get("url") or ""
+                if _u.split("?")[0].lower().endswith(AUDIO_EXT):
+                    d["audio_url"] = _u; break
             msgs.append(d)
         c["msgs"] = list(reversed(msgs))[-25:]
     with ThreadPoolExecutor(4) as ex: list(ex.map(busca_andamentos, rean))   # Robust: servidor instável, ir leve
@@ -377,6 +383,56 @@ def preparar():
     log("mensagens ok")
     if inst_desconhecidas:
         log(f"AVISO instâncias fora do instancias.json (adicionar): {sorted(inst_desconhecidas)}")
+
+    # ---- 5b. transcrição dos últimos áudios de cada conversa ----
+    # O conteúdo dos áudios muitas vezes é o que decide a tarefa ("te chamo
+    # sábado", "não tenho o sinal ainda"...). Transcreve LOCALMENTE
+    # (faster-whisper, modelo small int8) os últimos áudios de cada conversa
+    # re-analisada. Se o modelo não puder ser instalado/carregado, segue sem
+    # transcrição — o corpo continua "Mensagem de Áudio." como antes.
+    alvos = []
+    for aid in rean:
+        com_audio = [d for d in cli[aid].get("msgs", [])[-10:] if d.get("audio_url")]
+        alvos += com_audio[-3:]                      # até 3 áudios por conversa
+    if alvos:
+        modelo = None
+        try:
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                log("áudios: instalando faster-whisper…")
+                import subprocess
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                "faster-whisper", "--break-system-packages"],
+                               timeout=600, check=True)
+                from faster_whisper import WhisperModel
+            modelo = WhisperModel("small", device="cpu", compute_type="int8")
+        except Exception as e:
+            log(f"áudios: transcrição indisponível ({type(e).__name__}: {e}) — seguindo sem")
+        if modelo:
+            import tempfile
+            n_ok = n_fal = 0
+            for d in alvos:
+                tmp = None
+                try:
+                    r = requests.get(d["audio_url"], timeout=40)
+                    r.raise_for_status()
+                    if len(r.content) > 4_000_000:
+                        raise ValueError("áudio grande demais")
+                    ext = os.path.splitext(d["audio_url"].split("?")[0])[1] or ".ogg"
+                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                        f.write(r.content); tmp = f.name
+                    segs, _info = modelo.transcribe(tmp, language="pt", vad_filter=True)
+                    txt = " ".join(s.text.strip() for s in segs).strip()
+                    if txt:
+                        d["body"] = ("[áudio] " + txt)[:400]; n_ok += 1
+                except Exception:
+                    n_fal += 1
+                finally:
+                    if tmp and os.path.exists(tmp): os.unlink(tmp)
+            log(f"áudios transcritos: {n_ok} de {len(alvos)} (falhas {n_fal})")
+    for aid in rean:
+        for d in cli[aid].get("msgs", []): d.pop("audio_url", None)
 
     # ---- 6. pré-score dos re-analisados ----
     BASE = {0: 30, 1: 35, 2: 45, 3: 55, 4: 65}
