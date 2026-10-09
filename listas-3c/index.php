@@ -19,17 +19,14 @@ $id = (int)($_GET['id'] ?? 0);
 $mascara = !empty($_GET['mascara']);
 $mk = fn(string $s, string $t) => $mascara ? L3cTratamento::mascarar($s, $t) : $s;
 
-$lista = null; $itens = []; $descartes = []; $campanhas = []; $erro3c = ''; $selecionada = null; $previaOk = false;
+$lista = null; $itens = []; $descartes = []; $campanhas = []; $erro3c = ''; $selecionada = null; $previaOk = false; $conferindo = false; $rotuloPend = '';
 if ($id) {
     $st = $pdo->prepare('SELECT * FROM l3c_listas WHERE id=?'); $st->execute([$id]);
     $lista = $st->fetch() ?: null;
     if ($lista) {
         $st = $pdo->prepare('SELECT descarte, COUNT(*) n FROM l3c_itens WHERE lista_id=? GROUP BY descarte ORDER BY n DESC'); $st->execute([$id]);
         $descartes = $st->fetchAll();
-        if (in_array($lista['status'], ['pronta', 'enviando', 'enviada'], true)) {
-            $st = $pdo->prepare('SELECT * FROM l3c_itens WHERE lista_id=? AND descarte IS NULL ORDER BY criado_em DESC LIMIT 300'); $st->execute([$id]);
-            $itens = $st->fetchAll();
-        }
+        $entramAgora = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $entramAgora = (int)$d['n'];
         if ($lista['status'] === 'pronta') {
             try { $campanhas = L3cTresC::doConfig()->campanhas(); } catch (Throwable $e) { $erro3c = $e->getMessage(); }
             // Campanha do seletor: a da URL (trocou no seletor), senão a
@@ -43,12 +40,30 @@ if ($id) {
             // A prévia só vale conferida para ESTA campanha; senão a tela confere (JS, ação 'previa') e recarrega.
             $previaOk = $selecionada !== null && L3cMontador::campanhaDaPrevia($lista) === $selecionada;
         }
+        // Até a conferência de repetidos na campanha terminar (montando, ou
+        // pronta com a prévia ainda conferindo), o "entram" do banco ainda conta
+        // quem a conferência vai tirar: a tela mostrava esse número e depois ele
+        // caía (teste de 08/10: a lista 2 mostrou 7 e caiu para 0). O Jhony
+        // achou confuso e pediu que o número de cima fosse o certo (08/10,
+        // tarefa 92015865). Enquanto confere, tudo o que depende dele mostra
+        // "conferindo…": o "entram", o total e os dois tipos do cartão
+        // Repetidos que dependem da campanha, o "ver quais" e a prévia tratada
+        // (que listava contatos que iam sair); o Aprovar fica desabilitado. Ao
+        // terminar, a tela recarrega com o número final.
+        $conferindo = $lista['status'] === 'montando' || ($lista['status'] === 'pronta' && !$previaOk);
+        // Sem campanha no seletor (3C fora do ar ou nenhuma liberada) a conferência
+        // não roda: aí é "a conferir", para não prometer uma conta que não anda.
+        $rotuloPend = $lista['status'] === 'pronta' && $selecionada === null ? 'a conferir' : 'conferindo…';
+        if (in_array($lista['status'], ['pronta', 'enviando', 'enviada'], true) && !$conferindo) {
+            $st = $pdo->prepare('SELECT * FROM l3c_itens WHERE lista_id=? AND descarte IS NULL ORDER BY criado_em DESC LIMIT 300'); $st->execute([$id]);
+            $itens = $st->fetchAll();
+        }
         // Cartão Repetidos (pedido do Jhony, 05/10): total fixo, com zero, por
         // tipo, e quais são. A campanha da conta é a da prévia (lista pronta)
         // ou a aprovada (subindo/subida).
         $repetidos = L3cTratamento::repetidosPorTipo($descartes);
         $campRep = $lista['status'] === 'pronta' ? L3cMontador::campanhaDaPrevia($lista) : ($lista['campanha_id'] ? (int)$lista['campanha_id'] : null);
-        $repLinhas = $repetidos['total'] ? L3cMontador::repetidosDaLista($pdo, $lista, $campRep) : [];
+        $repLinhas = ($repetidos['total'] && !$conferindo) ? L3cMontador::repetidosDaLista($pdo, $lista, $campRep) : [];
     }
 } else {
     $recentes = $pdo->query('SELECT l.*, (SELECT COUNT(*) FROM l3c_itens i WHERE i.lista_id=l.id AND i.descarte IS NULL) entram
@@ -90,6 +105,11 @@ portal_header('Listas 3C', $u);
 .l3-rep b{font-size:20px;display:block}
 .l3-rep .tot b{font-size:26px}
 .l3-fora{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;background:#f3d9cf;color:#8a3317;margin-left:8px;vertical-align:middle}
+/* "conferindo…" no lugar de número provisório (tarefa 92015865): menor e apagado, para ler como estado e não como valor. */
+.l3-pend{color:var(--mute);font-weight:600;font-style:italic}
+.l3-kpis b.l3-pend,.l3-rep b.l3-pend{font-size:15px}
+.l3-kpis b.l3-pend{line-height:30px}   /* a altura da linha do número (20px × 1,5): o rótulo embaixo não sobe */
+.l3-rep b.l3-pend{line-height:27px}    /* o cartão alinha pela linha de base: assim o rótulo fica na altura do "1" ao lado */
 .l3-quais{margin:12px 0 0;font-size:13px}
 .l3-quais summary{cursor:pointer;color:var(--moss);font-weight:600}
 @media (max-width:640px){.l3-res{max-width:none}}
@@ -146,7 +166,12 @@ if ($falta): ?>
           <td><?= h($modelos[$r['modelo']]['nome'] ?? $r['modelo']) ?></td>
           <td><?= h(date('d/m/y', strtotime($r['periodo_de']))) ?> a <?= h(date('d/m/y', strtotime($r['periodo_ate']))) ?></td>
           <td><span class="l3-pill <?= h($r['status']) ?>"><?= h(L3cTratamento::rotuloStatus($r)) ?></span></td>
-          <td><?= (int)$r['entram'] ?></td>
+          <?php // Mesmo motivo do "conferindo…" da lista (tarefa 92015865): antes da conferência o número ainda conta repetidos. A conferência só roda com a lista aberta, então aqui é "a conferir". ?>
+          <?php if ($r['status'] === 'montando' || ($r['status'] === 'pronta' && L3cMontador::campanhaDaPrevia($r) === null)): ?>
+            <td style="white-space:nowrap"><span class="l3-pend" title="O número sai quando a conferência de repetidos terminar (ela roda com a lista aberta).">a conferir</span></td>
+          <?php else: ?>
+            <td><?= (int)$r['entram'] ?></td>
+          <?php endif; ?>
         </tr>
       <?php endforeach; ?>
     </table></div>
@@ -170,7 +195,7 @@ if ($falta): ?>
     <div id="l3-texto" style="font-size:14px"><?= h($lista['progresso_txt']) ?></div>
     <div class="l3-kpis">
       <span><b id="l3-brutos"><?= array_sum(array_column($descartes, 'n')) ?></b>lidos no Robust</span>
-      <span title="Já sem os repetidos e sem quem ficou de fora pelas regras do modelo."><b id="l3-entram"><?php $e = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $e = (int)$d['n']; echo $e; ?></b>entram (sem repetidos)</span>
+      <span title="Já sem os repetidos e sem quem ficou de fora pelas regras do modelo.<?= $conferindo ? ' O número aparece quando a conferência de repetidos terminar.' : '' ?>"><b id="l3-entram"<?= $conferindo ? ' class="l3-pend"' : '' ?>><?= $conferindo ? $rotuloPend : $entramAgora ?></b>entram (sem repetidos)</span>
       <span><b id="l3-chamadas"><?= (int)$lista['chamadas_robust'] ?></b>chamadas ao Robust</span>
       <?php if ($lista['status'] === 'enviada'): ?><span><b><?= (int)$lista['importados'] ?></b>importados no 3C</span><?php endif; ?>
     </div>
@@ -185,15 +210,16 @@ if ($falta): ?>
       // que ela tinha que mostrar zerado?"). Antes os repetidos só apareciam
       // soltos em "Quem ficou de fora", sem total, e não dava para saber se
       // estavam dentro ou fora do "entram". Enquanto a prévia confere a
-      // campanha, os dois tipos que dependem dela mostram "…".
-      $conferindo = $lista['status'] === 'pronta' && !$previaOk;
+      // campanha ($conferindo, lá em cima), o total e os dois tipos que
+      // dependem dela mostram "conferindo…" (era "…", que o Jhony achou
+      // confuso em 08/10, tarefa 92015865) e o "ver quais" espera o fim.
       $tituloRep = 'Já descontados do "entram": não sobem. O número pode mudar se gerar a lista de novo: cada geração relê o Robust na hora (quem encerrou depois entra), a lista que acabou de subir passa a contar como "já subiu", e a janela de 60 dias do 3C anda com a data de hoje. Contato de lista feita à mão no 3C que ainda não foi discado não aparece aqui (a API do 3C não mostra).'; ?>
   <div class="l3-card" id="l3-repetidos" title="<?= h($tituloRep) ?>">
     <h2 style="font-size:16px;margin:0">Repetidos<span class="l3-fora">não entram</span></h2>
     <div class="l3-rep">
-      <span class="tot"><b id="l3-rep-total"><?= $conferindo ? '…' : (int)$repetidos['total'] ?></b>total</span>
+      <span class="tot"><b id="l3-rep-total"<?= $conferindo ? ' class="l3-pend"' : '' ?>><?= $conferindo ? $rotuloPend : (int)$repetidos['total'] ?></b>total</span>
       <?php foreach (L3cTratamento::TIPOS_REPETIDO as $tipo => $rot): $pend = $conferindo && $tipo !== L3cTratamento::DUP_LISTA; ?>
-        <span title="<?= h($tipo) ?>"><b><?= $pend ? '…' : (int)$repetidos['tipos'][$tipo] ?></b><?= h($rot) ?></span>
+        <span title="<?= h($tipo) ?>"><b<?= $pend ? ' class="l3-pend"' : '' ?>><?= $pend ? $rotuloPend : (int)$repetidos['tipos'][$tipo] ?></b><?= h($rot) ?></span>
       <?php endforeach; ?>
     </div>
     <?php if ($repLinhas): ?>
@@ -232,12 +258,12 @@ if ($falta): ?>
     <?php if ($erro3c): ?><div class="erro"><?= h($erro3c) ?></div>
     <?php elseif (!$campanhas): ?><div class="aviso">Nenhuma campanha do 3C liberada para este portal.</div>
     <?php else: ?>
-    <?php $entramAgora = 0; foreach ($descartes as $d) if ($d['descarte'] === null) $entramAgora = (int)$d['n']; ?>
     <form class="l3-form" id="l3-aprovar" data-previa="<?= $previaOk ? 'ok' : 'falta' ?>" data-campanha="<?= (int)$selecionada ?>">
       <label>Campanha
         <select name="campanha" id="l3-campanha"><?php foreach ($campanhas as $cid => $cn): ?><option value="<?= (int)$cid ?>"<?= $cid === $selecionada ? ' selected' : '' ?>><?= h($cn) ?> (<?= (int)$cid ?>)</option><?php endforeach; ?></select>
       </label>
-      <button class="l3-btn" type="submit" <?= (!$previaOk || $entramAgora === 0) ? 'disabled' : '' ?>>Aprovar e subir</button>
+      <?php // Desabilitado enquanto confere: não se aprova em cima de número provisório (tarefa 92015865). A página recarrega ao terminar. ?>
+      <button class="l3-btn" type="submit" <?= ($conferindo || $entramAgora === 0) ? 'disabled' : '' ?>>Aprovar e subir</button>
     </form>
     <?php if (!$previaOk): ?>
       <div class="aviso" style="margin:10px 0 0" id="l3-previa-txt">Conferindo repetidos…</div>
@@ -329,7 +355,10 @@ if (card) {
       document.getElementById('l3-bar').style.width = r.progresso + '%';
       document.getElementById('l3-texto').textContent = r.texto;
       document.getElementById('l3-brutos').textContent = r.brutos;
-      document.getElementById('l3-entram').textContent = r.entram;
+      // Montando, o "entram" ainda conta quem a conferência de repetidos vai
+      // tirar (chegava a 9 e caía para 0): fica "conferindo…" até a conferência
+      // terminar (Jhony, 08/10, tarefa 92015865). Subindo, o número já é o final.
+      if (r.status !== 'montando') document.getElementById('l3-entram').textContent = r.entram;
       document.getElementById('l3-chamadas').textContent = r.chamadas;
       if (!['montando', 'enviando'].includes(r.status)) { location.reload(); return; }
       await new Promise(s => setTimeout(s, r.ocupada ? 2000 : 300));
