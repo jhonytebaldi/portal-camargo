@@ -89,6 +89,7 @@ def preparar():
     INST = json.load(open(os.path.join(os.path.dirname(DIR), "instancias.json")))
     RE_SRC = re.compile(r"\s*Source:\s*([A-Za-z0-9\-]+)[^\n]*\s*$")
     AUDIO_EXT = (".ogg", ".oga", ".opus", ".mp3", ".m4a", ".webm", ".amr", ".aac", ".wav")
+    IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
     inst_desconhecidas = set()
     escopo = [r for r in escopo if r in rob2broker]
     nomes_rob = {}
@@ -370,11 +371,14 @@ def preparar():
             elif m.get("direction") != "outbound" and slug:
                 # inbound: mensagem DO CLIENTE; "via" só diz em que linha chegou
                 d["via"] = INST.get(slug) or "linha institucional"
-            # anexo de áudio (voice note): guarda a URL pra transcrição no 5b
+            # anexos: áudio → transcrição no 5b; imagem → download no 5c
             for _att in (m.get("attachments") or []):
                 _u = _att if isinstance(_att, str) else (_att or {}).get("url") or ""
-                if _u.split("?")[0].lower().endswith(AUDIO_EXT):
-                    d["audio_url"] = _u; break
+                _p = _u.split("?")[0].lower()
+                if _p.endswith(AUDIO_EXT) and "audio_url" not in d:
+                    d["audio_url"] = _u
+                elif _p.endswith(IMG_EXT) and "img_url" not in d:
+                    d["img_url"] = _u
             msgs.append(d)
         c["msgs"] = list(reversed(msgs))[-25:]
     with ThreadPoolExecutor(4) as ex: list(ex.map(busca_andamentos, rean))   # Robust: servidor instável, ir leve
@@ -431,8 +435,34 @@ def preparar():
                 finally:
                     if tmp and os.path.exists(tmp): os.unlink(tmp)
             log(f"áudios transcritos: {n_ok} de {len(alvos)} (falhas {n_fal})")
+    # ---- 5c. imagens anexas: baixa as últimas de cada conversa ----
+    # Os subagentes de análise TÊM visão: o lote leva o caminho local do
+    # arquivo (campo "img") e a rubrica manda abrir com a ferramenta Read
+    # quando a imagem puder mudar a decisão (comprovante, documento, print).
+    mdir = os.path.join(DIR, "midia")
+    os.makedirs(mdir, exist_ok=True)
+    for _f in os.listdir(mdir):
+        try: os.unlink(os.path.join(mdir, _f))
+        except OSError: pass
+    n_img = 0
     for aid in rean:
-        for d in cli[aid].get("msgs", []): d.pop("audio_url", None)
+        com_img = [d for d in cli[aid].get("msgs", [])[-10:] if d.get("img_url")]
+        for i, d in enumerate(com_img[-2:]):         # até 2 imagens por conversa
+            try:
+                r = requests.get(d["img_url"], timeout=40)
+                r.raise_for_status()
+                if len(r.content) > 6_000_000:
+                    raise ValueError("imagem grande demais")
+                ext = os.path.splitext(d["img_url"].split("?")[0])[1].lower() or ".jpg"
+                alvo = os.path.join(mdir, f"{aid}_{i}{ext}")
+                open(alvo, "wb").write(r.content)
+                d["img"] = alvo; n_img += 1
+            except Exception:
+                pass
+    if n_img: log(f"imagens baixadas p/ análise: {n_img}")
+    for aid in rean:
+        for d in cli[aid].get("msgs", []):
+            d.pop("audio_url", None); d.pop("img_url", None)
 
     # ---- 6. pré-score dos re-analisados ----
     BASE = {0: 30, 1: 35, 2: 45, 3: 55, 4: 65}
