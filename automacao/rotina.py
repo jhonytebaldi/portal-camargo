@@ -644,7 +644,9 @@ def publicar():
             if os.path.isfile(fp): os.remove(fp)
     ginput = []
     agora_tx = datetime.now(TZ)
-    periodo_tx = "manhã" if agora_tx.hour < 12 else "tarde"
+    # 17h+ já é rodada de fechamento: o gestor manda esses textos à noite
+    periodo_tx = ("manhã" if agora_tx.hour < 12
+                  else "tarde" if agora_tx.hour < 17 else "noite")
     for p in planos:
         # só tarefas PENDENTES entram no texto: exclui as que o check manual do
         # mesmo dia já marcou como feitas (reimportação preserva o check por
