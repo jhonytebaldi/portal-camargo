@@ -28,6 +28,19 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   do cliente CHEGOU. Inbound é SEMPRE o cliente falando — "via" nunca é autor.
 - Mensagens com src="workflow" são AUTOMAÇÃO: não contam como resposta do
   corretor.
+- Corpo começando com "[áudio]" = TRANSCRIÇÃO automática de uma mensagem de
+  voz — é o conteúdo real falado e vale como qualquer mensagem de texto (pode
+  ter pequenos erros de reconhecimento em nomes e números; confira com o resto
+  da conversa). Corpo "Mensagem de Áudio.", "Audio Message." ou "[audio]" =
+  áudio NÃO transcrito: existe conteúdo falado ali que você não viu — não
+  presuma o que foi dito; se for a última mensagem e a dúvida for relevante,
+  prefira tarefas que não dependam de adivinhar o conteúdo.
+- Campo "img" em uma mensagem = anexo de IMAGEM salvo localmente (o valor é
+  o caminho do arquivo). ABRA a imagem com a ferramenta Read quando ela puder
+  mudar a decisão — print de comprovante, documento, simulação de
+  financiamento, print de conversa, foto do imóvel. O que você vir é contexto
+  legítimo; cite na justificativa quando usar. Se o arquivo não abrir, siga
+  sem ele e NÃO invente o conteúdo.
 - "dir":"nota" = comentário INTERNO do corretor/equipe (o cliente NÃO vê;
   "por" diz quem escreveu). Não é mensagem da conversa, mas é contexto FORTE
   e muitas vezes decide a ação: se o corretor explica que não vai dar
