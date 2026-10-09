@@ -397,7 +397,7 @@ def preparar():
     alvos = []
     for aid in rean:
         com_audio = [d for d in cli[aid].get("msgs", [])[-10:] if d.get("audio_url")]
-        alvos += com_audio[-3:]                      # até 3 áudios por conversa
+        alvos += com_audio                           # todos os áudios da janela
     if alvos:
         modelo = None
         try:
