@@ -791,10 +791,83 @@ def textos():
                      ensure_ascii=False))
     if not res.get("ok"): sys.exit("ERRO ao publicar textos: " + r.text[:300])
 
+def checar():
+    """Check rápido de cumprimento (expediente, a cada ~30 min): marca como
+    feitas as tarefas de MENSAGEM do plano de HOJE cujo corretor mandou
+    mensagem manual pro cliente na janela recente. 100%% determinístico, só
+    GHL (3-6 requisições típicas) — encerramentos, titularidade e Robust
+    ficam pras rodadas completas. Idempotente: janela com sobreposição e o
+    portal ignora check de item já feito."""
+    agora = datetime.now(TZ)
+    log = lambda m: print(f"[{datetime.now(TZ):%H:%M:%S}] {m}", flush=True)
+    estado = requests.get(f"{PORTAL}/plano-acao/api-estado.php", headers=PA, timeout=60).json()
+    if not estado.get("ok"): sys.exit("ERRO ao ler api-estado")
+    hoje = agora.strftime("%Y-%m-%d")
+    if estado.get("ultimo_plano") != hoje:
+        print(json.dumps({"ok": True, "obs": "plano de hoje ainda não existe", "auto_checks": 0},
+                         ensure_ascii=False)); return
+    conv_por_atd = {int(c["atendimento_id"]): c.get("ghl_conv_id")
+                    for c in estado.get("clientes", [])}
+    pend = {}                                     # conv_id → {atendimento_ids pendentes}
+    for it in estado.get("itens_dia", []):
+        if int(it.get("feito") or 0) == 1: continue
+        if (it.get("acao") or "") not in MSG_ACOES: continue
+        cv = conv_por_atd.get(int(it["atendimento_id"]))
+        if cv: pend.setdefault(cv, set()).add(int(it["atendimento_id"]))
+    if not pend:
+        print(json.dumps({"ok": True, "obs": "sem pendências de mensagem", "auto_checks": 0},
+                         ensure_ascii=False)); return
+
+    # conversas com mensagem na janela (45 min: sobrepõe o check anterior)
+    corte_ms = (agora - timedelta(minutes=45)).timestamp() * 1000
+    recentes, pagina = set(), None
+    for _ in range(5):
+        url = (f"{GB}/conversations/search?locationId={LOC}&limit=100"
+               f"&sortBy=last_message_date&sort=desc")
+        if pagina: url += f"&startAfterDate={pagina}"
+        try:
+            j = requests.get(url, headers=GH, timeout=40).json()
+        except Exception:
+            break
+        convs = j.get("conversations", []) or []
+        velho = False
+        for cv in convs:
+            lm = cv.get("lastMessageDate")
+            if not isinstance(lm, (int, float)) or lm < corte_ms: velho = True; break
+            recentes.add(cv.get("id")); pagina = lm
+        if velho or not convs: break
+
+    alvo = {cv: aids for cv, aids in pend.items() if cv in recentes}
+    log(f"pendências de mensagem: {sum(len(v) for v in pend.values())} | "
+        f"com atividade recente: {len(alvo)} conversa(s)")
+    checks = []
+    for cv, aids in alvo.items():
+        try:
+            r = requests.get(f"{GB}/conversations/{cv}/messages?limit=20", headers=GH, timeout=40)
+            arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
+        except Exception:
+            arr = []
+        for m in arr:
+            if m.get("direction") != "outbound" or m.get("source") not in ("app", "api"): continue
+            if (m.get("body") or "").startswith(("Number Active", "Envio de mensagem ativa")): continue
+            t = parse_iso(m.get("dateAdded"))
+            if t and t.timestamp() * 1000 >= corte_ms:    # mensagem manual na janela
+                checks += [{"data": hoje, "atendimento_id": a} for a in aids]
+                break
+    n = 0
+    if checks:
+        r = requests.post(f"{PORTAL}/plano-acao/api-importar.php", headers=PA,
+                          json={"data": hoje, "auto_checks": checks}, timeout=60)
+        try: n = r.json().get("auto_checks", 0)
+        except Exception: pass
+    print(json.dumps({"ok": True, "pendentes_msg": sum(len(v) for v in pend.values()),
+                      "conversas_ativas": len(alvo), "auto_checks": n}, ensure_ascii=False))
+
 # =====================================================================
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "preparar": preparar()
     elif cmd == "publicar": publicar()
     elif cmd == "textos": textos()
-    else: sys.exit("uso: rotina.py preparar|publicar|textos")
+    elif cmd == "checar": checar()
+    else: sys.exit("uso: rotina.py preparar|publicar|textos|checar")
