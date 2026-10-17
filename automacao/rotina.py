@@ -408,8 +408,10 @@ def preparar():
             # incluindo o av — garante o par de versões compatível antes do import.
             import subprocess
             log("áudios: atualizando faster-whisper/av…")
+            # av fixado em <19: o PyAV 19.0.1 removeu o metadata_errors que o
+            # faster-whisper 1.2.x usa em av.open() (15.0–18.0 testadas, todas ok)
             rp = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U",
-                                 "faster-whisper", "av", "--break-system-packages"],
+                                 "faster-whisper", "av<19", "--break-system-packages"],
                                 timeout=900, capture_output=True, text=True)
             if rp.returncode != 0:
                 log("áudios: pip -U falhou (" + (rp.stderr or "")[-200:] + ") — tentando com o que há")
