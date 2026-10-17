@@ -402,17 +402,18 @@ def preparar():
     if alvos:
         modelo = None
         try:
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError:
-                log("áudios: instalando faster-whisper…")
-                import subprocess
-                rp = subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                                     "faster-whisper", "--break-system-packages"],
-                                    timeout=900, capture_output=True, text=True)
-                if rp.returncode != 0:
-                    raise RuntimeError("pip falhou: " + (rp.stderr or "")[-300:])
-                from faster_whisper import WhisperModel
+            # O container das rodadas traz um PyAV (av) ANTIGO pré-instalado, que
+            # não aceita o parâmetro metadata_errors usado pelo faster-whisper
+            # (TypeError em todo decode). Por isso o pip roda SEMPRE, com -U e
+            # incluindo o av — garante o par de versões compatível antes do import.
+            import subprocess
+            log("áudios: atualizando faster-whisper/av…")
+            rp = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U",
+                                 "faster-whisper", "av", "--break-system-packages"],
+                                timeout=900, capture_output=True, text=True)
+            if rp.returncode != 0:
+                log("áudios: pip -U falhou (" + (rp.stderr or "")[-200:] + ") — tentando com o que há")
+            from faster_whisper import WhisperModel
             try:
                 modelo = WhisperModel("small", device="cpu", compute_type="int8")
             except Exception as e1:          # download/disco? tenta o modelo menor
