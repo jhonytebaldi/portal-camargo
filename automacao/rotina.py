@@ -424,8 +424,7 @@ def preparar():
             log(f"áudios: transcrição INDISPONÍVEL ({audio_stat['erro']}) — seguindo sem")
         if modelo:
             import tempfile
-            n_ok = n_fal = 0
-            for d in alvos:
+            def _transcreve(d):
                 tmp = None
                 try:
                     r = requests.get(d["audio_url"], timeout=40)
@@ -438,12 +437,38 @@ def preparar():
                     segs, _info = modelo.transcribe(tmp, language="pt", vad_filter=True)
                     txt = " ".join(s.text.strip() for s in segs).strip()
                     if txt:
-                        d["body"] = ("[áudio] " + txt)[:400]; n_ok += 1
+                        d["body"] = ("[áudio] " + txt)[:400]
+                    return True
                 except Exception as e2:
-                    n_fal += 1
                     audio_stat.setdefault("erro_exemplo", f"{type(e2).__name__}: {e2}"[:200])
+                    return False
                 finally:
                     if tmp and os.path.exists(tmp): os.unlink(tmp)
+            # ORÇAMENTO de tempo (PA_AUDIO_BUDGET, padrão 900s): transcreve
+            # cliente a cliente, do mais recente pro mais antigo, 3 áudios em
+            # paralelo. Cliente que NÃO couber no orçamento é ADIADO: sai da
+            # re-análise desta rodada (last_analise fica como estava) e volta
+            # automaticamente na próxima — "ondas" que protegem a duração.
+            orcamento = float(os.environ.get("PA_AUDIO_BUDGET", "900"))
+            t_ini = time.time()
+            n_ok = n_fal = 0
+            cli_audio = sorted({a for a in rean
+                                if any(x.get("audio_url") for x in cli[a].get("msgs", [])[-10:])},
+                               key=lambda a: cli[a].get("last_msg") or 0, reverse=True)
+            adiados = []
+            for a in cli_audio:
+                if time.time() - t_ini > orcamento:
+                    adiados.append(a); continue
+                auds = [d for d in cli[a]["msgs"][-10:] if d.get("audio_url")]
+                with ThreadPoolExecutor(3) as ex:
+                    rs = list(ex.map(_transcreve, auds))
+                n_ok += sum(1 for x in rs if x); n_fal += sum(1 for x in rs if not x)
+            if adiados:
+                adset = set(adiados)
+                rean[:] = [a for a in rean if a not in adset]
+                audio_stat["clientes_adiados"] = len(adiados)
+                log(f"áudios: orçamento de {orcamento:.0f}s esgotado — "
+                    f"{len(adiados)} cliente(s) adiados pra próxima rodada")
             log(f"áudios transcritos: {n_ok} de {len(alvos)} (falhas {n_fal})")
             audio_stat["ok"], audio_stat["falhas"] = n_ok, n_fal
     # ---- 5c. imagens anexas: baixa as últimas de cada conversa ----
@@ -712,7 +737,9 @@ def publicar():
             "robust_atendente": c["robust_atendente"], "broker_id": rob2broker.get(c["robust_atendente"]),
             "stage": c["stage"], "ghl_contact_id": c.get("ghl_contact"), "ghl_conv_id": c.get("ghl_conv"),
             "ghl_assigned": c.get("assigned"), "last_msg_at": c.get("last_msg"),
-            "last_analise_at": agora if aid in ana else (c.get("last_analise") or agora),
+            # não analisado (ex.: adiado pelo orçamento de áudios) mantém a data
+            # antiga/nula — garante que volte na triagem da próxima rodada
+            "last_analise_at": agora if aid in ana else c.get("last_analise"),
             "resumo": None, "cobrar_em": c.get("cobrar_em")})
 
     body = {"data": DATA, "clientes": clientes_payload, "planos": planos,
