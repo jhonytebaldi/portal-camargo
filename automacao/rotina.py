@@ -398,6 +398,7 @@ def preparar():
     for aid in rean:
         com_audio = [d for d in cli[aid].get("msgs", [])[-10:] if d.get("audio_url")]
         alvos += com_audio                           # todos os áudios da janela
+    audio_stat = {"alvos": len(alvos), "ok": 0, "falhas": 0}
     if alvos:
         modelo = None
         try:
@@ -406,13 +407,20 @@ def preparar():
             except ImportError:
                 log("áudios: instalando faster-whisper…")
                 import subprocess
-                subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                                "faster-whisper", "--break-system-packages"],
-                               timeout=600, check=True)
+                rp = subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                     "faster-whisper", "--break-system-packages"],
+                                    timeout=900, capture_output=True, text=True)
+                if rp.returncode != 0:
+                    raise RuntimeError("pip falhou: " + (rp.stderr or "")[-300:])
                 from faster_whisper import WhisperModel
-            modelo = WhisperModel("small", device="cpu", compute_type="int8")
+            try:
+                modelo = WhisperModel("small", device="cpu", compute_type="int8")
+            except Exception as e1:          # download/disco? tenta o modelo menor
+                log(f"áudios: modelo small falhou ({type(e1).__name__}: {e1}) — tentando base")
+                modelo = WhisperModel("base", device="cpu", compute_type="int8")
         except Exception as e:
-            log(f"áudios: transcrição indisponível ({type(e).__name__}: {e}) — seguindo sem")
+            audio_stat["erro"] = f"{type(e).__name__}: {e}"[:300]
+            log(f"áudios: transcrição INDISPONÍVEL ({audio_stat['erro']}) — seguindo sem")
         if modelo:
             import tempfile
             n_ok = n_fal = 0
@@ -430,11 +438,13 @@ def preparar():
                     txt = " ".join(s.text.strip() for s in segs).strip()
                     if txt:
                         d["body"] = ("[áudio] " + txt)[:400]; n_ok += 1
-                except Exception:
+                except Exception as e2:
                     n_fal += 1
+                    audio_stat.setdefault("erro_exemplo", f"{type(e2).__name__}: {e2}"[:200])
                 finally:
                     if tmp and os.path.exists(tmp): os.unlink(tmp)
             log(f"áudios transcritos: {n_ok} de {len(alvos)} (falhas {n_fal})")
+            audio_stat["ok"], audio_stat["falhas"] = n_ok, n_fal
     # ---- 5c. imagens anexas: baixa as últimas de cada conversa ----
     # Os subagentes de análise TÊM visão: o lote leva o caminho local do
     # arquivo (campo "img") e a rubrica manda abrir com a ferramenta Read
@@ -547,6 +557,7 @@ def preparar():
         json.dump(lote, open(os.path.join(DIR, "lotes", f"lote_{i//TAM:02d}.json"), "w"), ensure_ascii=False)
     print(json.dumps({"ok": True, "clientes": len(cli), "re_analise": len(rean),
                       "lotes": (len(sel)+TAM-1)//TAM, "auto_checks": len(auto),
+                      "audios": audio_stat, "imagens": n_img,
                       "data_plano": ctx["data_plano"]}, ensure_ascii=False))
 
 # =====================================================================
