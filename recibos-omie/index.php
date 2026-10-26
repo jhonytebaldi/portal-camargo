@@ -105,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $grupos[$k][] = $t;
         }
         $dir = cf_data_dir() . '/recibos-omie/' . date('Y'); if (!is_dir($dir)) @mkdir($dir, 0750, true);
-        $gerados = [];
+        $gerados = []; $resumo = [];
         $pdo->beginTransaction();
         foreach ($grupos as $g) {
             $t0 = $g[0]; $p = Titulo::pessoaPorDoc($pessoas, $t0['doc']) ?: Titulo::pessoaDoFornecedor($t0);
@@ -116,21 +116,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $linhas = []; $fps = []; $ids = []; $itensGravar = [];
             foreach ($g as $t) { $num = ro_numero($pdo, $t); $linhas[] = Titulo::linhaRecibo($t, $num, $p); $fps[] = $t['fingerprint']; if ($t['omie_id']) $ids[] = (int)$t['omie_id']; $t['numero'] = $num; unset($t['_antigo']); $itensGravar[] = $t; }
             $logo = !empty($emp['logo_propria']) && is_file(__DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg') ? __DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg' : null;
+            // bairro da obra vem da capa no portal (pelo COD); sem capa, o Recibo extrai do texto do imóvel
+            foreach ($linhas as &$ln) { $cod = preg_replace('/\D+/', '', (string)($ln['capa_cod'] ?? '')); if ($cod !== '') { $qb = $pdo->prepare("SELECT bairro FROM cf_capas WHERE cod = ? AND status = 'confirmada' ORDER BY id DESC LIMIT 1"); $qb->execute([$cod]); $ln['capa_bairro'] = (string)($qb->fetchColumn() ?: ''); } } unset($ln);
             $r = Recibo::gerar($linhas, $p, $emp, $data, $cidade, $logo);
             $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
             $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
             file_put_contents($path, $r['pdf']);
             $antigos = array_values(array_unique(array_filter(array_map(fn($t) => (int)($t['_antigo'] ?? 0), $g))));
-            $pdo->prepare('INSERT INTO ro_recibos (conta, numero, fingerprints, omie_ids, fornecedor_doc, fornecedor_nome, pessoa_id, valor, data_recibo, itens, origem, validado, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-                ->execute([$t0['conta'], $r['numero'], json_encode($fps), json_encode($ids), (string)$t0['doc'], $r['recebedor'], $p['id'] ?? null, $r['valor'], $data, json_encode($itensGravar, JSON_UNESCAPED_UNICODE), $t0['origem'], (string)($t0['validado'] ?? ($t0['origem'] === 'api' ? $t0['situacao'] : '')), $nome, $path, $u['id']]);
+            $pdo->prepare('INSERT INTO ro_recibos (conta, numero, fingerprints, omie_ids, fornecedor_doc, fornecedor_nome, pessoa_id, valor, bruto, descricao_nf, data_recibo, itens, origem, validado, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                ->execute([$t0['conta'], $r['numero'], json_encode($fps), json_encode($ids), (string)$t0['doc'], $r['recebedor'], $p['id'] ?? null, $r['valor'], $r['bruto'], $r['descricao_nf'], $data, json_encode($itensGravar, JSON_UNESCAPED_UNICODE), $t0['origem'], (string)($t0['validado'] ?? ($t0['origem'] === 'api' ? $t0['situacao'] : '')), $nome, $path, $u['id']]);
             $rid = (int)$pdo->lastInsertId();
+            $resumo[] = ['id' => $rid, 'numero' => $r['numero'], 'recebedor' => $r['recebedor'], 'valor' => $r['valor'], 'bruto' => $r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'nf_encurtado' => $r['nf_encurtado'], 'link' => '?baixar=' . $rid . '&ver=1'];
             foreach ($antigos as $aid) $pdo->prepare("UPDATE ro_recibos SET status = 'substituido', substituido_por = ?, encerrado_por = ?, encerrado_em = NOW() WHERE id = ? AND status = 'atual'")->execute([$rid, $u['id'], $aid]);
             $ins = $pdo->prepare('INSERT IGNORE INTO ro_recibo_itens (recibo_id, fingerprint) VALUES (?, ?)');
             foreach ($fps as $fp) $ins->execute([$rid, $fp]);
             $gerados[] = $rid;
         }
         $pdo->commit();
-        exit(json_encode(['ok' => true, 'ids' => $gerados, 'n' => count($gerados)]));
+        exit(json_encode(['ok' => true, 'ids' => $gerados, 'n' => count($gerados), 'recibos' => $resumo], JSON_UNESCAPED_UNICODE));
     } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); $falha('erro: ' . $e->getMessage(), 500); }
 }
 
@@ -203,6 +206,7 @@ portal_header('Recibos do Omie', $u);
 <div class="cf-rev">
 <?php cf_cabecalho($gestor ? 'Recibos do Omie' : 'Meus recibos', $gestor ? 'Declaração e Recibo a partir das contas a pagar já registradas no Omie — busque pela API por período ou envie o relatório "Finanças › Contas a Pagar" (.xlsx). Mesmo modelo dos recibos da Capa Financeira.' : 'Recibos das suas comissões e bônus.', $gestor ? [['Recibos do Omie', null]] : [['Meus recibos', null]], 'recibos-omie'); ?>
 
+<?= cf_recibos_nf_ui() ?>
 <?php if ($gestor): ?>
 <div class="cf-duas" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
   <form method="post" class="card cf-upload" style="margin:0">
@@ -288,7 +292,7 @@ portal_header('Recibos do Omie', $u);
 <td><?= h(strtoupper($r['conta'])) ?></td><td class="cf-num"><?= cf_brl($r['valor']) ?></td>
 <td><small><?php foreach ($its as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? '—')) ?><br><?php endforeach; ?></small></td>
 <td><small><?= h((string)$r['validado']) ?><br><span class="cf-raw"><?= $r['origem'] === 'api' ? 'API' : '.xlsx' ?></span></small></td><td><small><?= h(substr((string)$r['gerado_em'], 0, 16)) ?><br><?= h((string)$r['por']) ?></small></td>
-<td style="white-space:nowrap"><a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>&ver=1" target="_blank" title="ver">📄</a> <a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>" title="baixar">⬇</a><?php if ($gestor && $r['status'] === 'atual'): ?> <a class="cf-x ro-cancelar" href="#" data-num="<?= h($r['numero']) ?>" title="cancelar este recibo (fica guardado como cancelado)">✖</a><?php endif; ?></td></tr>
+<td style="white-space:nowrap"><a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>&ver=1" target="_blank" title="ver">📄</a> <a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>" title="baixar">⬇</a><?php if (!empty($r['descricao_nf'])): ?> <a class="cf-x" href="#" onclick="cfNf.mostrar(this);return false" title="bruto, líquido e descrição para a Nota Fiscal" data-nf="<?= h(json_encode(['numero' => $r['numero'], 'recebedor' => $r['fornecedor_nome'], 'valor' => (float)$r['valor'], 'bruto' => (float)$r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'link' => '?baixar=' . (int)$r['id'] . '&ver=1'], JSON_UNESCAPED_UNICODE)) ?>">🧾 NF</a><?php endif; ?><?php if ($gestor && $r['status'] === 'atual'): ?> <a class="cf-x ro-cancelar" href="#" data-num="<?= h($r['numero']) ?>" title="cancelar este recibo (fica guardado como cancelado)">✖</a><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <p><a class="btn cf-btn-sec" id="h-zip" href="#" style="display:none">⬇ ZIP dos selecionados</a></p>
 <?php endif; ?>
@@ -326,7 +330,8 @@ portal_header('Recibos do Omie', $u);
     let j = null; try { j = await r.json(); } catch(e) {}
     if (!j || !j.ok) { alert(j && j.erro ? j.erro : ('erro ' + r.status)); bg.disabled = false; return; }
     if (j.ids.length === 1) window.open('?baixar=' + j.ids[0] + '&ver=1', '_blank'); else location.href = '?zip=' + j.ids.join(',');
-    setTimeout(() => location.href = '/recibos-omie/', 1500);
+    // bruto, líquido e descrição para NF de cada recibo gerado (copiar e colar) — a lista só atualiza quando o usuário clicar em "Continuar"
+    cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
   });
   function hz(){ const ids = [...document.querySelectorAll('.h-sel:checked')].map(c => +c.closest('tr').dataset.id); const z = document.getElementById('h-zip'); if (!z) return; z.style.display = ids.length ? '' : 'none'; z.href = '?zip=' + ids.join(','); z.textContent = '⬇ ZIP (' + ids.length + ')'; }
   document.querySelectorAll('.h-sel').forEach(c => c.addEventListener('change', hz));

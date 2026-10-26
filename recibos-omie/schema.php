@@ -62,6 +62,10 @@ function ro_migrar(PDO $pdo): array
             ADD COLUMN encerrado_em DATETIME NULL AFTER encerrado_por");
         $feitos[] = 'ro_recibos: status cancelado + substituido_por/motivo/encerrado_por/encerrado_em';
     }
+    if ($tem('ro_recibos') && !$col('ro_recibos', 'descricao_nf')) {
+        $pdo->exec("ALTER TABLE ro_recibos ADD COLUMN bruto DECIMAL(14,2) NULL AFTER valor, ADD COLUMN descricao_nf TEXT NULL AFTER bruto");
+        $feitos[] = 'ro_recibos.bruto/descricao_nf';
+    }
     if (!(int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='recibos-omie'")->fetchColumn()) {
         $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem) VALUES ('recibos-omie','Recibos do Omie','Recibos de comissão a partir das contas a pagar do Omie (relatório ou API)','🧾','/recibos-omie/',1,31)")->execute();
         $feitos[] = 'tool:recibos-omie';
