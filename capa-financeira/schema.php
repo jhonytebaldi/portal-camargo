@@ -199,6 +199,11 @@ function cf_migrar(PDO $pdo): array
         $feitos[] = 'tabela cf_envios_omie';
     }
     // modelo de capa 09/2026: compradores (nome, CPF, nascimento) vêm da capa
+    // recibos: valor bruto e descrição para a NF (texto para copiar)
+    if ($tem('cf_recibos') && !$colExiste('cf_recibos', 'descricao_nf')) {
+        $pdo->exec("ALTER TABLE cf_recibos ADD COLUMN bruto DECIMAL(14,2) NULL AFTER valor, ADD COLUMN descricao_nf TEXT NULL AFTER bruto");
+        $feitos[] = 'cf_recibos.bruto/descricao_nf';
+    }
     // bloco "OBSERVAÇÃO:" do fim da planilha (texto livre do financeiro) — mostrado em destaque na revisão
     // avisos graves da capa (não de linha) que o usuário confirmou — códigos; ex. COMPRADOR_COM_CNPJ
     if (!$colExiste('cf_capas', 'capa_flags_ok')) {

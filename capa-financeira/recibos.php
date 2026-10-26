@@ -49,7 +49,7 @@ if (isset($_GET['zip'])) {
 function cf_rec_linhas(PDO $pdo, array $f, ?array $ids = null): array
 {
     $sql = "SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, c.construtora AS capa_construtora, c.unidade AS capa_unidade, c.bairro AS capa_bairro,
-                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, r.id AS rec_id, r.numero AS rec_numero, r.arquivo_nome AS rec_arquivo, r.data_recibo AS rec_data, r.gerado_em AS rec_em
+                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, r.id AS rec_id, r.numero AS rec_numero, r.arquivo_nome AS rec_arquivo, r.data_recibo AS rec_data, r.gerado_em AS rec_em, r.valor AS rec_valor, r.bruto AS rec_bruto, r.descricao_nf AS rec_nf
             FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_recibos r ON r.id = l.recibo_id AND r.status = 'atual'
             WHERE l.tipo = 'P' AND l.status IN ('confirmado','exportado') AND c.status = 'confirmada' AND COALESCE(l.natureza,'') <> 'REPASSE'";
     $a = [];
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $grupos[$k][] = $l;
             }
             $dir = cf_data_dir() . '/recibos/' . date('Y'); if (!is_dir($dir)) @mkdir($dir, 0750, true);
-            $gerados = [];
+            $gerados = []; $resumo = [];
             $pdo->beginTransaction();
             foreach ($grupos as $g) {
                 $p = $pessoas[(int)$g[0]['pessoa_id']]; $emp = $empresas[$g[0]['capa_empresa']] ?? ['nome' => strtoupper($g[0]['capa_empresa']), 'razao' => '', 'cnpj' => ''];
@@ -106,14 +106,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 file_put_contents($path, $r['pdf']);
                 $lids = array_map(fn($l) => (int)$l['id'], $g);
                 foreach ($g as $l) if ($l['rec_id']) $pdo->prepare("UPDATE cf_recibos SET status = 'substituido' WHERE id = ?")->execute([$l['rec_id']]);
-                $pdo->prepare('INSERT INTO cf_recibos (numero, pessoa_id, empresa, lancamento_ids, valor, data_recibo, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?)')
-                    ->execute([$r['numero'], $p['id'], $g[0]['capa_empresa'], json_encode($lids), $r['valor'], $data, $nome, $path, $u['id']]);
+                $pdo->prepare('INSERT INTO cf_recibos (numero, pessoa_id, empresa, lancamento_ids, valor, bruto, descricao_nf, data_recibo, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+                    ->execute([$r['numero'], $p['id'], $g[0]['capa_empresa'], json_encode($lids), $r['valor'], $r['bruto'], $r['descricao_nf'], $data, $nome, $path, $u['id']]);
                 $rid = (int)$pdo->lastInsertId();
+                $resumo[] = ['id' => $rid, 'numero' => $r['numero'], 'recebedor' => $r['recebedor'], 'valor' => $r['valor'], 'bruto' => $r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'nf_encurtado' => $r['nf_encurtado'], 'link' => '?baixar=' . $rid . '&ver=1'];
                 $pdo->prepare('UPDATE cf_lancamentos SET recibo_id = ? WHERE id IN (' . implode(',', $lids) . ')')->execute([$rid]);
                 $gerados[] = $rid;
             }
             $pdo->commit();
-            exit(json_encode(['ok' => true, 'ids' => $gerados, 'n' => count($gerados)]));
+            exit(json_encode(['ok' => true, 'ids' => $gerados, 'n' => count($gerados), 'recibos' => $resumo], JSON_UNESCAPED_UNICODE));
         }
         $falha('ação inválida');
     } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); $falha('erro: ' . $e->getMessage(), 500); }
@@ -133,6 +134,7 @@ portal_header('Recibos', $u);
 <style>main.wrap{max-width:1500px}</style>
 <div class="cf-rev">
 <?php cf_cabecalho($gestor ? 'Recibos de comissão' : 'Meus recibos', $gestor ? '"Declaração e Recibo" por lançamento a pagar confirmado. Gere antes do pagamento, baixe em PDF ou ZIP; o número do recibo é o código de integração.' : 'Recibos das suas comissões e bônus, gerados pelo financeiro.', $gestor ? [['Capa Financeira', '/capa-financeira/'], ['Recibos', null]] : [['Meus recibos', null]], 'recibos'); ?>
+<?= cf_recibos_nf_ui() ?>
 
 <form method="get" class="cf-form" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
   <?php if ($gestor): ?>
@@ -172,7 +174,7 @@ portal_header('Recibos', $u);
   <td><?php if ($gestor): ?><a href="/capa-financeira/revisar.php?id=<?= (int)$l['capa_id'] ?>"><?= h((string)$l['capa_cod']) ?></a><?php else: ?><?= h((string)$l['capa_cod']) ?><?php endif; ?><br><small class="cf-raw"><?= h(mb_substr((string)$l['capa_cliente'], 0, 40)) ?> · <?= h(mb_substr((string)$l['capa_construtora'], 0, 30)) ?></small></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
   <td><?php if ($l['rec_id']): ?><a href="?baixar=<?= (int)$l['rec_id'] ?>&ver=1" target="_blank" title="<?= h((string)$l['rec_arquivo']) ?>">📄 <?= h((string)$l['rec_numero']) ?></a><br><small class="cf-raw"><?= cf_data_br($l['rec_data']) ?> · gerado <?= h(substr((string)$l['rec_em'], 0, 10)) ?></small><?php else: ?><span class="cf-raw">—</span><?php endif; ?></td>
-  <td><?php if ($l['rec_id']): ?><a class="cf-x" href="?baixar=<?= (int)$l['rec_id'] ?>" title="baixar PDF">⬇</a><?php endif; ?></td>
+  <td style="white-space:nowrap"><?php if ($l['rec_id']): ?><a class="cf-x" href="?baixar=<?= (int)$l['rec_id'] ?>" title="baixar PDF">⬇</a><?php if (!empty($l['rec_nf'])): ?> <a class="cf-x" href="#" onclick="cfNf.mostrar(this);return false" title="bruto, líquido e descrição para a Nota Fiscal" data-nf="<?= h(json_encode(['numero' => $l['rec_numero'], 'recebedor' => '', 'valor' => (float)$l['rec_valor'], 'bruto' => (float)$l['rec_bruto'], 'descricao_nf' => $l['rec_nf'], 'link' => '?baixar=' . (int)$l['rec_id'] . '&ver=1'], JSON_UNESCAPED_UNICODE)) ?>">🧾 NF</a><?php endif; endif; ?></td>
 </tr>
 <?php endforeach; ?>
 </tbody>
@@ -199,7 +201,7 @@ portal_header('Recibos', $u);
     let j = null; try { j = await r.json(); } catch(e) {}
     if (!j || !j.ok) { alert(j && j.erro ? j.erro : ('erro ' + r.status)); bg.disabled = false; return; }
     if (j.ids.length === 1) window.open('?baixar=' + j.ids[0] + '&ver=1', '_blank'); else location.href = '?zip=' + j.ids.join(',');
-    setTimeout(() => location.reload(), 1200);
+    cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
   });
 })();
 </script>

@@ -319,3 +319,25 @@ function cf_flag_texto(string $f): string
     if (str_starts_with($f, 'NATUREZA_DESCONHECIDA:')) return 'Natureza desconhecida (esperado COMISSAO ou BONUS): ' . substr($f, 22);
     return $f;
 }
+
+/** painel de resultado da geração de recibos (bruto, líquido, descrição para NF com botão copiar) + botão "NF" no histórico. HTML+JS; chamar uma vez na página. */
+function cf_recibos_nf_ui(): string
+{
+    return <<<'HTML'
+<div id="rec-nf-painel" class="aviso" style="display:none;background:#e6f4ea;border-left-color:#1e7b34"></div>
+<style>.nf-box{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}.nf-txt{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;background:#f7f7f4;border-radius:6px;padding:8px;margin:6px 0}.nf-meta{font-size:13px;color:#444}.nf-copiar{margin-left:8px}</style>
+<script>
+window.cfNf = {
+  escape: s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;'),
+  brl: v => 'R$ ' + (+v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'),
+  copiar: async (txt, btn) => { try { await navigator.clipboard.writeText(txt); } catch(e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } if (btn) { const t = btn.textContent; btn.textContent = '✔ copiado'; setTimeout(() => btn.textContent = t, 1800); } },
+  card: r => { const d = r.descricao_nf || ''; const n = d.length;
+    return '<div class="nf-box"><b>Recibo ' + cfNf.escape(r.numero) + '</b> <span class="nf-meta">· ' + cfNf.escape(r.recebedor || '') + '</span><div class="nf-meta">Valor bruto <b>' + cfNf.brl(r.bruto) + '</b> · líquido <b>' + cfNf.brl(r.valor) + '</b>' + (r.nf_encurtado ? ' · <span style="color:#b4512f">descrição encurtada para caber em 1300 caracteres</span>' : '') + '</div>'
+      + '<div class="nf-meta" style="margin-top:6px">Descrição para Nota Fiscal (' + n + '/1300 caracteres) <button type="button" class="cf-x nf-copiar" onclick="cfNf.copiar(this.parentNode.nextSibling.textContent, this)">⧉ copiar</button></div><div class="nf-txt">' + cfNf.escape(d) + '</div>'
+      + '<a class="cf-x" href="' + r.link + '" target="_blank">📄 abrir PDF</a></div>'; },
+  painel: (recibos, msgTopo) => { const p = document.getElementById('rec-nf-painel'); if (!p) return; p.style.display = ''; p.innerHTML = '<b>' + cfNf.escape(msgTopo) + '</b>' + recibos.map(cfNf.card).join('') + '<p><button type="button" class="btn cf-btn-sec" onclick="location.reload()">Continuar (atualizar a lista)</button></p>'; p.scrollIntoView({block:'start'}); },
+  mostrar: (el) => { const r = JSON.parse(el.dataset.nf); let box = document.getElementById('rec-nf-painel'); if (!box) return; box.style.display = ''; box.innerHTML = '<b>Descrição para Nota Fiscal</b>' + cfNf.card(r) + '<p><button type="button" class="btn cf-btn-sec" onclick="document.getElementById(\'rec-nf-painel\').style.display=\'none\'">fechar</button></p>'; box.scrollIntoView({block:'start'}); }
+};
+</script>
+HTML;
+}
