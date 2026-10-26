@@ -23,7 +23,7 @@ final class Recibo
      * @param string $cidade
      * @return array{pdf:string, numero:string, valor:float, recebedor:string}
      */
-    public static function gerar(array $linhas, array $pessoa, array $emp, string $dataRecibo, string $cidade = 'Joinville', ?string $logo = null): array
+    public static function gerar(array $linhas, array $pessoa, array $emp, string $dataRecibo, string $cidade = 'Joinville', ?string $logo = null, array $opcoes = []): array
     {
         [$recebedor, $docRotulo, $docNum] = self::identidade($pessoa);
         $numero = implode(' / ', array_map(fn($l) => (string)$l['codigo_integracao'], $linhas));
@@ -69,11 +69,19 @@ final class Recibo
             $p->espaco(8);
         }
         $p->espaco(10);
-        $p->paragrafo([['Valor total: ' . self::brl($total), true]]);
+        $bruto = round(array_sum(array_map(fn($l) => (float)$l['valor'], $linhas)), 2);
+        $nf = self::descricaoNf($linhas);
+        $layout = (string)($opcoes['nf_layout'] ?? 'junto');
+        // bruto, líquido e (se for o caso) a descrição da NF ficam juntos na mesma página
+        $p->garantir(40 + ($layout === 'junto' ? $p->alturaParagrafo([['Descrição para Nota Fiscal (copiar e colar): ' . $nf['texto'], false]], 8.5, 1.4) + 16 : 0));
+        $p->paragrafo([['Valor bruto: ' . self::brl($bruto), true], [abs($bruto - $total) > 0.005 ? '   (descontos: ' . self::brl($bruto - $total) . ')' : '', false]]);
+        $p->paragrafo([['Valor líquido: ' . self::brl($total), true]]);
+        if ($layout === 'junto') { $p->espaco(6); self::blocoNf($p, $nf['texto']); }
         $p->espaco(10);
         $p->paragrafo([['Desta forma, dou plena, geral, irrevogável, irretratável quitação das comissões, para nada mais reclamar em juízo ou fora dele.', false]]);
         $p->espaco(18);
         $p->paragrafo([['Por ser verdade, firmo o presente.', false]]);
+        if ($layout === 'depois') { $p->espaco(12); self::blocoNf($p, $nf['texto']); }
         // assinatura sempre perto do rodapé (mas nunca antes do texto); se não couber, vai para a próxima página
         $p->garantir(80 + 50);
         $p->setY(max($p->y() + 80, min(560, $p->limiteInferior() - 50)));
@@ -81,7 +89,73 @@ final class Recibo
         $p->espaco(6);
         $p->linha($recebedor, 'Helvetica-Bold', 11, 'C');
         $p->linha($cidade . ', ' . self::dataExtenso($dataRecibo), 'Helvetica', 11, 'C');
-        return ['pdf' => $p->bytes(), 'numero' => $numero, 'valor' => round($total, 2), 'recebedor' => $recebedor];
+        if ($layout === 'pagina') { $p->novaPagina(); $p->linha('Descrição para Nota Fiscal — ' . $numero, 'Helvetica-Bold', 12, 'E'); $p->espaco(10); $p->paragrafo([['Valor bruto: ' . self::brl($bruto), true]]); $p->paragrafo([['Valor líquido: ' . self::brl($total), true]]); $p->espaco(10); self::blocoNf($p, $nf['texto'], 10); }
+        return ['pdf' => $p->bytes(), 'numero' => $numero, 'valor' => round($total, 2), 'bruto' => $bruto, 'descricao_nf' => $nf['texto'], 'nf_formato' => $nf['formato'], 'nf_encurtado' => $nf['encurtado'], 'recebedor' => $recebedor];
+    }
+
+    /** caixa cinza "Descrição para Nota Fiscal" (texto corrido, fonte menor) */
+    private static function blocoNf(Pdf $p, string $texto, float $tam = 8.5): void
+    {
+        $p->paragrafoComFundo([['Descrição para Nota Fiscal (copiar e colar): ', true], [$texto, false]], [0.94, 0.94, 0.94], $tam, 1.4);
+    }
+
+    /** tipo de comissão para a NF, a partir da função/natureza do título */
+    public static function tipoComissao(array $l): string
+    {
+        if (($l['natureza'] ?? '') === 'BONUS') return 'BÔNUS';
+        $f = mb_strtoupper(trim((string)($l['funcao'] ?? '')), 'UTF-8'); $f = str_replace(['Ç', 'Ã', 'Á', 'É'], ['C', 'A', 'A', 'E'], $f);
+        $m = ['CORRETOR' => 'CORRETOR', 'CAPTADOR' => 'CAPTAÇÃO', 'CAPTACAO' => 'CAPTAÇÃO', 'COORDENADOR' => 'GERENTE', 'GERENTE' => 'GERENTE', 'DIRETOR' => 'DIRETOR', 'INTEGRACAO' => 'INTEGRAÇÃO', 'PRE VENDA' => 'PRÉ-VENDA', 'PRE-VENDA' => 'PRÉ-VENDA', 'PREVENDA' => 'PRÉ-VENDA'];
+        return $m[$f] ?? ($f !== '' ? $f : 'COMISSÃO');
+    }
+
+    /** bairro da obra: campo da capa (quando vier) ou o trecho do texto do imóvel antes de "UNIDADE" */
+    public static function bairro(array $l): string
+    {
+        $b = trim((string)($l['bairro'] ?? $l['capa_bairro'] ?? '')); if ($b !== '') return mb_strtoupper($b, 'UTF-8');
+        $im = (string)($l['unidade'] ?? $l['capa_unidade'] ?? ''); $partes = array_map('trim', explode(' - ', $im));
+        foreach ($partes as $i => $pt) if ($i > 0 && preg_match('/^(UNIDADE|UNID|APTO|APARTAMENTO|CASA|LOTE)\b/iu', $pt)) return mb_strtoupper($partes[$i - 1], 'UTF-8');
+        return count($partes) >= 3 ? mb_strtoupper($partes[count($partes) - 2], 'UTF-8') : '';
+    }
+
+    /**
+     * Texto para a descrição da NF: por imóvel (COD), os números dos recibos, cliente, construtora + bairro e um valor BRUTO por título
+     * com o tipo de comissão. Sem quebras de linha. Formato A (rótulos) enquanto cabe em $limite; senão B (compacto); senão encurta nomes.
+     * @return array{texto:string, formato:string, encurtado:bool}
+     */
+    public static function descricaoNf(array $linhas, int $limite = 1300): array
+    {
+        $grupos = [];
+        foreach ($linhas as $l) {
+            $k = (string)($l['capa_cod'] ?? '') ?: (string)($l['capa_cliente'] ?? '');
+            $g = &$grupos[$k]; $g ??= ['recibos' => [], 'cliente' => (string)($l['capa_cliente'] ?? $l['clientes_hist'] ?? ''), 'construtora' => (string)($l['capa_construtora'] ?? $l['construtora_hist'] ?? ''), 'bairro' => self::bairro($l), 'valores' => []];
+            if (!in_array((string)$l['codigo_integracao'], $g['recibos'], true)) $g['recibos'][] = (string)$l['codigo_integracao'];
+            $g['valores'][] = [self::tipoComissao($l), (float)$l['valor']]; unset($g);
+        }
+        $bruto = round(array_sum(array_map(fn($l) => (float)$l['valor'], $linhas)), 2);
+        $monta = function (string $fmt, int $nivel) use ($grupos, $bruto): string {
+            $enc = function (string $nome) use ($nivel): string {
+                $n = trim($nome);
+                if ($nivel >= 1) $n = trim((string)preg_replace('/\b(LTDA|ME|EPP|EIRELI|S\/A|SA)\b\.?/u', '', $n));
+                if ($nivel >= 2) $n = trim((string)preg_replace('/\b(INCORPORA[ÇC][ÕO]ES|CONSTRU[ÇC][ÕO]ES|EMPREENDIMENTOS( IMOBILI[ÁA]RIOS)?|CONSTRUTORA E INCORPORADORA|GESTAO ADMINISTRATIVA)\b/u', '', $n));
+                return trim((string)preg_replace('/\s+(E\s+)?$/u', '', (string)preg_replace('/\s{2,}/', ' ', $n)));
+            };
+            $cli = function (string $nomes) use ($nivel): string {
+                if ($nivel < 3) return $nomes;
+                return implode(' E ', array_map(function ($n) { $t = preg_split('/\s+/', trim($n)) ?: []; return count($t) > 2 ? $t[0] . ' ' . end($t) : trim($n); }, preg_split('/\s+E\s+/u', $nomes) ?: []));
+            };
+            $itens = []; $i = 0;
+            foreach ($grupos as $g) {
+                $i++; $rec = $g['recibos']; $con = $enc($g['construtora']) . ($g['bairro'] !== '' ? ($fmt === 'A' ? ' - ' : ' (') . $g['bairro'] . ($fmt === 'A' ? '' : ')') : '');
+                if ($fmt === 'A') $itens[] = 'RECIBO ' . implode(' / ', $rec) . ' | CLIENTE: ' . $cli($g['cliente']) . ' | CONSTRUTORA: ' . $con . ' | ' . implode(' | ', array_map(fn($v) => $v[0] . ': ' . self::brl($v[1]), $g['valores']));
+                else $itens[] = $i . ') ' . (count($rec) > 1 ? 'Recibos ' : 'Recibo ') . implode(', ', $rec) . ' - ' . $cli($g['cliente']) . ' - ' . $con . ' - ' . implode(', ', array_map(fn($v) => mb_convert_case(mb_strtolower($v[0], 'UTF-8'), MB_CASE_TITLE, 'UTF-8') . ' ' . self::brl($v[1]), $g['valores']));
+            }
+            return $fmt === 'A' ? implode('  ||  ', $itens) . '  ||  TOTAL BRUTO: ' . self::brl($bruto) : implode('; ', $itens) . '. Total bruto: ' . self::brl($bruto);
+        };
+        foreach ([['A', 0], ['B', 0], ['B', 1], ['B', 2], ['B', 3]] as [$fmt, $nivel]) {
+            $t = $monta($fmt, $nivel);
+            if (mb_strlen($t, 'UTF-8') <= $limite) return ['texto' => $t, 'formato' => $fmt, 'encurtado' => $nivel > 0];
+        }
+        return ['texto' => mb_substr($t, 0, $limite - 1, 'UTF-8') . '…', 'formato' => 'B', 'encurtado' => true];
     }
 
     /** quem assina: razão social + CNPJ (pagar por CNPJ) ou nome + CPF */
