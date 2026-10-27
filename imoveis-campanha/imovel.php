@@ -85,7 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($acao === 'limitar') {
             $obj = $base;
             $obj['campos'] = ImcFicha::limitar($campos, (array)($_POST['lib'] ?? []));
-            $obj['parcelas_pode_falar'] = !empty($_POST['parcelas_pode_falar']);
+            // A linha "Parcela até" só aparece quando há mês da última parcela; sem ela o
+            // checkbox não vem no POST, e ler "não veio" como "desligado" apagava o
+            // limite que ainda não existe (achado no teste contra a produção, 27/10).
+            if ((string)($imovel['parcelas_ate'] ?? '') !== '') $obj['parcelas_pode_falar'] = !empty($_POST['parcelas_pode_falar']);
         } else {
             throw new RuntimeException('Ação desconhecida.');
         }
