@@ -193,6 +193,9 @@ try {
     // ---- Listas 3C (listas-3c/schema.php): tabelas + botão na home -----
     require_once dirname(__DIR__) . '/listas-3c/schema.php';
     foreach (l3c_migrar($pdo) as $f) $feitos[] = 'listas-3c: ' . $f;
+    // ---- Imóveis da campanha (imoveis-campanha/schema.php): config + botão na home -----
+    require_once dirname(__DIR__) . '/imoveis-campanha/schema.php';
+    foreach (imc_migrar($pdo) as $f) $feitos[] = 'imoveis-campanha: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }

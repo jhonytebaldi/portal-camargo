@@ -13,6 +13,11 @@ if (is_admin($u) && is_file(__DIR__ . '/listas-3c/schema.php')) {
     require_once __DIR__ . '/listas-3c/schema.php';
     l3c_instalar_se_preciso();
 }
+// Imóveis da campanha (Bianca), mesmo jeito: o botão nasce na primeira visita de um admin.
+if (is_admin($u) && is_file(__DIR__ . '/imoveis-campanha/schema.php')) {
+    require_once __DIR__ . '/imoveis-campanha/schema.php';
+    imc_instalar_se_preciso();
+}
 $tools = user_tools($u);
 
 portal_header('Início', $u);
