@@ -171,8 +171,22 @@ function imc_estilo(): void
 .imc-ad-txt{padding:0 12px 10px;font-size:14px}
 .imc-ad-cod{display:inline-block;margin-top:4px;padding:1px 6px;border-radius:4px;background:#fff3c4;color:inherit;font-weight:700}
 .imc-ad-foto{aspect-ratio:1/1;background:#e8e4d8 center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:44px}
-.imc-ad-cta{width:100%;border:none;border-top:1px solid var(--line);background:#f4f6f5;padding:12px;font:inherit;font-weight:700;color:#1f2b26;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
-.imc-ad-cta:hover{background:#e6efe9}
+/* Voto da r42: o "Enviar mensagem" é o primeiro clique do teste, então ele chama atenção até ser tocado. */
+.imc-ad-cta{width:calc(100% - 20px);margin:10px;border:none;border-radius:10px;background:#25d366;padding:14px;font:inherit;font-size:16px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-shadow:0 2px 8px rgba(37,211,102,.35)}
+.imc-ad-cta:hover{background:#1ebe5a}
+.imc-ad-cta .imc-wa{box-shadow:inset 0 0 0 4px #fff,inset 0 0 0 6px #25d366;background:#fff}
+.imc-ad-cta.pulsa{animation:imc-pulsa 1.6s ease-in-out infinite}
+@keyframes imc-pulsa{0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.55)}50%{box-shadow:0 0 0 10px rgba(37,211,102,0)}}
+.imc-qual{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.imc-qual .imc-mini{margin:6px 0 0}
+.imc-qual-sw{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px}
+.imc-qual-sw input{position:absolute;opacity:0;width:1px;height:1px}
+.imc-qual-sw .sw{width:38px;height:22px;border-radius:11px;background:#c9cfcc;position:relative;transition:background .15s;flex:none}
+.imc-qual-sw .sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+.imc-qual-sw input:checked + .sw{background:#1f6b4f}
+.imc-qual-sw input:checked + .sw::after{left:19px}
+.imc-qual-sw input:focus-visible + .sw{outline:2px solid #1f6b4f;outline-offset:2px}
+#qualEstado{color:#5c6560}
 .imc-wa{width:18px;height:18px;border-radius:50%;background:#25d366;display:inline-block;box-shadow:inset 0 0 0 4px #25d366,inset 0 0 0 6px #fff}
 .imc-sim-ficha{margin-top:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 .imc-sim-ficha summary{cursor:pointer;font-weight:600}
