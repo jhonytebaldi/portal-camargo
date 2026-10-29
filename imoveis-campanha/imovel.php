@@ -194,7 +194,7 @@ if ($aba === 'cadastro'):
     <div class="foto" id="foto" style="aspect-ratio:7/6;border-radius:4px;background:#e8e4d8 center/cover no-repeat;<?= !empty($imovel['foto_url']) ? "background-image:url('" . h((string)$imovel['foto_url']) . "')" : '' ?>"></div>
     <p style="font-weight:700;margin:12px 0 6px" id="resumo"><?= h($resumo ?: (string)($imovel['nome'] ?? '')) ?></p>
     <?php if (!empty($imovel['codigo_robust'])): ?>
-      <p class="imc-mini" style="margin:0"><span class="imc-tag clay" style="background:#fff;color:var(--clay);border:1px solid var(--clay)">Cód. <?= h((string)$imovel['codigo_robust']) ?></span> no texto do anúncio</p>
+      <p class="imc-mini" style="margin:0"><span class="imc-tag clay" style="background:#fff;color:var(--clay);border:1px solid var(--clay)">Código <?= h((string)$imovel['codigo_robust']) ?></span> no texto do anúncio</p>
     <?php endif; ?>
     <?php if (!empty($imovel['atualizado_em'])): ?>
       <p class="imc-mini" style="margin:10px 0 0">Alterado por <?= h((string)($imovel['atualizado_por'] ?? '')) ?> · <?= h(date('d/m H:i', strtotime((string)$imovel['atualizado_em']))) ?></p>
@@ -308,7 +308,8 @@ elseif ($aba === 'previa'):
         return '';
     };
     // O anúncio de exemplo é montado com a ficha; o que liga a conversa ao imóvel
-    // de verdade é o "Cód." no texto do anúncio (LEIA.md), por isso ele aparece.
+    // de verdade é o código no texto do anúncio (LEIA.md), por isso ele aparece,
+    // escrito como a reunião de 29/10 combinou para as campanhas: "Código 1588".
     $tipo = $valor('tipo'); $bairro = $valor('bairro'); $quartos = $valor('quartos');
     $titulo = $tipo !== '' && $bairro !== '' ? "$tipo · $bairro" : (string)$imovel['nome'];
     if ($quartos !== '') $titulo .= " · $quartos " . ($quartos === '1' ? 'quarto' : 'quartos');
@@ -321,11 +322,11 @@ elseif ($aba === 'previa'):
     <div class="imc-passo"><b>1</b><span>O lead vê o anúncio e toca em <i>Enviar mensagem</i></span></div>
     <div class="imc-ad">
       <div class="imc-ad-top"><span class="imc-av">IC</span><div><b>Imobiliária Camargo</b><small>Patrocinado</small></div></div>
-      <div class="imc-ad-txt"><?= h($titulo) ?>. Fale com a gente no WhatsApp!<?php if ($codigo !== ''): ?><br><b>Cód. <?= h($codigo) ?></b><?php endif; ?></div>
+      <div class="imc-ad-txt"><?= h($titulo) ?>. Fale com a gente no WhatsApp!<?php if ($codigo !== ''): ?><br><mark class="imc-ad-cod">Código <?= h($codigo) ?></mark><?php endif; ?></div>
       <div class="imc-ad-foto" style="<?= $fundoFoto ?>"><?= $foto === '' ? '🏠' : '' ?></div>
       <button type="button" class="imc-ad-cta" id="cta"><span class="imc-wa" aria-hidden="true"></span>Enviar mensagem</button>
     </div>
-    <p class="imc-mini" style="margin:8px 2px 0">Anúncio de exemplo, montado com a ficha. Na campanha, o <b>Cód. <?= h($codigo !== '' ? $codigo : '…') ?></b> no texto do anúncio é o que faz a Bianca achar este imóvel.</p>
+    <p class="imc-mini" style="margin:8px 2px 0">Anúncio de exemplo, montado com a ficha. Na campanha, o <b>Código <?= h($codigo !== '' ? $codigo : '…') ?></b> escrito no texto do anúncio é o que faz a Bianca achar este imóvel.</p>
     <div class="imc-passo" style="margin-top:18px"><b>2</b><span>Converse como o lead, no celular</span></div>
     <details class="imc-sim-ficha">
       <summary>O que ela sabe deste imóvel <span class="imc-mini">(<?= count($liberados) + ($pa && ($imovel['parcelas_pode_falar'] ?? true) ? 1 : 0) ?> campos)</span></summary>
@@ -356,7 +357,7 @@ elseif ($aba === 'previa'):
     </div>
     <div class="imc-ref" id="ref" hidden>
       <span class="th" style="<?= $fundoFoto ?>"><?= $foto === '' ? '🏠' : '' ?></span>
-      <span class="tx"><small>Anúncio · Imobiliária Camargo</small><b><?= h($titulo) ?></b><?php if ($codigo !== ''): ?><small>Cód. <?= h($codigo) ?></small><?php endif; ?></span>
+      <span class="tx"><small>Anúncio · Imobiliária Camargo</small><b><?= h($titulo) ?></b><?php if ($codigo !== ''): ?><small>Código <?= h($codigo) ?></small><?php endif; ?></span>
     </div>
     <form class="imc-compor" id="perg">
       <input id="q" maxlength="1000" placeholder="Mensagem" autocomplete="off" aria-label="Mensagem do lead">
@@ -431,7 +432,7 @@ elseif ($aba === 'previa'):
         const usados = (l.usados_por_linha[k] || []).map(c => esc(rotulos[c] || c));
         let notas = usados.length ? `<span>usou: ${usados.join(', ')}</span>` : '';
         if (l.passou_por_linha[k]) notas += '<span class="clay">passa ao corretor</span>';
-        if (k === linhas.length - 1 && l.numeros_tirados.length) notas += `<span class="clay" title="${esc(l.numeros_tirados.join(', '))}">${l.numeros_tirados.length} número(s) fora da ficha tirado(s)</span>`;
+        if (k === linhas.length - 1 && l.numeros_tirados.length) notas += `<span class="clay" title="${esc(l.numeros_tirados.join(', '))}">fora da ficha, tirado: ${esc(l.numeros_tirados.join(', '))}</span>`;
         bolhaDela(linhas[k], notas);
       }
       fim(); return;

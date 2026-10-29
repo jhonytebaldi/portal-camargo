@@ -169,6 +169,7 @@ function imc_estilo(): void
 .imc-ad-top{display:flex;align-items:center;gap:10px;padding:10px 12px}.imc-ad-top div{display:flex;flex-direction:column;line-height:1.2}
 .imc-ad-top small,.imc-cel-top small{font-size:12px;color:var(--mute)}
 .imc-ad-txt{padding:0 12px 10px;font-size:14px}
+.imc-ad-cod{display:inline-block;margin-top:4px;padding:1px 6px;border-radius:4px;background:#fff3c4;color:inherit;font-weight:700}
 .imc-ad-foto{aspect-ratio:1/1;background:#e8e4d8 center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:44px}
 .imc-ad-cta{width:100%;border:none;border-top:1px solid var(--line);background:#f4f6f5;padding:12px;font:inherit;font-weight:700;color:#1f2b26;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
 .imc-ad-cta:hover{background:#e6efe9}
