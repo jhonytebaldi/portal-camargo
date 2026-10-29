@@ -160,6 +160,51 @@ function imc_estilo(): void
 .imc-ctx{background:#f0ede4;border-radius:6px;padding:10px 12px;font-size:13px;color:#4b5550;display:none}
 .imc-ctx.on{display:block}.imc-ctx p{margin:2px 0}
 @media (max-width:820px){.imc-cols{grid-template-columns:1fr}}
+/* r41: o teste como o lead da campanha. Tela de celular com as cores do WhatsApp (o lead à direita, ela à esquerda). */
+.imc-sim [hidden]{display:none!important} /* .imc-ref e .imc-sug têm display próprio, que venceria o hidden */
+.imc-sim{display:grid;grid-template-columns:minmax(0,340px) minmax(0,420px);gap:28px;align-items:start;justify-content:center}
+.imc-passo{display:flex;align-items:center;gap:10px;font-weight:600;margin:0 0 10px}
+.imc-passo b{width:26px;height:26px;border-radius:50%;background:var(--moss);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+.imc-ad{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.imc-ad-top{display:flex;align-items:center;gap:10px;padding:10px 12px}.imc-ad-top div{display:flex;flex-direction:column;line-height:1.2}
+.imc-ad-top small,.imc-cel-top small{font-size:12px;color:var(--mute)}
+.imc-ad-txt{padding:0 12px 10px;font-size:14px}
+.imc-ad-cod{display:inline-block;margin-top:4px;padding:1px 6px;border-radius:4px;background:#fff3c4;color:inherit;font-weight:700}
+.imc-ad-foto{aspect-ratio:1/1;background:#e8e4d8 center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:44px}
+.imc-ad-cta{width:100%;border:none;border-top:1px solid var(--line);background:#f4f6f5;padding:12px;font:inherit;font-weight:700;color:#1f2b26;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.imc-ad-cta:hover{background:#e6efe9}
+.imc-wa{width:18px;height:18px;border-radius:50%;background:#25d366;display:inline-block;box-shadow:inset 0 0 0 4px #25d366,inset 0 0 0 6px #fff}
+.imc-sim-ficha{margin-top:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.imc-sim-ficha summary{cursor:pointer;font-weight:600}
+.imc-cel{border:10px solid #1f2b26;border-radius:34px;overflow:hidden;background:#efeae2;display:flex;flex-direction:column;height:680px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.imc-cel-top{display:flex;align-items:center;gap:10px;background:#075e54;color:#fff;padding:12px 12px}
+.imc-cel-top .quem{display:flex;flex-direction:column;line-height:1.2;flex:1;min-width:0}
+.imc-cel-top small{color:#cfe6e0}.imc-cel-top small.dig{color:#fff;font-style:italic}
+.imc-cel-top button{border:1px solid rgba(255,255,255,.45);background:transparent;color:#fff;border-radius:14px;padding:4px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+.imc-cel .imc-av{background:#fff;color:#075e54}
+.imc-cel-zap{flex:1;overflow:auto;padding:12px 12px 6px;display:flex;flex-direction:column;gap:6px}
+.imc-sis{align-self:center;background:#fdf4c5;color:#54524a;font-size:12px;padding:4px 10px;border-radius:7px;text-align:center;max-width:90%}
+.imc-sis.erro{background:#f6e0d6;color:#7a3a1d}
+.imc-vazio{margin:auto 18px;text-align:center;color:#54605a;font-size:14px;background:rgba(255,255,255,.7);padding:14px;border-radius:10px}
+.imc-m{max-width:82%;width:fit-content;align-self:flex-start;background:#fff;border-radius:8px;padding:6px 9px 4px;box-shadow:0 1px .5px rgba(0,0,0,.13);font-size:14.5px;line-height:1.35}
+.imc-m.eu{align-self:flex-end;background:#d9fdd3}
+.imc-m .t{white-space:pre-wrap}.imc-m .h{float:right;font-size:11px;color:#667781;margin:6px 0 0 10px}
+.imc-m .vv{font-style:normal;color:#53bdeb}
+.imc-m .notas{clear:both;display:flex;flex-wrap:wrap;gap:4px 10px;border-top:1px dashed #d5dcd8;margin-top:5px;padding-top:3px;font-size:11.5px;color:var(--moss)}
+.imc-m .notas .clay{color:var(--clay)}
+.imc-m .imc-ref{margin:0 0 6px;border-radius:6px}
+.imc-dig{display:flex;gap:4px;padding:10px 12px}.imc-dig i{width:7px;height:7px;border-radius:50%;background:#9aa5a0;animation:imc-dig 1s infinite}
+.imc-dig i:nth-child(2){animation-delay:.15s}.imc-dig i:nth-child(3){animation-delay:.3s}
+@keyframes imc-dig{0%,60%,100%{opacity:.35;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+.imc-ref{display:flex;gap:8px;align-items:center;background:rgba(0,0,0,.05);border-left:4px solid #06cf9c;padding:6px;margin:0 8px 6px;border-radius:8px}
+.imc-ref .th{width:46px;height:46px;border-radius:5px;background:#e8e4d8 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center}
+.imc-ref .tx{display:flex;flex-direction:column;line-height:1.25;min-width:0;font-size:13px}.imc-ref small{font-size:11.5px;color:#667781}
+.imc-sug{display:flex;gap:6px;overflow-x:auto;padding:4px 8px 6px}
+.imc-sug button{flex:none;border:1px solid #c9d3ce;background:#fff;color:#075e54;border-radius:16px;padding:5px 11px;font:inherit;font-size:13px;cursor:pointer}
+.imc-compor{display:flex;gap:6px;padding:6px 8px 10px;background:#efeae2}
+.imc-compor input{flex:1;border:none;border-radius:20px;padding:10px 14px;font:inherit;font-size:14.5px;background:#fff;min-width:0}
+.imc-compor button{width:42px;height:42px;border:none;border-radius:50%;background:#00a884;color:#fff;font-size:17px;cursor:pointer;flex:none}
+@media (max-width:820px){.imc-sim{grid-template-columns:1fr;gap:18px}.imc-cel{height:600px;border-width:6px;border-radius:22px}}
 </style>
 <?php }
 

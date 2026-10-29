@@ -194,7 +194,7 @@ if ($aba === 'cadastro'):
     <div class="foto" id="foto" style="aspect-ratio:7/6;border-radius:4px;background:#e8e4d8 center/cover no-repeat;<?= !empty($imovel['foto_url']) ? "background-image:url('" . h((string)$imovel['foto_url']) . "')" : '' ?>"></div>
     <p style="font-weight:700;margin:12px 0 6px" id="resumo"><?= h($resumo ?: (string)($imovel['nome'] ?? '')) ?></p>
     <?php if (!empty($imovel['codigo_robust'])): ?>
-      <p class="imc-mini" style="margin:0"><span class="imc-tag clay" style="background:#fff;color:var(--clay);border:1px solid var(--clay)">Cód. <?= h((string)$imovel['codigo_robust']) ?></span> no texto do anúncio</p>
+      <p class="imc-mini" style="margin:0"><span class="imc-tag clay" style="background:#fff;color:var(--clay);border:1px solid var(--clay)">Código <?= h((string)$imovel['codigo_robust']) ?></span> no texto do anúncio</p>
     <?php endif; ?>
     <?php if (!empty($imovel['atualizado_em'])): ?>
       <p class="imc-mini" style="margin:10px 0 0">Alterado por <?= h((string)($imovel['atualizado_por'] ?? '')) ?> · <?= h(date('d/m H:i', strtotime((string)$imovel['atualizado_em']))) ?></p>
@@ -289,79 +289,165 @@ document.querySelectorAll('.imc-tab input[type=checkbox]').forEach(cb => cb.addE
 
 /* =====================================================================
    PRÉVIA: como ela responde (nada é enviado)
+   r41 (29/10, pedido do João depois da reunião com o Jhony): a prévia era
+   "pergunta e resposta" e não parecia conversa. Agora ela simula o caminho
+   do lead da campanha: ele vê o anúncio, toca em "Enviar mensagem", o
+   WhatsApp abre com a frase pronta da Meta já escrita e o cartão do anúncio
+   preso à primeira mensagem, e a conversa segue numa tela de celular.
+   A resposta continua sendo a da task da prévia (mesma geração do celular
+   do corretor, sem envio e sem ferramentas). A frase pronta é a da Meta
+   que mais chega nos celulares dos corretores ("Posso ter mais informações
+   sobre isso?", 14 dos 30 primeiros contatos medidos em 14/10): é ela que
+   decide a primeira fala dela, então o teste começa por ela.
    ===================================================================== */
 elseif ($aba === 'previa'):
     $liberados = array_values(array_filter($campos, fn($c) => !empty($c['pode_falar']) && trim((string)$c['valor']) !== ''));
     $pa = (string)($imovel['parcelas_ate'] ?? '');
+    $valor = function (string $chave) use ($liberados): string {
+        foreach ($liberados as $c) if ($c['chave'] === $chave) return trim((string)$c['valor']);
+        return '';
+    };
+    // O anúncio de exemplo é montado com a ficha; o que liga a conversa ao imóvel
+    // de verdade é o código no texto do anúncio (LEIA.md), por isso ele aparece,
+    // escrito como a reunião de 29/10 combinou para as campanhas: "Código 1588".
+    $tipo = $valor('tipo'); $bairro = $valor('bairro'); $quartos = $valor('quartos');
+    $titulo = $tipo !== '' && $bairro !== '' ? "$tipo · $bairro" : (string)$imovel['nome'];
+    if ($quartos !== '') $titulo .= " · $quartos " . ($quartos === '1' ? 'quarto' : 'quartos');
+    $codigo = trim((string)($imovel['codigo_robust'] ?? ''));
+    $foto = trim((string)($imovel['foto_url'] ?? ''));
+    $fundoFoto = $foto !== '' ? "background-image:url('" . h($foto) . "')" : '';
 ?>
-<div class="imc-cols" style="grid-template-columns:380px minmax(0,1fr)">
-  <div class="imc-box">
-    <div class="imc-h" style="font-size:17px">Pergunte como o lead</div>
-    <form id="perg" style="display:flex;flex-direction:column;gap:8px">
-      <input class="imc-in" id="q" maxlength="1000" placeholder="Qual a entrada? Parcela em quantas vezes?" autocomplete="off">
-      <button class="imc-btn" style="justify-content:center">Perguntar</button>
-    </form>
-    <div class="imc-chips" style="margin:10px 0 4px">
-      <?php foreach (['Valor' => 'Qual o valor?', 'Entrada' => 'Qual a entrada?', 'Metragem' => 'Qual a metragem?', 'Localização' => 'Onde fica?'] as $t => $p): ?>
-        <a href="#" class="imc-chip" data-p="<?= h($p) ?>" style="font-size:13px;padding:4px 12px"><?= h($t) ?></a>
+<div class="imc-sim">
+  <div class="imc-sim-esq">
+    <div class="imc-passo"><b>1</b><span>O lead vê o anúncio e toca em <i>Enviar mensagem</i></span></div>
+    <div class="imc-ad">
+      <div class="imc-ad-top"><span class="imc-av">IC</span><div><b>Imobiliária Camargo</b><small>Patrocinado</small></div></div>
+      <div class="imc-ad-txt"><?= h($titulo) ?>. Fale com a gente no WhatsApp!<?php if ($codigo !== ''): ?><br><mark class="imc-ad-cod">Código <?= h($codigo) ?></mark><?php endif; ?></div>
+      <div class="imc-ad-foto" style="<?= $fundoFoto ?>"><?= $foto === '' ? '🏠' : '' ?></div>
+      <button type="button" class="imc-ad-cta" id="cta"><span class="imc-wa" aria-hidden="true"></span>Enviar mensagem</button>
+    </div>
+    <p class="imc-mini" style="margin:8px 2px 0">Anúncio de exemplo, montado com a ficha. Na campanha, o <b>Código <?= h($codigo !== '' ? $codigo : '…') ?></b> escrito no texto do anúncio é o que faz a Bianca achar este imóvel.</p>
+    <div class="imc-passo" style="margin-top:18px"><b>2</b><span>Converse como o lead, no celular</span></div>
+    <details class="imc-sim-ficha">
+      <summary>O que ela sabe deste imóvel <span class="imc-mini">(<?= count($liberados) + ($pa && ($imovel['parcelas_pode_falar'] ?? true) ? 1 : 0) ?> campos)</span></summary>
+      <table class="imc-ficha" id="ficha">
+        <?php foreach ($liberados as $c): ?>
+          <tr data-chave="<?= h((string)$c['chave']) ?>"><td><?= h((string)$c['rotulo']) ?></td><td><?= h(mb_strimwidth((string)$c['valor'], 0, 60, '…')) ?></td></tr>
+        <?php endforeach; ?>
+        <?php if ($pa && ($imovel['parcelas_pode_falar'] ?? true)): ?><tr data-chave="parcelas_ate"><td>Parcela até</td><td><?= h(ImcFicha::mesCurto($pa)) ?></td></tr><?php endif; ?>
+      </table>
+      <?php if (count($liberados) < count($campos)): ?><p class="imc-mini" style="margin:8px 0 0"><?= count($campos) - count($liberados) ?> campo(s) limitado(s) ficam fora: se o lead perguntar, ela diz que o corretor confirma.</p><?php endif; ?>
+    </details>
+  </div>
+
+  <div class="imc-cel" id="cel">
+    <div class="imc-cel-top">
+      <span class="imc-av">IC</span>
+      <div class="quem"><b>Imobiliária Camargo</b><small id="estado">online</small></div>
+      <button type="button" id="recomecar" title="Apagar esta conversa e começar como um lead novo">↻ Recomeçar</button>
+    </div>
+    <div class="imc-cel-zap" id="zap">
+      <div class="imc-sis">🔒 Teste: nada é enviado a ninguém</div>
+      <div class="imc-vazio" id="vazio">Toque em <b>Enviar mensagem</b> no anúncio para chegar aqui como o lead da campanha.</div>
+    </div>
+    <div class="imc-sug" id="sug" hidden>
+      <?php foreach (['Qual o valor?', 'Qual a entrada?', 'Aceita FGTS?', 'Onde fica?', 'Quero visitar'] as $p): ?>
+        <button type="button" data-p="<?= h($p) ?>"><?= h($p) ?></button>
       <?php endforeach; ?>
     </div>
-    <div class="imc-h" style="border-top:1px solid var(--line);padding-top:14px">Ficha</div>
-    <table class="imc-ficha" id="ficha">
-      <?php foreach ($liberados as $c): ?>
-        <tr data-chave="<?= h((string)$c['chave']) ?>"><td><?= h((string)$c['rotulo']) ?></td><td><?= h(mb_strimwidth((string)$c['valor'], 0, 60, '…')) ?></td></tr>
-      <?php endforeach; ?>
-      <?php if ($pa && ($imovel['parcelas_pode_falar'] ?? true)): ?><tr data-chave="parcelas_ate"><td>Parcela até</td><td><?= h(ImcFicha::mesCurto($pa)) ?></td></tr><?php endif; ?>
-    </table>
-    <?php if (count($liberados) < count($campos)): ?><p class="imc-mini" style="margin:8px 0 0"><?= count($campos) - count($liberados) ?> campo(s) limitado(s) ficam fora da ficha dela.</p><?php endif; ?>
-  </div>
-  <div class="imc-box" style="padding:0;overflow:hidden">
-    <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--mute)">🔒 Prévia · nada é enviado</div>
-    <div class="imc-zap" id="zap" style="border-radius:0"></div>
+    <div class="imc-ref" id="ref" hidden>
+      <span class="th" style="<?= $fundoFoto ?>"><?= $foto === '' ? '🏠' : '' ?></span>
+      <span class="tx"><small>Anúncio · Imobiliária Camargo</small><b><?= h($titulo) ?></b><?php if ($codigo !== ''): ?><small>Código <?= h($codigo) ?></small><?php endif; ?></span>
+    </div>
+    <form class="imc-compor" id="perg">
+      <input id="q" maxlength="1000" placeholder="Mensagem" autocomplete="off" aria-label="Mensagem do lead">
+      <button aria-label="Enviar">➤</button>
+    </form>
   </div>
 </div>
 <script>
 (() => {
   const csrf = <?= json_encode(csrf_token()) ?>, id = <?= json_encode((string)$imovel['id']) ?>;
   const rotulos = <?= json_encode(array_column(array_merge($liberados, [['chave' => 'parcelas_ate', 'rotulo' => 'Parcela até']]), 'rotulo', 'chave'), JSON_UNESCAPED_UNICODE) ?>;
-  const sessao = crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
-  const zap = document.getElementById('zap'), q = document.getElementById('q');
+  // A frase que o WhatsApp escreve sozinho quando a pessoa toca no anúncio (a da Meta que mais chega).
+  const FRASE_DO_ANUNCIO = 'Posso ter mais informações sobre isso?';
+  const novaSessao = () => crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+  let sessao = novaSessao(), primeira = true, ocupado = false, rodada = 0;
+  const $ = s => document.getElementById(s);
+  const zap = $('zap'), q = $('q'), ref = $('ref'), sug = $('sug'), estado = $('estado'), vazio = $('vazio');
   const hora = () => new Date().toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
   const esc = t => t.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-  const bolha = (txt, ela, tags = '') => {
-    const b = document.createElement('div'); b.className = 'imc-b' + (ela ? ' ela' : '');
-    b.innerHTML = '<span class="t">' + esc(txt) + '</span>' + (tags ? `<div class="tags">${tags}</div>` : '') + `<span class="h">${hora()}${ela ? ' ✓✓' : ''}</span>`;
-    zap.appendChild(b); zap.scrollTop = zap.scrollHeight; return b;
-  };
+  // O WhatsApp mostra *negrito* e _itálico_; a tela mostra igual.
+  const comoZap = t => esc(t).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>');
+  const espera = ms => new Promise(ok => setTimeout(ok, ms));
+  const rolar = () => { zap.scrollTop = zap.scrollHeight; };
+  const sistema = (txt, erro) => { const d = document.createElement('div'); d.className = 'imc-sis' + (erro ? ' erro' : ''); d.textContent = txt; zap.appendChild(d); rolar(); };
+  function bolhaLead(txt, comAnuncio) {
+    const b = document.createElement('div'); b.className = 'imc-m eu';
+    b.innerHTML = (comAnuncio ? ref.outerHTML.replace(' id="ref" hidden', '') : '') + `<span class="t">${esc(txt)}</span><span class="h">${hora()} <i class="vv">✓✓</i></span>`;
+    zap.appendChild(b); rolar();
+  }
+  function bolhaDela(txt, notas) {
+    const b = document.createElement('div'); b.className = 'imc-m';
+    b.innerHTML = `<span class="t">${comoZap(txt)}</span><span class="h">${hora()}</span>` + (notas ? `<div class="notas">${notas}</div>` : '');
+    zap.appendChild(b); rolar();
+  }
+  function digitando(on) {
+    estado.textContent = on ? 'digitando…' : 'online'; estado.classList.toggle('dig', on);
+    let d = zap.querySelector('.imc-dig');
+    if (on && !d) { d = document.createElement('div'); d.className = 'imc-m imc-dig'; d.innerHTML = '<i></i><i></i><i></i>'; zap.appendChild(d); rolar(); }
+    if (!on && d) d.remove();
+  }
   const post = d => fetch('acao.php', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({csrf, ...d})})
     .then(r => r.json()).catch(() => ({ok: false, erro: 'sem resposta do portal'}));
-  async function perguntar(p) {
-    p = p.trim(); if (!p) return; q.value = ''; bolha(p, false);
-    const esperando = bolha('…', true);
+  // Tocar no anúncio: como no WhatsApp, a conversa abre com a frase pronta escrita e o anúncio preso a ela.
+  function chegarDoAnuncio() {
+    if (!primeira) return;
+    vazio.hidden = true; ref.hidden = false; q.value = FRASE_DO_ANUNCIO;
+    document.getElementById('cel').scrollIntoView({behavior: 'smooth', block: 'nearest'}); q.focus();
+  }
+  async function enviar(p) {
+    p = p.trim(); if (!p || ocupado) return;
+    const minha = rodada; ocupado = true; q.value = '';
+    const comAnuncio = primeira; primeira = false; vazio.hidden = true; ref.hidden = true;
+    bolhaLead(p, comAnuncio);
+    await espera(600); if (minha !== rodada) return;
+    digitando(true);
     const r = await post({acao: 'previa', id, sessao, pergunta: p});
-    if (!r.ok) { esperando.remove(); bolha(r.erro || 'Não pediu.', true, '<span class="imc-tag clay">erro</span>'); return; }
-    if (!r.chamou) { esperando.remove(); bolha('A prévia ainda não está ligada do lado da Bianca.', true, '<span class="imc-tag clay">sem prévia</span>'); return; }
+    const fim = () => { digitando(false); ocupado = false; sug.hidden = false; };
+    if (minha !== rodada) return;
+    if (!r.ok) { fim(); sistema(r.erro || 'Não consegui pedir a resposta.', true); return; }
+    if (!r.chamou) { fim(); sistema('O teste ainda não está ligado do lado da Bianca.', true); return; }
     for (let i = 0; i < 60; i++) {
-      await new Promise(ok => setTimeout(ok, 1500));
+      await espera(1500); if (minha !== rodada) return;
       const l = await post({acao: 'previa_ler', id, previa: r.id});
       if (!l.ok || l.status === 'pendente') continue;
-      esperando.remove();
-      if (l.status === 'erro') { bolha(l.erro || 'Ela não conseguiu responder.', true, '<span class="imc-tag clay">erro</span>'); return; }
+      if (l.status === 'erro') { fim(); sistema(l.erro || 'Ela não conseguiu responder.', true); return; }
       document.querySelectorAll('#ficha tr').forEach(tr => tr.classList.toggle('usado', l.usados.includes(tr.dataset.chave)));
       const linhas = l.resposta.split(/\n+/).filter(x => x.trim());
-      linhas.forEach((t, k) => {
-        const usadosAqui = l.usados_por_linha[k] || [];
-        let tags = usadosAqui.map(c => `<span class="imc-tag">${esc(rotulos[c] || c)}</span>`).join('');
-        if (l.passou_por_linha[k]) tags += '<span class="imc-tag clay">passa ao corretor</span>';
-        if (k === linhas.length - 1 && l.numeros_tirados.length) tags += `<span class="imc-tag clay" title="${esc(l.numeros_tirados.join(', '))}">${l.numeros_tirados.length} número(s) tirado(s)</span>`;
-        bolha(t, true, tags);
-      });
-      return;
+      // Uma mensagem por linha, com o "digitando" entre elas, como chega no celular do lead.
+      for (let k = 0; k < linhas.length; k++) {
+        if (k) { digitando(true); await espera(Math.min(1800, 500 + linhas[k].length * 12)); if (minha !== rodada) return; }
+        digitando(false);
+        const usados = (l.usados_por_linha[k] || []).map(c => esc(rotulos[c] || c));
+        let notas = usados.length ? `<span>usou: ${usados.join(', ')}</span>` : '';
+        if (l.passou_por_linha[k]) notas += '<span class="clay">passa ao corretor</span>';
+        if (k === linhas.length - 1 && l.numeros_tirados.length) notas += `<span class="clay" title="${esc(l.numeros_tirados.join(', '))}">fora da ficha, tirado: ${esc(l.numeros_tirados.join(', '))}</span>`;
+        bolhaDela(linhas[k], notas);
+      }
+      fim(); return;
     }
-    esperando.remove(); bolha('Ela demorou mais de 90 s. Tente de novo.', true, '<span class="imc-tag clay">sem resposta</span>');
+    fim(); sistema('Ela demorou mais de 90 s. Tente de novo.', true);
   }
-  document.getElementById('perg').addEventListener('submit', e => { e.preventDefault(); perguntar(q.value); });
-  document.querySelectorAll('[data-p]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); perguntar(a.dataset.p); }));
+  $('cta').addEventListener('click', chegarDoAnuncio);
+  $('perg').addEventListener('submit', e => { e.preventDefault(); if (primeira && !q.value.trim()) { chegarDoAnuncio(); return; } enviar(q.value); });
+  sug.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => enviar(b.dataset.p)));
+  $('recomecar').addEventListener('click', () => {
+    rodada++; sessao = novaSessao(); primeira = true; ocupado = false; q.value = '';
+    zap.querySelectorAll('.imc-m,.imc-sis.erro').forEach(n => n.remove());
+    digitando(false); vazio.hidden = false; ref.hidden = true; sug.hidden = true;
+    document.querySelectorAll('#ficha tr').forEach(tr => tr.classList.remove('usado'));
+  });
 })();
 </script>
 <?php
