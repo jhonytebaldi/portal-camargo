@@ -56,6 +56,29 @@ tarefas cumpridas detectadas viram check automático).
   gera "follow-up" com mensagem de continuidade.
 - Reimportar o mesmo dia preserva checks manuais e automáticos.
 
+## Check de cumprimento (`rotina.py checar [janela_min]`)
+
+Marca como feitas as tarefas de MENSAGEM do plano de hoje cujo corretor
+mandou mensagem manual pro cliente dentro da janela (minutos; **default 45**).
+Só lê o GHL (3-6 requisições típicas) e grava checks no portal — não toca em
+Robust nem precisa de subagentes. Idempotente (sobreposição de janela não
+duplica; o portal ignora check de item já feito).
+
+Os triggers horários automáticos (`:12`/`:42`, 8h–20h) que chamavam isso a
+cada ~30 min foram **desativados em 31/10/2026** (ficavam bloqueados pelo
+classificador de modo automático do Claude ao clonar/executar código externo
+em sessão não supervisionada — nenhum auto-check real rodava, só o erro era
+reportado). No lugar, o check roda **manualmente**, via skill
+`plano-acao-checagem-manual`, com a janela calculada desde a ÚLTIMA rodada
+completa (manhã/tarde/fechamento — ver triggers abaixo), em vez de um
+intervalo fixo. Ex.: se a última rodada completa foi às 13:30 e o check
+manual roda às 17:00, a janela é de 210 min:
+`python3 rotina.py checar 210`.
+
+Janelas longas (>60 min) aumentam o nº de páginas de conversas buscadas no
+GHL e o limite de mensagens por conversa (50 em vez de 20) pra não perder
+nada — o código já trata isso automaticamente a partir do valor passado.
+
 ## Escopo
 
 `escopo.json` → `robust_ids` dos corretores atendidos. Para incluir/remover
