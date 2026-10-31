@@ -640,6 +640,35 @@ document.addEventListener('change', async (e) => {
    Respeita os filtros ativos (equipe/ação/status/busca). Se houver itens
    SELECIONADOS dentro do plano, usa só eles. A quantidade e o formato vêm
    dos seletores "WhatsApp:" no topo (15 tarefas / completo por padrão). */
+/* Tarefa marcada como FEITA depois da rodada (check manual ou automático):
+   o texto do gestor gravado no banco não muda sozinho, então na hora de
+   copiar removemos os parágrafos dos clientes já atendidos. O parágrafo é
+   reconhecido pelo TELEFONE do cliente (o estilo sempre inclui); nome
+   completo em *negrito* é o fallback. Parágrafo agrupado (ex.: encerramentos)
+   só sai se TODOS os clientes citados nele estiverem feitos. */
+function filtraRedigido(texto, sec){
+  const feitos = [], pendentes = [];
+  sec.querySelectorAll('.pa-item').forEach(it => {
+    const chaves = [];
+    (it.querySelector('.pa-tel')?.textContent || '').split(',').forEach(t => {
+      const d = t.replace(/\D/g, '');
+      if (d.length >= 8) chaves.push(d);
+    });
+    const nome = (it.querySelector('.pa-nome')?.textContent || '').trim();
+    if (nome && nome !== '(sem nome)') chaves.push('*' + nome + '*');
+    if (!chaves.length) return;
+    (it.querySelector('.pa-check')?.checked ? feitos : pendentes).push(chaves);
+  });
+  if (!feitos.length) return texto;
+  const temRef = (bloco, chaves) => {
+    const dig = bloco.replace(/\D/g, '');
+    return chaves.some(k => /^\d+$/.test(k) ? dig.includes(k) : bloco.includes(k));
+  };
+  const blocos = texto.split(/\n\s*\n/);
+  const mantidos = blocos.filter(b =>
+    !(feitos.some(ch => temRef(b, ch)) && !pendentes.some(ch => temRef(b, ch))));
+  return (mantidos.length ? mantidos : blocos).join('\n\n');
+}
 function montaTextoWa(sec){
   const qtd = parseInt(document.getElementById('wa-qtd')?.value || '15', 10);
   const fmt = document.getElementById('wa-fmt')?.value || 'completo';
@@ -674,7 +703,7 @@ function montaTextoWa(sec){
      ou quando o corretor SELECIONOU itens específicos (aí o texto precisa
      refletir a seleção, então é montado na hora). */
   const redigido = document.getElementById('wa-' + (sec.querySelector('[data-copiar]')?.dataset.copiar || ''));
-  if (redigido && redigido.value.trim() && !sel.length) return redigido.value.trim();
+  if (redigido && redigido.value.trim() && !sel.length) return filtraRedigido(redigido.value.trim(), sec);
 
   const nome1 = sec.dataset.waNome || '';
   const h = new Date().getHours();
