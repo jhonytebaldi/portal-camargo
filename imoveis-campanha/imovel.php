@@ -324,10 +324,16 @@ elseif ($aba === 'previa'):
       <div class="imc-ad-top"><span class="imc-av">IC</span><div><b>Imobiliária Camargo</b><small>Patrocinado</small></div></div>
       <div class="imc-ad-txt"><?= h($titulo) ?>. Fale com a gente no WhatsApp!<?php if ($codigo !== ''): ?><br><mark class="imc-ad-cod">Código <?= h($codigo) ?></mark><?php endif; ?></div>
       <div class="imc-ad-foto" style="<?= $fundoFoto ?>"><?= $foto === '' ? '🏠' : '' ?></div>
-      <button type="button" class="imc-ad-cta" id="cta"><span class="imc-wa" aria-hidden="true"></span>Enviar mensagem</button>
+      <button type="button" class="imc-ad-cta pulsa" id="cta"><span class="imc-wa" aria-hidden="true"></span>Enviar mensagem</button>
     </div>
-    <p class="imc-mini" style="margin:8px 2px 0">Anúncio de exemplo, montado com a ficha. Na campanha, o <b>Código <?= h($codigo !== '' ? $codigo : '…') ?></b> escrito no texto do anúncio é o que faz a Bianca achar este imóvel.</p>
+    <p class="imc-mini" style="margin:8px 2px 0">Anúncio de exemplo, montado com a ficha. Na campanha, o <b>Código <?= h($codigo !== '' ? $codigo : '…') ?></b> vai no texto do anúncio e na mensagem pronta do WhatsApp: é por ele que a Bianca acha este imóvel.</p>
     <div class="imc-passo" style="margin-top:18px"><b>2</b><span>Converse como o lead, no celular</span></div>
+    <?php // Voto do João na r42 (29/10): a qualificação é o roteiro da Camargo e fica, mas atrapalha quem só quer
+          // conferir as dúvidas do imóvel no teste. Desligar vale só aqui; o lead de verdade sempre é qualificado. ?>
+    <div class="imc-qual">
+      <label class="imc-qual-sw"><input type="checkbox" id="qual" checked><span class="sw" aria-hidden="true"></span><b>Qualificação</b> <span id="qualEstado">ligada</span></label>
+      <p class="imc-mini" id="qualTexto"></p>
+    </div>
     <details class="imc-sim-ficha">
       <summary>O que ela sabe deste imóvel <span class="imc-mini">(<?= count($liberados) + ($pa && ($imovel['parcelas_pode_falar'] ?? true) ? 1 : 0) ?> campos)</span></summary>
       <table class="imc-ficha" id="ficha">
@@ -348,6 +354,7 @@ elseif ($aba === 'previa'):
     </div>
     <div class="imc-cel-zap" id="zap">
       <div class="imc-sis">🔒 Teste: nada é enviado a ninguém</div>
+      <div class="imc-sis" id="qualPill" hidden>Qualificação desligada: só as dúvidas do imóvel</div>
       <div class="imc-vazio" id="vazio">Toque em <b>Enviar mensagem</b> no anúncio para chegar aqui como o lead da campanha.</div>
     </div>
     <div class="imc-sug" id="sug" hidden>
@@ -369,8 +376,11 @@ elseif ($aba === 'previa'):
 (() => {
   const csrf = <?= json_encode(csrf_token()) ?>, id = <?= json_encode((string)$imovel['id']) ?>;
   const rotulos = <?= json_encode(array_column(array_merge($liberados, [['chave' => 'parcelas_ate', 'rotulo' => 'Parcela até']]), 'rotulo', 'chave'), JSON_UNESCAPED_UNICODE) ?>;
-  // A frase que o WhatsApp escreve sozinho quando a pessoa toca no anúncio (a da Meta que mais chega).
-  const FRASE_DO_ANUNCIO = 'Posso ter mais informações sobre isso?';
+  // A frase que o WhatsApp escreve sozinho quando a pessoa toca no anúncio. r43 (29/10, voto do João):
+  // nas campanhas dos imóveis a mensagem pronta do anúncio leva o código do Robust, combinado com o
+  // Jhony, para a Bianca achar o imóvel mesmo quando o cartão do anúncio não chega. Sem código, a da Meta.
+  const CODIGO = <?= json_encode((string)($imovel['codigo_robust'] ?? '')) ?>;
+  const FRASE_DO_ANUNCIO = CODIGO ? `Olá! Posso ter mais informações sobre o imóvel Código ${CODIGO}?` : 'Posso ter mais informações sobre isso?';
   const novaSessao = () => crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
   let sessao = novaSessao(), primeira = true, ocupado = false, rodada = 0;
   const $ = s => document.getElementById(s);
@@ -402,6 +412,7 @@ elseif ($aba === 'previa'):
     .then(r => r.json()).catch(() => ({ok: false, erro: 'sem resposta do portal'}));
   // Tocar no anúncio: como no WhatsApp, a conversa abre com a frase pronta escrita e o anúncio preso a ela.
   function chegarDoAnuncio() {
+    $('cta').classList.remove('pulsa');
     if (!primeira) return;
     vazio.hidden = true; ref.hidden = false; q.value = FRASE_DO_ANUNCIO;
     document.getElementById('cel').scrollIntoView({behavior: 'smooth', block: 'nearest'}); q.focus();
@@ -413,7 +424,7 @@ elseif ($aba === 'previa'):
     bolhaLead(p, comAnuncio);
     await espera(600); if (minha !== rodada) return;
     digitando(true);
-    const r = await post({acao: 'previa', id, sessao, pergunta: p});
+    const r = await post({acao: 'previa', id, sessao, pergunta: p, qualificacao: qual.checked});
     const fim = () => { digitando(false); ocupado = false; sug.hidden = false; };
     if (minha !== rodada) return;
     if (!r.ok) { fim(); sistema(r.erro || 'Não consegui pedir a resposta.', true); return; }
@@ -442,12 +453,24 @@ elseif ($aba === 'previa'):
   $('cta').addEventListener('click', chegarDoAnuncio);
   $('perg').addEventListener('submit', e => { e.preventDefault(); if (primeira && !q.value.trim()) { chegarDoAnuncio(); return; } enviar(q.value); });
   sug.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => enviar(b.dataset.p)));
-  $('recomecar').addEventListener('click', () => {
+  function recomecar() {
     rodada++; sessao = novaSessao(); primeira = true; ocupado = false; q.value = '';
     zap.querySelectorAll('.imc-m,.imc-sis.erro').forEach(n => n.remove());
     digitando(false); vazio.hidden = false; ref.hidden = true; sug.hidden = true;
     document.querySelectorAll('#ficha tr').forEach(tr => tr.classList.remove('usado'));
-  });
+  }
+  $('recomecar').addEventListener('click', recomecar);
+  // Trocar a qualificação recomeça a conversa: o histórico de um jeito confundiria a resposta do outro.
+  const qual = $('qual');
+  function mostrarQualificacao() {
+    $('qualEstado').textContent = qual.checked ? 'ligada' : 'desligada';
+    $('qualPill').hidden = qual.checked;
+    $('qualTexto').textContent = qual.checked
+      ? 'Ligada, ela segue o roteiro da Camargo, como com o lead de verdade: responde e pergunta tipo, bairro, pronto ou planta, entrada. Desligue para só tirar as dúvidas do imóvel.'
+      : 'Desligada, ela só responde as dúvidas do imóvel, sem as perguntas do roteiro. Vale só neste teste: com o lead de verdade a qualificação fica sempre ligada.';
+  }
+  qual.addEventListener('change', () => { recomecar(); mostrarQualificacao(); });
+  mostrarQualificacao();
 })();
 </script>
 <?php

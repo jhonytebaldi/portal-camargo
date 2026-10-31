@@ -58,7 +58,10 @@ try {
         $sessao = (string)($in['sessao'] ?? '');
         $p = trim((string)($in['pergunta'] ?? ''));
         if (!preg_match('/^[0-9a-f-]{36}$/', $sessao) || $p === '') imc_json(['ok' => false, 'erro' => 'Pergunta vazia.'], 400);
-        $r = $b->rpc('camargo_portal_previa_pedir', ['p_id' => $id, 'p_sessao' => $sessao, 'p_pergunta' => mb_substr($p, 0, 1000), 'p_usuario' => (string)$u['nome']]);
+        $args = ['p_id' => $id, 'p_sessao' => $sessao, 'p_pergunta' => mb_substr($p, 0, 1000), 'p_usuario' => (string)$u['nome']];
+        // Só a qualificação DESLIGADA vai no pedido (função de 6 argumentos, spec473); ligada usa a de sempre.
+        if (($in['qualificacao'] ?? true) === false) $args['p_qualificacao'] = false;
+        $r = $b->rpc('camargo_portal_previa_pedir', $args);
         imc_json(['ok' => true, 'id' => $r['id'] ?? null, 'chamou' => !empty($r['chamou'])]);
     }
 
