@@ -832,13 +832,19 @@ def textos():
                      ensure_ascii=False))
     if not res.get("ok"): sys.exit("ERRO ao publicar textos: " + r.text[:300])
 
-def checar():
-    """Check rápido de cumprimento (expediente, a cada ~30 min): marca como
-    feitas as tarefas de MENSAGEM do plano de HOJE cujo corretor mandou
-    mensagem manual pro cliente na janela recente. 100%% determinístico, só
-    GHL (3-6 requisições típicas) — encerramentos, titularidade e Robust
-    ficam pras rodadas completas. Idempotente: janela com sobreposição e o
-    portal ignora check de item já feito."""
+def checar(janela_min=45):
+    """Check rápido de cumprimento: marca como feitas as tarefas de MENSAGEM
+    do plano de HOJE cujo corretor mandou mensagem manual pro cliente dentro
+    da janela (em minutos; default 45). 100%% determinístico, só GHL —
+    encerramentos, titularidade e Robust ficam pras rodadas completas.
+    Idempotente: o portal ignora check de item já feito, então a janela pode
+    se sobrepor a uma checagem anterior sem gerar duplicidade.
+
+    Uso automático (triggers horários): janela padrão de 45 min, pensada pra
+    rodar a cada ~30 min com sobreposição.
+    Uso manual (skill `plano-acao-checagem-manual`): janela = minutos desde a
+    última rodada COMPLETA (manhã/tarde/fechamento), pra cobrir period sem
+    checagem automática ativa sem furos."""
     agora = datetime.now(TZ)
     log = lambda m: print(f"[{datetime.now(TZ):%H:%M:%S}] {m}", flush=True)
     estado = requests.get(f"{PORTAL}/plano-acao/api-estado.php", headers=PA, timeout=60).json()
@@ -859,10 +865,13 @@ def checar():
         print(json.dumps({"ok": True, "obs": "sem pendências de mensagem", "auto_checks": 0},
                          ensure_ascii=False)); return
 
-    # conversas com mensagem na janela (45 min: sobrepõe o check anterior)
-    corte_ms = (agora - timedelta(minutes=45)).timestamp() * 1000
+    # conversas com mensagem dentro da janela pedida
+    corte_ms = (agora - timedelta(minutes=janela_min)).timestamp() * 1000
     recentes, pagina = set(), None
-    for _ in range(5):
+    # nº de páginas de 100 conversas: cobre a janela inteira (cresce com ela,
+    # sem custo extra em janelas curtas — o loop já para em "velho" antes).
+    max_paginas = max(5, int(janela_min // 10) + 5)
+    for _ in range(max_paginas):
         url = (f"{GB}/conversations/search?locationId={LOC}&limit=100"
                f"&sortBy=last_message_date&sort=desc")
         if pagina: url += f"&startAfterDate={pagina}"
@@ -879,12 +888,15 @@ def checar():
         if velho or not convs: break
 
     alvo = {cv: aids for cv, aids in pend.items() if cv in recentes}
-    log(f"pendências de mensagem: {sum(len(v) for v in pend.values())} | "
+    log(f"janela: {janela_min:.0f} min | pendências de mensagem: {sum(len(v) for v in pend.values())} | "
         f"com atividade recente: {len(alvo)} conversa(s)")
     checks = []
+    # janelas longas podem ter >20 mensagens na conversa desde o corte;
+    # 50 cobre com folga sem pesar nas janelas curtas (default).
+    msg_limit = 20 if janela_min <= 60 else 50
     for cv, aids in alvo.items():
         try:
-            r = requests.get(f"{GB}/conversations/{cv}/messages?limit=20", headers=GH, timeout=40)
+            r = requests.get(f"{GB}/conversations/{cv}/messages?limit={msg_limit}", headers=GH, timeout=40)
             arr = (r.json().get("messages", {}) or {}).get("messages", []) if r.status_code == 200 else []
         except Exception:
             arr = []
@@ -901,7 +913,8 @@ def checar():
                           json={"data": hoje, "auto_checks": checks}, timeout=60)
         try: n = r.json().get("auto_checks", 0)
         except Exception: pass
-    print(json.dumps({"ok": True, "pendentes_msg": sum(len(v) for v in pend.values()),
+    print(json.dumps({"ok": True, "janela_min": janela_min,
+                      "pendentes_msg": sum(len(v) for v in pend.values()),
                       "conversas_ativas": len(alvo), "auto_checks": n}, ensure_ascii=False))
 
 # =====================================================================
@@ -910,5 +923,11 @@ if __name__ == "__main__":
     if cmd == "preparar": preparar()
     elif cmd == "publicar": publicar()
     elif cmd == "textos": textos()
-    elif cmd == "checar": checar()
-    else: sys.exit("uso: rotina.py preparar|publicar|textos|checar")
+    elif cmd == "checar":
+        # janela opcional em minutos (default 45): rotina.py checar 180
+        janela = 45
+        if len(sys.argv) > 2:
+            try: janela = float(sys.argv[2])
+            except ValueError: sys.exit("ERRO: janela deve ser um número de minutos")
+        checar(janela)
+    else: sys.exit("uso: rotina.py preparar|publicar|textos|checar [janela_min]")
