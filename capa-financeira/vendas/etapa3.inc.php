@@ -50,18 +50,11 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   <section class="card"><h2>Gatilhos (prévia da etapa 4)</h2><table class="cv-calc" id="cv-gat"></table>
     <p class="cf-dica">Quando o que o cliente pagou atinge 50%, 75% e 100% da comissão base dos corretores.</p></section>
   <section class="card cv-pend" id="cv-pend"></section>
-  <?php if (!$cancelada): ?>
-  <section class="card">
-    <div class="cv-botoes">
-      <?php if (!$e3ok): ?><button type="button" class="btn cf-btn-sec" id="cv-salvar3">Salvar rascunho</button><?php endif; ?>
-      <button type="button" class="btn" id="cv-concluir3"><?= $e3ok ? 'Salvar alterações' : 'Concluir e gerar contas a receber' ?></button>
-    </div>
-    <?php if ($v['capa_id']): ?><p class="cf-dica">Contas a receber na <a href="/capa-financeira/revisar.php?id=<?= (int)$v['capa_id'] ?>">capa #<?= (int)$v['capa_id'] ?></a> (revisar, confirmar e enviar pela Capa Financeira). Alterar as parcelas gera uma nova versão da capa.</p><?php endif; ?>
-  </section>
-  <?php endif; ?>
+  <?php if ($v['capa_id']): ?><section class="card"><p class="cf-dica" style="margin:0">Contas a receber na <a href="/capa-financeira/revisar.php?id=<?= (int)$v['capa_id'] ?>">capa #<?= (int)$v['capa_id'] ?></a> (revisar, confirmar e enviar pela Capa Financeira). Alterar as parcelas gera uma nova versão da capa.</p></section><?php endif; ?>
   <?php cv_aside_comum($venda, $hist, $cancelada); ?>
 </aside>
 </div>
+<?php cv_barra_acoes(3, $venda, $e3ok, $cancelada, 'cv-salvar3', 'cv-concluir3', 'Concluir e gerar contas a receber', $e3ok ? 'Etapa 3 concluída' : ''); ?>
 
 <script>
 (function(){

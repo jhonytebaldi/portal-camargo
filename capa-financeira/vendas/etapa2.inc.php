@@ -51,7 +51,7 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
       <button type="button" class="cv-mini-btn" id="cv-add-receb" style="margin-top:6px">+ pessoa (até 3)</button>
       <h3 style="font-size:14px;margin:14px 0 4px">Descontado de</h3>
       <p class="cf-dica" style="margin:0 0 6px">Sai do 1º pagamento de cada um quando ele cobrir o desconto; senão, do 2º — nunca parcial.
-        Atalhos: <button type="button" class="cv-mini-btn" data-div="CAPTADOR">só do captador</button><button type="button" class="cv-mini-btn" data-div="CORRETOR,CAPTADOR">corretor + captador</button><button type="button" class="cv-mini-btn" data-div="CORRETOR,CAPTADOR,COORDENADOR">corretor + captador + coordenador</button></p>
+        Atalhos: <button type="button" class="cv-mini-btn" data-div="CORRETOR">só o(s) corretor(es)</button><button type="button" class="cv-mini-btn" data-div="CAPTADOR">só do captador</button><button type="button" class="cv-mini-btn" data-div="CORRETOR,CAPTADOR">corretor + captador</button><button type="button" class="cv-mini-btn" data-div="CORRETOR,CAPTADOR,COORDENADOR">corretor + captador + coordenador</button></p>
       <table class="cv-tab"><thead><tr><th>Linha da comissão</th><th style="width:130px">Valor</th><th style="width:34px"></th></tr></thead><tbody id="cv-descs"></tbody></table>
       <button type="button" class="cv-mini-btn" id="cv-add-desc" style="margin-top:6px">+ desconto</button>
     </div>
@@ -68,18 +68,10 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
     <table class="cv-calc" id="cv-pessoas"></table>
   </section>
   <section class="card cv-pend" id="cv-pend"></section>
-  <?php if (!$cancelada): ?>
-  <section class="card">
-    <div class="cv-botoes">
-      <?php if (!$e2ok): ?><button type="button" class="btn cf-btn-sec" id="cv-salvar2">Salvar rascunho</button><?php endif; ?>
-      <button type="button" class="btn" id="cv-concluir2"><?= $e2ok ? 'Salvar alterações' : 'Concluir etapa 2' ?></button>
-    </div>
-    <?php if ($e2ok): ?><p class="cf-dica">Etapa 2 concluída em <?= h(substr((string)$venda['e2_em'], 0, 16)) ?>. Alterações continuam possíveis (ficam no histórico).</p><?php endif; ?>
-  </section>
-  <?php endif; ?>
   <?php cv_aside_comum($venda, $hist, $cancelada); ?>
 </aside>
 </div>
+<?php cv_barra_acoes(2, $venda, $e2ok, $cancelada, 'cv-salvar2', 'cv-concluir2', 'Concluir etapa 2', $e2ok ? 'Etapa 2 concluída em ' . h(substr((string)$venda['e2_em'], 0, 16)) . ' — alterações continuam possíveis (ficam no histórico)' : ''); ?>
 
 <script>
 (function(){
@@ -155,7 +147,7 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   ativo.onchange = () => {
     corpo.style.display = ativo.checked ? '' : 'none';
     if (ativo.checked && !tbR.children.length) padraoRecebem.forEach(x => addReceb({...x, valor: fmt(x.valor)}));
-    if (ativo.checked && !tbD.children.length) setTimeout(() => dividir(['CORRETOR', 'CAPTADOR']), 400);
+    if (ativo.checked && !tbD.children.length) setTimeout(() => dividir(['CORRETOR']), 400);   // padrão: só o(s) corretor(es)
     mudou();
   };
   document.getElementById('cv-add-receb').onclick = () => { addReceb({}); mudou(); };

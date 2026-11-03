@@ -52,6 +52,23 @@ function cv_aside_comum(?array $venda, array $hist, bool $cancelada): void
     echo '</ul>' . (count($hist) > 60 ? '<p class="cf-dica">Mostrando as 60 mais recentes de ' . count($hist) . '.</p>' : '') . '</section>';
 }
 
+/** barra de ações grande no fim da tela (fica visível embaixo enquanto rola): etapa anterior · salvar rascunho · concluir · próxima etapa */
+function cv_barra_acoes(int $etapa, ?array $venda, bool $concluida, bool $cancelada, string $idSalvar, string $idConcluir, string $txtConcluir, string $info = ''): void
+{
+    $id = $venda ? (int)$venda['id'] : 0;
+    $prontas = 3;   // etapas já construídas
+    echo '<div class="cv-barra-fim cv-botoes"><div class="cv-nav">';
+    if ($id && $etapa > 1) echo '<a class="btn cf-btn-sec" href="/capa-financeira/vendas/editar.php?id=' . $id . '&etapa=' . ($etapa - 1) . '">← Etapa ' . ($etapa - 1) . '</a>';
+    if ($info !== '') echo '<span class="cv-status-txt">' . $info . '</span>';
+    echo '</div><div class="cv-acoes">';
+    if (!$cancelada) {
+        if (!$concluida) echo '<button type="button" class="btn cf-btn-sec" id="' . h($idSalvar) . '">Salvar rascunho</button>';
+        echo '<button type="button" class="btn" id="' . h($idConcluir) . '">' . h($concluida ? 'Salvar alterações' : $txtConcluir) . '</button>';
+    }
+    if ($id && $etapa < $prontas) echo '<a class="btn' . ($concluida ? '' : ' cf-btn-sec') . '" href="/capa-financeira/vendas/editar.php?id=' . $id . '&etapa=' . ($etapa + 1) . '">Etapa ' . ($etapa + 1) . ' →</a>';
+    echo '</div></div>';
+}
+
 portal_header($venda ? 'Venda #' . $id : 'Nova venda', $u);
 ?>
 <style>
@@ -62,7 +79,7 @@ main.wrap{max-width:1400px}
 a.cv-step:hover{border-color:var(--moss)}
 .cv-cols{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:18px;align-items:start}
 @media(max-width:1100px){.cv-cols{grid-template-columns:1fr}}
-.cv-lado{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}
+.cv-lado{min-width:0}
 .cv-g{display:grid;gap:10px}.cv-g2{grid-template-columns:1fr 1fr}.cv-g3{grid-template-columns:2fr 1fr 1fr}.cv-g4{grid-template-columns:repeat(4,1fr)}.cv-gend{grid-template-columns:130px 2fr 1.2fr 1fr}
 @media(max-width:700px){.cv-g2,.cv-g3,.cv-g4,.cv-gend{grid-template-columns:1fr}}
 .cv-f label{display:block;font-size:12.5px;font-weight:600}
@@ -84,6 +101,11 @@ a.cv-step:hover{border-color:var(--moss)}
 .cv-desc{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#f7f7f4;border:1px solid var(--line);border-radius:6px;padding:8px;word-break:break-word}
 .cv-pend ul{margin:4px 0 0 16px;padding:0;font-size:12.5px}.cv-pend .e{color:#7a2f16}.cv-pend .a{color:#5b4a0e}
 .cv-botoes{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.cv-barra-fim{position:sticky;bottom:0;z-index:15;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:18px 0 0;padding:12px 16px;background:#fff;border:1px solid var(--line);border-top:3px solid var(--moss);border-radius:10px 10px 0 0;box-shadow:0 -6px 18px rgba(0,0,0,.08)}
+.cv-barra-fim .btn{font-size:16px;padding:12px 22px;border-radius:8px}
+.cv-barra-fim .cv-nav{display:flex;gap:10px;align-items:center}
+.cv-barra-fim .cv-acoes{display:flex;gap:10px;flex-wrap:wrap}
+.cv-barra-fim .cv-status-txt{font-size:13px;color:var(--mute)}
 .cv-hist{font-size:12px;padding-left:16px}.cv-hist li{margin:3px 0}.cv-hist .q{color:var(--mute)}
 .cv-modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:30}
 .cv-modal>div{background:#fff;border-radius:10px;max-width:640px;width:92%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.25);max-height:90vh;overflow:auto}

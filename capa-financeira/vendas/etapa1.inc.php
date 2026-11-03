@@ -112,18 +112,10 @@ $e1ok = $v['e1_status'] !== 'rascunho';
     <p class="cf-dica">Vai em todas as contas a receber. Nas contas a pagar entra depois de <code>RECIBO XXXX - NOME - CARGO - COMISSAO -</code>.</p>
   </section>
   <section class="card cv-pend" id="cv-pend"></section>
-  <?php if (!$cancelada): ?>
-  <section class="card">
-    <div class="cv-botoes">
-      <?php if (!$e1ok): ?><button type="button" class="btn cf-btn-sec" id="cv-salvar">Salvar rascunho</button><?php endif; ?>
-      <button type="button" class="btn" id="cv-concluir"><?= $e1ok ? 'Salvar alterações' : 'Concluir etapa 1' ?></button>
-    </div>
-    <?php if ($e1ok && $venda): ?><p class="cf-dica">Etapa 1 concluída em <?= h(substr((string)$venda['e1_em'], 0, 16)) ?> por <?= h((string)$venda['e1_nome']) ?>. <a href="/capa-financeira/vendas/editar.php?id=<?= $id ?>&etapa=2">Ir para a etapa 2 →</a></p><?php endif; ?>
-  </section>
-  <?php endif; ?>
   <?php cv_aside_comum($venda, $hist, $cancelada); ?>
 </aside>
 </div>
+<?php cv_barra_acoes(1, $venda, $e1ok, $cancelada, 'cv-salvar', 'cv-concluir', 'Concluir etapa 1', $e1ok && $venda ? 'Etapa 1 concluída em ' . h(substr((string)$venda['e1_em'], 0, 16)) . ' por ' . h((string)$venda['e1_nome']) : ''); ?>
 
 <template id="cv-tpl-comp">
   <div class="cv-comp">
