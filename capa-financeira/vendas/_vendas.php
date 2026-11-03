@@ -10,6 +10,7 @@ require_once __DIR__ . '/lib/Venda.php';
 require_once __DIR__ . '/lib/OmieCompradores.php';
 require_once __DIR__ . '/lib/Distribuicao.php';
 require_once __DIR__ . '/lib/Fluxo.php';
+require_once __DIR__ . '/lib/Pagamentos.php';
 
 /** venda + compradores; null se não existe */
 function cv_carregar(int $id): ?array
@@ -26,6 +27,7 @@ function cv_carregar(int $id): ?array
     $st->execute([$id]);
     $v['e2'] = $v['e2_dados'] ? (json_decode((string)$v['e2_dados'], true) ?: null) : null;
     $v['e3'] = !empty($v['e3_dados']) ? (json_decode((string)$v['e3_dados'], true) ?: null) : null;
+    $v['e4'] = !empty($v['e4_dados']) ? (json_decode((string)$v['e4_dados'], true) ?: null) : null;
     $v['compradores'] = array_map(function ($c) {
         $c['omie_codigo'] = $c['omie_codigo'] !== null ? (int)$c['omie_codigo'] : null;
         return $c;
@@ -359,7 +361,13 @@ function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u)
  * preenche cliente (CPF/CNPJ de quem paga) e conta corrente de cada linha.
  * @return int id da capa em revisão
  */
-function cv_gerar_receber(int $id, array $u): int
+function cv_gerar_receber(int $id, array $u): int { return cv_gerar_capa($id, $u); }
+
+/**
+ * Gera a nova versão da capa da venda: contas a receber (etapa 3) + pagamentos LIBERADOS pelo financeiro (etapa 4).
+ * Importa pelo mesmo caminho do upload; grava cliente/conta das linhas a receber e a ligação pagamento → linha da capa.
+ */
+function cv_gerar_capa(int $id, array $u): int
 {
     require_once __DIR__ . '/lib/CapaXlsx.php';
     require_once dirname(__DIR__) . '/_importar.php';
@@ -370,7 +378,8 @@ function cv_gerar_receber(int $id, array $u): int
     if (!is_dir($dir)) @mkdir($dir, 0750, true);
     $nome = Venda::nomeArquivo($v, $v['compradores'], date('Y-m-d H:i:s'));
     $destino = $dir . '/' . date('Ymd-His') . '-venda' . $id . '-' . $nome;
-    $mapa = CapaXlsx::gerar($v, array_column(cf_pessoas(true), 'nome'), $empNome, date('d/m/Y H:i') . ' por ' . $u['nome'], $destino);
+    $pag = Pagamentos::calcular($v, $v['e4'], cv_feriados());
+    $mapa = CapaXlsx::gerar($v, array_column(cf_pessoas(true), 'nome'), $empNome, date('d/m/Y H:i') . ' por ' . $u['nome'], $destino, ['pagamentos' => $pag, 'para_importar' => true]);
     $capaId = cf_importar_capa($destino, (string)$v['empresa'], $nome, $u, $v['capa_id'] ? (int)$v['capa_id'] : null, false);
     $upd = db()->prepare("UPDATE cf_lancamentos SET cliente_omie = ?, conta_corrente = ? WHERE capa_id = ? AND linha_xlsx = ? AND tipo = 'R'");
     $ordem = Fluxo::ordenadas($v['e3']['parcelas']);
@@ -379,8 +388,15 @@ function cv_gerar_receber(int $id, array $u): int
         $pg = Fluxo::pagador($p, $v['compradores']);
         $upd->execute([$pg['documento'] !== '' ? Venda::docFormatado($pg['documento']) : null, $p['conta'] ?: null, $capaId, $linha]);
     }
+    // pagamento liberado → linha da capa (para mostrar se já foi enviado ao Omie)
+    if (!empty($mapa['pagar']) && $v['e4']) {
+        $e4 = $v['e4'];
+        foreach ($mapa['pagar'] as $linha => $k) if (isset($e4['liberados'][$k])) { $e4['liberados'][$k]['linha'] = $linha; $e4['liberados'][$k]['capa'] = $capaId; }
+        db()->prepare('UPDATE cv_vendas SET e4_dados = ? WHERE id = ?')->execute([json_encode($e4, JSON_UNESCAPED_UNICODE), $id]);
+    }
     db()->prepare('UPDATE cv_vendas SET capa_id = ?, rev = rev + 1 WHERE id = ?')->execute([$capaId, $id]);
-    cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (em revisão na Capa Financeira)', $u);
+    if (!empty($mapa['pagar'])) cv_hist($id, 4, 'contas_receber', 'Contas a receber e a pagar', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'nova versão na capa #' . $capaId . ' com ' . count($mapa['pagar']) . ' pagamento(s) liberado(s) (em revisão na Capa Financeira)', $u);
+    else cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (em revisão na Capa Financeira)', $u);
     return $capaId;
 }
 
@@ -428,4 +444,90 @@ function cv_titulos_para_cancelar(array $venda): array
             'pago' => $pago, 'acao' => $baixado ? 'bloqueado' : ($t ? 'excluir' : 'nada'), 'linha_id' => (int)$l['id']];
     }
     return ['titulos' => array_values($out), 'capas' => $capas, 'empresa' => $emp];
+}
+
+/** feriados configurados ('Y-m-d' => nome) */
+function cv_feriados(): array
+{
+    $f = cf_config('feriados', null);
+    return is_array($f) && $f ? $f : Pagamentos::feriadosPadrao((int)date('Y') - 1, (int)date('Y') + 4);
+}
+
+/** só o financeiro libera pagamentos: admins + logins em cf_config 'cv_liberadores' */
+function cv_pode_liberar(array $u): bool
+{
+    if (is_admin($u)) return true;
+    $l = array_map(fn($x) => mb_strtolower(trim((string)$x)), (array)cf_config('cv_liberadores', []));
+    return in_array(mb_strtolower((string)$u['login']), $l, true);
+}
+
+/** situação de cada pagamento liberado na Capa Financeira: revisao | confirmado | exportado | removido… (por chave) */
+function cv_status_pagamentos(array $venda): array
+{
+    $out = [];
+    $lib = $venda['e4']['liberados'] ?? [];
+    $st = db()->prepare('SELECT status, alteracao_pos_exportacao, codigo_integracao FROM cf_lancamentos WHERE capa_id = ? AND linha_xlsx = ? AND tipo = \'P\'');
+    foreach ($lib as $k => $x) {
+        if (empty($x['capa']) || empty($x['linha'])) { $out[$k] = ['status' => 'gerando', 'codigo' => null]; continue; }
+        $st->execute([(int)$x['capa'], (int)$x['linha']]);
+        $r = $st->fetch();
+        $out[$k] = $r ? ['status' => $r['status'], 'codigo' => $r['codigo_integracao'], 'alterado' => (int)$r['alteracao_pos_exportacao'] === 1] : ['status' => 'sumiu', 'codigo' => null];
+    }
+    return $out;
+}
+
+/** grava datas/condições e liberações da etapa 4 (trava otimista + histórico) */
+function cv_gravar_e4(int $id, int $rev, array $e4, array $u, array $hist): int
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $st = $pdo->prepare('SELECT rev FROM cv_vendas WHERE id = ? FOR UPDATE');
+        $st->execute([$id]);
+        $atual = $st->fetchColumn();
+        if ($atual === false) throw new RuntimeException('Venda não encontrada.');
+        if ((int)$atual !== $rev) throw new RuntimeException('Esta venda foi alterada por outra pessoa enquanto você editava. Recarregue a página (suas mudanças não foram gravadas).');
+        $pdo->prepare('UPDATE cv_vendas SET e4_dados = ?, rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?')->execute([json_encode($e4, JSON_UNESCAPED_UNICODE), (int)$u['id'], $id]);
+        foreach ($hist as [$acao, $campo, $a, $d]) cv_hist($id, 4, $acao, $campo, $a, $d, $u);
+        $novo = (int)$pdo->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        $pdo->commit();
+        return $novo;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/** etapa 4 concluída quando todos os pagamentos foram liberados; venda concluída quando, além disso, todos foram ao Omie */
+function cv_atualizar_conclusao(int $id, array $u): void
+{
+    $v = cv_carregar($id);
+    if (!$v || $v['status'] === 'cancelada' || !$v['e4']) return;
+    $r = Pagamentos::calcular($v, $v['e4'], cv_feriados());
+    if (!$r['pagamentos'] || $r['erros']) return;
+    $todosLib = !array_filter($r['pagamentos'], fn($p) => !$p['liberado']);
+    $sts = cv_status_pagamentos($v);
+    $todosEnv = $todosLib && !array_filter($r['pagamentos'], fn($p) => ($sts[$p['chave']]['status'] ?? '') !== 'exportado');
+    if (!$todosLib && $v['e4_status'] !== 'rascunho') {
+        db()->prepare("UPDATE cv_vendas SET e4_status = 'rascunho' WHERE id = ?")->execute([$id]);
+        cv_hist($id, 4, 'reabrir', 'Etapa 4', 'concluída', 'há pagamento aguardando liberação', $u);
+    }
+    if (!$todosEnv && $v['status'] === 'concluida') {
+        db()->prepare("UPDATE cv_vendas SET status = 'andamento' WHERE id = ?")->execute([$id]);
+        cv_hist($id, 0, 'reabrir', 'Venda', 'concluída', 'há pagamento ainda não enviado ao Omie', $u);
+    }
+    if ($todosLib && $v['e4_status'] === 'rascunho') {
+        db()->prepare("UPDATE cv_vendas SET e4_status = 'concluida', e4_em = NOW(), e4_por = ? WHERE id = ?")->execute([(int)$u['id'], $id]);
+        cv_hist($id, 4, 'concluir', 'Etapa 4', 'rascunho', 'concluída (todos os pagamentos liberados)', $u);
+    }
+    if ($todosEnv && $v['status'] !== 'concluida' && $v['e3_status'] !== 'rascunho') {
+        db()->prepare("UPDATE cv_vendas SET status = 'concluida' WHERE id = ?")->execute([$id]);
+        cv_hist($id, 0, 'concluir', 'Venda', $v['status'], 'concluída (todos os pagamentos enviados ao Omie)', $u);
+    }
+}
+
+/** 'Y-m-d' → 'dd/mm/aaaa' (vazio se nulo) */
+function cv_data_br(?string $d): string
+{
+    return $d ? implode('/', array_reverse(explode('-', substr($d, 0, 10)))) : '';
 }

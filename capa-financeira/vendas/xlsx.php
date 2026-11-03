@@ -20,7 +20,8 @@ $ultima = date('d/m/Y H:i', strtotime((string)$v['atualizado_em'])) . ' por ' . 
 
 $tmp = tempnam(sys_get_temp_dir(), 'capa');
 try {
-    CapaXlsx::gerar($v, $pessoas, $empNome, $ultima, $tmp);
+    $pag = (!empty($v['e2']['linhas']) && !empty($v['e3']['parcelas'])) ? Pagamentos::calcular($v, $v['e4'], cv_feriados()) : null;
+    CapaXlsx::gerar($v, $pessoas, $empNome, $ultima, $tmp, ['pagamentos' => $pag]);
 } catch (Throwable $e) {
     @unlink($tmp); http_response_code(500); exit('Não consegui gerar a planilha: ' . h($e->getMessage()));
 }

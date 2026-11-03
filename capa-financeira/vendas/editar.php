@@ -1,7 +1,7 @@
 <?php
 /* =====================================================================
    capa-financeira/vendas/editar.php — formulário da capa de venda.
-   ?id=N&etapa=1|2 — cada etapa num arquivo (etapa1.inc.php, etapa2.inc.php);
+   ?id=N&etapa=1..4 — cada etapa num arquivo (etapa1.inc.php … etapa4.inc.php);
    aqui ficam o cabeçalho, as abas das etapas, os helpers de JS comuns e o
    painel lateral comum (datas, cancelar/descancelar, histórico).
    Cálculos e validação vêm sempre do servidor (api.php → previa/previa2).
@@ -13,7 +13,7 @@ $u = require_tool('capa-financeira');
 $id = (int)($_GET['id'] ?? 0);
 $venda = $id ? cv_carregar($id) : null;
 if ($id && !$venda) { http_response_code(404); portal_header('Venda', $u); echo '<p class="aviso">Venda não encontrada.</p>'; portal_footer(); exit; }
-$etapa = $venda ? max(1, min(3, (int)($_GET['etapa'] ?? 1))) : 1;
+$etapa = $venda ? max(1, min(4, (int)($_GET['etapa'] ?? 1))) : 1;
 
 $v = $venda ?? (['id' => 0, 'empresa' => '', 'construtora' => '', 'endereco' => '', 'bairro' => '', 'cep' => '', 'unidade' => '', 'cod_imovel' => '', 'status_imovel' => null, 'data_venda' => null,
                  'valor_contrato' => null, 'valor_bonus' => null, 'documentacao' => null, 'descontos' => null, 'obs' => null, 'e1_status' => 'rascunho',
@@ -38,13 +38,15 @@ function cv_aside_comum(?array $venda, array $hist, bool $cancelada): void
         $q = '<span class="q">' . h(date('d/m H:i', strtotime($hh['quando']))) . ' · ' . h($hh['user_nome']) . ($hh['etapa'] ? ' · etapa ' . (int)$hh['etapa'] : '') . '</span> — ';
         $t = match ($hh['acao']) {
             'criar' => 'criou a venda',
-            'concluir' => '<b>concluiu a etapa ' . (int)$hh['etapa'] . '</b>',
-            'reabrir' => '<b>etapa ' . (int)$hh['etapa'] . ' voltou a rascunho</b> (' . h((string)$hh['depois']) . ')',
+            'concluir' => (int)$hh['etapa'] ? '<b>concluiu a etapa ' . (int)$hh['etapa'] . '</b>' . ((int)$hh['etapa'] === 4 ? ' (todos os pagamentos liberados)' : '') : '<b>venda concluída</b> (todos os pagamentos no Omie)',
+            'reabrir' => '<b>' . ((int)$hh['etapa'] ? 'etapa ' . (int)$hh['etapa'] . ' voltou a rascunho' : 'venda voltou a “em andamento”') . '</b> (' . h((string)$hh['depois']) . ')',
             'cancelar' => '<b>cancelou a venda</b> (' . h((string)$hh['depois']) . ')',
             'descancelar' => '<b>descancelou a venda</b> (voltou a ' . h((string)$hh['depois']) . ')',
             'omie_cadastro', 'omie_vinculo', 'bairro_novo' => h((string)$hh['campo']) . ': ' . h((string)$hh['depois']),
             'xlsx' => 'baixou a planilha',
             'contas_receber' => '<b>' . h((string)$hh['depois']) . '</b>',
+            'liberar' => '<b>' . h((string)$hh['campo']) . '</b> — ' . h((string)$hh['depois']) . ((string)$hh['antes'] !== 'aguardando' ? ' <small>(antes: ' . h((string)$hh['antes']) . ')</small>' : ''),
+            'desliberar' => '<b>desfez a liberação</b> de ' . h((string)$hh['campo']) . ' (' . h((string)$hh['antes']) . ')',
             default => h((string)$hh['campo']) . ': ' . ((string)$hh['antes'] !== '' ? '<s>' . h((string)$hh['antes']) . '</s> → ' : '') . ((string)$hh['depois'] !== '' ? h((string)$hh['depois']) : '<i>(vazio)</i>'),
         };
         echo '<li>' . $q . $t . '</li>';
@@ -56,7 +58,7 @@ function cv_aside_comum(?array $venda, array $hist, bool $cancelada): void
 function cv_barra_acoes(int $etapa, ?array $venda, bool $concluida, bool $cancelada, string $idSalvar, string $idConcluir, string $txtConcluir, string $info = ''): void
 {
     $id = $venda ? (int)$venda['id'] : 0;
-    $prontas = 3;   // etapas já construídas
+    $prontas = 4;   // etapas já construídas
     echo '<div class="cv-barra-fim cv-botoes"><div class="cv-nav">';
     if ($id && $etapa > 1) echo '<a class="btn cf-btn-sec" href="/capa-financeira/vendas/editar.php?id=' . $id . '&etapa=' . ($etapa - 1) . '">← Etapa ' . ($etapa - 1) . '</a>';
     if ($info !== '') echo '<span class="cv-status-txt">' . $info . '</span>';
@@ -131,7 +133,7 @@ details.cv-par summary{cursor:pointer;font-size:13px;font-weight:600;color:var(-
   <?php
   $steps = [1 => 'Dados da venda', 2 => 'Distribuição das comissões', 3 => 'Fluxo do cliente e recebidos', 4 => 'Pagamentos aos corretores'];
   foreach ($steps as $n => $t) {
-      $pronta = $n <= 3;
+      $pronta = $n <= 4;
       $cls = 'cv-step' . ($n === $etapa ? ' on' : '') . (!$pronta ? ' off' : '');
       $badge = $pronta ? cv_etapa_badge($v["e{$n}_status"]) : 'em construção';
       if ($pronta && $venda && $n !== $etapa) echo '<a class="' . $cls . '" href="/capa-financeira/vendas/editar.php?id=' . $id . '&etapa=' . $n . '"><b>' . $n . ' · ' . $t . '</b>' . $badge . '</a>';
@@ -208,5 +210,5 @@ document.addEventListener('click', async ev => {
 });
 </script>
 
-<?php require __DIR__ . ['', '/etapa1.inc.php', '/etapa2.inc.php', '/etapa3.inc.php'][$etapa]; ?>
+<?php require __DIR__ . ['', '/etapa1.inc.php', '/etapa2.inc.php', '/etapa3.inc.php', '/etapa4.inc.php'][$etapa]; ?>
 <?php portal_footer();

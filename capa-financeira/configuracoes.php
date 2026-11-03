@@ -53,6 +53,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cf_config_set('cidade_recibo', CapaParser::norm((string)($_POST['cidade_recibo'] ?? 'Joinville')));
             cf_config_set('omie_pix_modo', in_array($_POST['omie_pix_modo'] ?? '', ['TRA', 'PIX', 'NENHUM'], true) ? $_POST['omie_pix_modo'] : 'TRA');
             $msg = 'Empresas salvas.';
+        } elseif ($op === 'vendas_pag') {
+            if (!is_admin($u)) throw new RuntimeException('Só administradores alteram quem libera pagamentos e os feriados.');
+            $fer = [];
+            foreach (preg_split('/\r?\n/', (string)($_POST['feriados'] ?? '')) ?: [] as $ln) {
+                $ln = trim($ln); if ($ln === '') continue;
+                if (!preg_match('#^(\d{2})/(\d{2})/(\d{4})\s*(?:[=\-–]\s*(.*))?$#u', $ln, $m) || !checkdate((int)$m[2], (int)$m[1], (int)$m[3])) throw new RuntimeException("Feriado inválido: \"$ln\" (use dd/mm/aaaa = nome)");
+                $fer["$m[3]-$m[2]-$m[1]"] = trim((string)($m[4] ?? '')) ?: 'feriado';
+            }
+            ksort($fer);
+            cf_config_set('feriados', $fer);
+            $lib = array_values(array_unique(array_filter(array_map(fn($x) => mb_strtolower(trim($x)), preg_split('/[\s,;]+/', (string)($_POST['liberadores'] ?? '')) ?: []))));
+            cf_config_set('cv_liberadores', $lib);
+            $msg = 'Feriados e liberadores salvos.';
+        } elseif ($op === 'vendas_feriados_padrao') {
+            if (!is_admin($u)) throw new RuntimeException('Só administradores alteram os feriados.');
+            require_once __DIR__ . '/vendas/lib/Pagamentos.php';
+            $fer = (array)cf_config('feriados', []);
+            $fer += Pagamentos::feriadosPadrao((int)date('Y'), (int)date('Y') + 4);
+            ksort($fer);
+            cf_config_set('feriados', $fer);
+            $msg = 'Feriados nacionais e de Joinville dos próximos anos incluídos.';
         }
     } catch (Throwable $e) { $erro = $e->getMessage(); }
 }
@@ -112,5 +133,22 @@ portal_header('Configurações — Capa Financeira', $u);
   </div>
   <button class="btn">Salvar empresas</button>
   </form>
+</section>
+
+<section class="card" id="vendas">
+  <h2>Vendas — pagamentos aos corretores</h2>
+  <?php $adm = is_admin($u); $ferCfg = (array)cf_config('feriados', []); $libCfg = (array)cf_config('cv_liberadores', []); ?>
+  <p class="cf-dica">Feriados: se a quinta-feira de pagamento cair num feriado, o pagamento vai para a quarta. Quem libera pagamentos: administradores + os logins abaixo (financeiro).</p>
+  <form method="post" class="cf-form"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="vendas_pag">
+  <div class="cf-duas">
+    <label>Feriados (um por linha: <code>dd/mm/aaaa = nome</code>)
+      <textarea name="feriados" rows="14" <?= $adm ? '' : 'readonly' ?>><?= h(implode("\n", array_map(fn($d, $n) => implode('/', array_reverse(explode('-', $d))) . ' = ' . $n, array_keys($ferCfg), $ferCfg))) ?></textarea></label>
+    <label>Logins que liberam pagamentos (um por linha ou separados por vírgula)
+      <textarea name="liberadores" rows="6" <?= $adm ? '' : 'readonly' ?>><?= h(implode("\n", $libCfg)) ?></textarea></label>
+  </div>
+  <?php if ($adm): ?><button class="btn">Salvar feriados e liberadores</button><?php else: ?><p class="cf-dica">Só administradores alteram esta parte.</p><?php endif; ?>
+  </form>
+  <?php if ($adm): ?><form method="post" style="margin-top:6px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="vendas_feriados_padrao">
+    <button class="btn cf-btn-sec">Incluir feriados nacionais + Joinville dos próximos 5 anos</button></form><?php endif; ?>
 </section>
 <?php portal_footer();
