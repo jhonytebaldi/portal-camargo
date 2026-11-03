@@ -52,7 +52,10 @@ Em vez de enviar a planilha pronta, a equipe preenche a capa no portal, por etap
   última, diretores (arras + restante na de 50%), conclusão do processo (desconto no 1º ou 2º pagamento, nunca parcial).
   Data: cliente paga até segunda → quinta da mesma semana; terça–domingo → quinta da seguinte; quinta feriado → quarta
   (`cf_config` 'feriados'). Travas → data manual nas etapas depois da de 50% (bônus não); condição → data manual.
-  Só o financeiro libera (admins + `cf_config` 'cv_liberadores', em Configurações). Liberar/desfazer regera a capa da venda
+  Cada linha de pagamento pode ser ajustada à mão (✎ ou duplo clique: data, valor, condição, observação → `e4_dados.linhas`);
+  a data/condição da etapa vale para todas as linhas sem ajuste próprio. Soma acima da etapa 2 = erro.
+  Só o financeiro libera (admins + `cf_config` 'cv_liberadores', em Configurações) — por padrão "Liberar todos" (tudo de uma
+  vez, como as contas a receber); "liberação parcial…" mostra caixas para liberar/desfazer só alguns. Liberar/desfazer regera a capa da venda
   (contas a receber + contas a pagar LIBERADAS, com o valor/data/condição do momento da liberação) e importa como nova versão;
   na confirmação, linhas iguais herdam o status "exportado". Liberação de título já no Omie não pode ser desfeita aqui.
   Etapa 4 concluída = tudo liberado; venda concluída = tudo exportado (conferido ao abrir a etapa 4).

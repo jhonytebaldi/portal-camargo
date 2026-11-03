@@ -85,7 +85,7 @@ try {
         $venda = cv_carregar($id);
         if (!$venda) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']]);
         $e4 = $venda['e4'] ?? ['etapas' => [], 'liberados' => []];
-        $e4 += ['etapas' => [], 'liberados' => []];
+        $e4 += ['etapas' => [], 'liberados' => [], 'linhas' => []];
         // datas manuais e condições vindas da tela (liberações nunca vêm da tela)
         $fmt = []; $novas = [];
         foreach ((array)($in['e4']['etapas'] ?? []) as $k => $cfg) {
@@ -95,7 +95,25 @@ try {
             $cond = mb_strtoupper(mb_substr(preg_replace('/\s+/', ' ', trim((string)($cfg['condicao'] ?? ''))), 0, 120));
             if ($dm !== '' || $cond !== '') $novas[$k] = ['data_manual' => $dm ?: null, 'condicao' => $cond];
         }
-        $e4n = ['etapas' => $novas, 'liberados' => $e4['liberados']];
+        // ajustes por linha de pagamento (só os campos que diferem do calculado vêm da tela)
+        $linhas = [];
+        foreach ((array)($in['e4']['linhas'] ?? []) as $k => $ov) {
+            $o = [];
+            foreach ((array)$ov as $f => $val) {
+                $val = trim((string)$val);
+                if ($f === 'data') {
+                    if ($val !== '' && !(($d = DateTimeImmutable::createFromFormat('!Y-m-d', $val)) && $d->format('Y-m-d') === $val)) { $fmt[] = 'Data inválida: ' . $val; continue; }
+                    $o['data'] = $val;
+                } elseif ($f === 'valor') {
+                    $n = str_contains($val, ',') ? str_replace(',', '.', str_replace('.', '', preg_replace('/[R$\s]/', '', $val))) : preg_replace('/[R$\s]/', '', $val);
+                    if (!is_numeric($n) || (float)$n < 0) { $fmt[] = 'Valor inválido: ' . $val; continue; }
+                    $o['valor'] = round((float)$n, 2);
+                } elseif ($f === 'condicao') $o['condicao'] = mb_strtoupper(mb_substr(preg_replace('/\s+/', ' ', $val), 0, 120));
+                elseif ($f === 'obs') $o['obs'] = mb_substr($val, 0, 200);
+            }
+            if ($o) $linhas[(string)$k] = $o;
+        }
+        $e4n = ['etapas' => $novas, 'liberados' => $e4['liberados'], 'linhas' => $linhas];
         $fer = cv_feriados();
         $calc = Pagamentos::calcular($venda, $e4n, $fer);
         $pode = cv_pode_liberar($u);
@@ -114,9 +132,24 @@ try {
             if ((string)($a['data_manual'] ?? '') !== (string)($d['data_manual'] ?? '')) $hist[] = ['editar', $nome . ' — data manual', cv_data_br($a['data_manual'] ?? null), cv_data_br($d['data_manual'] ?? null)];
             if ((string)($a['condicao'] ?? '') !== (string)($d['condicao'] ?? '')) $hist[] = ['editar', $nome . ' — condição', (string)($a['condicao'] ?? ''), (string)($d['condicao'] ?? '')];
         }
-        $chaves = array_values(array_unique(array_map('strval', (array)($in['chaves'] ?? []))));
         $porChave = array_column($calc['pagamentos'], null, 'chave');
         $rotP = fn(array $p) => $p['nome'] . ' (' . $p['cargo'] . ($p['natureza'] === 'BONUS' ? ' · bônus' : '') . ') — ' . ($rot[$p['etapa']] ?? $p['etapa']);
+        $rotK = fn(string $k) => isset($porChave[$k]) ? $rotP($porChave[$k]) : str_replace('|', ' · ', preg_replace('/\|\d+$/', '', $k));
+        $nomesF = ['data' => 'data', 'valor' => 'valor', 'condicao' => 'condição', 'obs' => 'observação'];
+        $mostra = fn(string $f, $x) => $x === null ? '' : ($f === 'valor' ? Distribuicao::brl((float)$x) : ($f === 'data' ? cv_data_br((string)$x) : (string)$x));
+        foreach (array_unique(array_merge(array_keys($e4['linhas']), array_keys($linhas))) as $k) {
+            foreach ($nomesF as $f => $nf) {
+                $a = $e4['linhas'][$k][$f] ?? null; $d = $linhas[$k][$f] ?? null;
+                if ((string)$a === (string)$d) continue;
+                $calcF = $porChave[$k]['calc'][$f] ?? null;
+                $hist[] = ['editar', 'Pagamento ' . $rotK((string)$k) . ' — ' . $nf, $a !== null ? $mostra($f, $a) : 'calculado: ' . $mostra($f, $calcF), $d !== null ? $mostra($f, $d) : 'voltou ao calculado (' . $mostra($f, $calcF) . ')'];
+            }
+        }
+        $chaves = array_values(array_unique(array_map('strval', (array)($in['chaves'] ?? []))));
+        if ($acao === 'liberar4' && !empty($in['todos'])) {   // padrão: libera tudo o que falta (e o que mudou depois de liberado)
+            $chaves = array_values(array_map(fn($p) => $p['chave'], array_filter($calc['pagamentos'], fn($p) => !$p['liberado'] || $p['alterado_depois'])));
+            if (!$chaves) $resp(['ok' => false, 'erros' => ['Todos os pagamentos já estão liberados.']]);
+        }
         $gerar = false;
         if ($acao === 'liberar4' || $acao === 'desfazer4') {
             if (!$pode) $resp(['ok' => false, 'erros' => ['Só o financeiro libera pagamentos. Peça a um administrador para incluir o seu login em Capa Financeira → Configurações → “Vendas — pagamentos aos corretores”.']]);
@@ -128,7 +161,7 @@ try {
             foreach ($chaves as $k) {
                 $p = $porChave[$k] ?? null;
                 if (!$p) { $err[] = 'Um dos pagamentos marcados não existe mais no cálculo (recarregue a página).'; continue; }
-                if (!$p['data']) $err[] = $rotP($p) . ': sem data de pagamento — informe a data manual da etapa.';
+                if (!$p['data']) $err[] = $rotP($p) . ': sem data de pagamento — informe a data da etapa ou da linha.';
                 if ($p['valor'] <= 0) $err[] = $rotP($p) . ': valor zerado.';
             }
             if ($err) $resp(['ok' => false, 'erros' => $err, 'msg' => 'Não liberei nada:']);
@@ -168,7 +201,7 @@ try {
         $msg = match ($acao) {
             'liberar4' => $n . ' pagamento(s) liberado(s). Contas a pagar na capa #' . $capaId . ' — revise e confirme na Capa Financeira para enviar ao Omie.',
             'desfazer4' => 'Liberação desfeita (' . $n . '). Capa #' . $capaId . ' regerada sem esse(s) pagamento(s) — revise na Capa Financeira.',
-            default => $hist ? 'Datas e condições gravadas.' : 'Nada mudou.',
+            default => $hist ? 'Alterações dos pagamentos gravadas.' : 'Nada mudou.',
         };
         $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'capa_id' => $capaId, 'msg' => $msg, 'avisos' => Pagamentos::calcular(cv_carregar($id), $e4n, $fer)['avisos']]);
     }

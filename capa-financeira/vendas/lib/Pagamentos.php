@@ -153,7 +153,7 @@ final class Pagamentos
         if (!$e2 || empty($e2['linhas'])) return ['etapas' => $etapas, 'pagamentos' => [], 'erros' => ['Sem distribuição (etapa 2).'], 'avisos' => [], 'totais' => []];
         $c1 = Venda::calc($venda);
         $travas = $venda['e3']['travas'] ?? [];
-        $e4 = $e4 ?? ['etapas' => [], 'liberados' => []];
+        $e4 = ($e4 ?? []) + ['etapas' => [], 'liberados' => [], 'linhas' => []];   // linhas = ajustes manuais por pagamento {chave: {data, valor, condicao, obs}}
         $idx50 = null;
         foreach ($etapas as $i => $e) if ($e['tem50']) { $idx50 = $i; break; }
         // datas: sugerida, manual exigida?
@@ -224,13 +224,22 @@ final class Pagamentos
             $p['valor'] = self::trunca($p['valor']);
             $et = $porEtapa[$p['etapa']];
             $p['data'] = $et['data']; $p['condicao'] = $et['condicao'];
+            // ajuste manual da linha (lápis / duplo clique na tela): vale por cima do calculado
+            $p['calc'] = ['valor' => $p['valor'], 'data' => $p['data'], 'condicao' => $p['condicao'], 'obs' => $p['obs']];
+            $p['editado'] = [];
+            foreach (['data', 'valor', 'condicao', 'obs'] as $f) {
+                if (!array_key_exists($f, $e4['linhas'][$k] ?? [])) continue;
+                $p[$f] = $f === 'valor' ? round((float)$e4['linhas'][$k][$f], 2) : (string)$e4['linhas'][$k][$f];
+                $p['editado'][] = $f;
+            }
+            if ($p['data'] === '') $p['data'] = null;
             $p['liberado'] = $lib[$k] ?? null;
             $p['alterado_depois'] = $p['liberado'] && (abs((float)$p['liberado']['valor'] - $p['valor']) > 0.005 || (string)$p['liberado']['data'] !== (string)$p['data']
                                   || (string)($p['liberado']['condicao'] ?? $p['condicao']) !== (string)$p['condicao']);
             if ($p['valor'] < -0.005) $erros[] = "Pagamento negativo para {$p['nome']} ({$p['cargo']}) na etapa {$et['rotulo']}.";
         }
         unset($p);
-        $pags = array_values(array_filter($pags, fn($p) => $p['valor'] > 0.004 || $p['liberado']));
+        $pags = array_values(array_filter($pags, fn($p) => $p['valor'] > 0.004 || $p['liberado'] || $p['editado']));
         // liberados que sumiram (o cálculo mudou depois de liberar)
         $vivos = array_column($pags, 'chave');
         foreach ($lib as $k => $x) if (!in_array($k, $vivos, true)) $avisos[] = 'Um pagamento já liberado (' . str_replace('|', ' · ', preg_replace('/\|\d+$/', '', $k)) . ', ' . Distribuicao::brl((float)$x['valor']) . ') não existe mais no cálculo atual — confira (se já foi ao Omie, ajuste lá).';
@@ -238,9 +247,13 @@ final class Pagamentos
         $calc2 = Distribuicao::calc($e2, $c1);
         $previsto = $calc2['pagos'];
         $total = array_sum(array_column($pags, 'valor'));
-        if ($total - $previsto > 0.01) $erros[] = 'Os pagamentos somam ' . Distribuicao::brl($total) . ', MAIS que a distribuição da etapa 2 (' . Distribuicao::brl($previsto) . ').';
+        if ($total - $previsto > 0.01) $erros[] = 'Os pagamentos somam ' . Distribuicao::brl($total) . ', MAIS que a distribuição da etapa 2 (' . Distribuicao::brl($previsto) . ')' . (array_filter($pags, fn($p) => in_array('valor', $p['editado'], true)) ? ' — algum valor ajustado à mão passou do calculado: tire a diferença de outra linha ou corrija a distribuição na etapa 2.' : '.');
         elseif ($previsto - $total > 0.05 * max(1, count($pags))) $avisos[] = 'Os pagamentos somam ' . Distribuicao::brl($total) . ' e a distribuição da etapa 2 ' . Distribuicao::brl($previsto) . ' — diferença maior que os centavos de arredondamento.';
-        foreach ($etapas as $e) if ($e['exige_manual'] && !$e['data_manual']) $avisos[] = 'Etapa ' . $e['rotulo'] . ': informe a data de pagamento (' . $e['motivo_manual'] . ').';
+        foreach ($etapas as $e) {
+            $sem = count(array_filter($pags, fn($p) => $p['etapa'] === $e['chave'] && !$p['data']));
+            if ($sem) $avisos[] = 'Etapa ' . $e['rotulo'] . ': informe a data de pagamento' . ($e['motivo_manual'] ? ' (' . $e['motivo_manual'] . ')' : '') . ' — ' . $sem . ' pagamento(s) sem data.';
+        }
+        foreach (array_keys($e4['linhas']) as $k) if (!in_array($k, array_column($pags, 'chave'), true)) $avisos[] = 'Um ajuste manual de pagamento (' . str_replace('|', ' · ', preg_replace('/\|\d+$/', '', (string)$k)) . ') não corresponde mais a nenhum pagamento do cálculo — confira.';
         return ['etapas' => $etapas, 'pagamentos' => $pags, 'erros' => $erros, 'avisos' => $avisos,
                 'totais' => ['previsto' => $previsto, 'total' => $total, 'sobra_centavos' => $previsto - $total,
                              'liberado' => array_sum(array_map(fn($p) => $p['liberado'] ? $p['valor'] : 0, $pags))]];
