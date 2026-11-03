@@ -80,6 +80,99 @@ try {
                'msg' => ($acao === 'salvar2' && !$concluida) ? 'Rascunho da distribuição salvo.' : ($concluida ? 'Alterações gravadas (etapa 2 continua concluída).' : 'Etapa 2 concluída.')]);
     }
 
+    /* ---------------- etapa 4: pagamentos aos corretores → contas a pagar ---------------- */
+    if (in_array($acao, ['previa4', 'salvar4', 'liberar4', 'desfazer4'], true)) {
+        $venda = cv_carregar($id);
+        if (!$venda) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']]);
+        $e4 = $venda['e4'] ?? ['etapas' => [], 'liberados' => []];
+        $e4 += ['etapas' => [], 'liberados' => []];
+        // datas manuais e condições vindas da tela (liberações nunca vêm da tela)
+        $fmt = []; $novas = [];
+        foreach ((array)($in['e4']['etapas'] ?? []) as $k => $cfg) {
+            $k = (string)$k;
+            $dm = trim((string)($cfg['data_manual'] ?? ''));
+            if ($dm !== '' && !(($d = DateTimeImmutable::createFromFormat('!Y-m-d', $dm)) && $d->format('Y-m-d') === $dm)) { $fmt[] = 'Data inválida: ' . $dm; $dm = ''; }
+            $cond = mb_strtoupper(mb_substr(preg_replace('/\s+/', ' ', trim((string)($cfg['condicao'] ?? ''))), 0, 120));
+            if ($dm !== '' || $cond !== '') $novas[$k] = ['data_manual' => $dm ?: null, 'condicao' => $cond];
+        }
+        $e4n = ['etapas' => $novas, 'liberados' => $e4['liberados']];
+        $fer = cv_feriados();
+        $calc = Pagamentos::calcular($venda, $e4n, $fer);
+        $pode = cv_pode_liberar($u);
+        $base = [];
+        if ($venda['e2_status'] === 'rascunho') $base[] = 'Conclua a etapa 2 (distribuição) antes de liberar pagamentos.';
+        if ($venda['e3_status'] === 'rascunho') $base[] = 'Conclua a etapa 3 (fluxo do cliente) antes de liberar pagamentos.';
+        if ($acao === 'previa4') $resp(['ok' => true, 'calc' => $calc, 'status' => cv_status_pagamentos($venda), 'pode_liberar' => $pode, 'erros' => array_merge($fmt, $base, $calc['erros']), 'avisos' => $calc['avisos']]);
+        if ($venda['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
+        if ($fmt) $resp(['ok' => false, 'erros' => $fmt]);
+        // histórico das datas/condições por etapa
+        $rot = array_column($calc['etapas'], 'rotulo', 'chave');
+        $hist = [];
+        foreach (array_unique(array_merge(array_keys($e4['etapas']), array_keys($novas))) as $k) {
+            $a = $e4['etapas'][$k] ?? []; $d = $novas[$k] ?? [];
+            $nome = 'Pagamento ' . ($rot[$k] ?? $k);
+            if ((string)($a['data_manual'] ?? '') !== (string)($d['data_manual'] ?? '')) $hist[] = ['editar', $nome . ' — data manual', cv_data_br($a['data_manual'] ?? null), cv_data_br($d['data_manual'] ?? null)];
+            if ((string)($a['condicao'] ?? '') !== (string)($d['condicao'] ?? '')) $hist[] = ['editar', $nome . ' — condição', (string)($a['condicao'] ?? ''), (string)($d['condicao'] ?? '')];
+        }
+        $chaves = array_values(array_unique(array_map('strval', (array)($in['chaves'] ?? []))));
+        $porChave = array_column($calc['pagamentos'], null, 'chave');
+        $rotP = fn(array $p) => $p['nome'] . ' (' . $p['cargo'] . ($p['natureza'] === 'BONUS' ? ' · bônus' : '') . ') — ' . ($rot[$p['etapa']] ?? $p['etapa']);
+        $gerar = false;
+        if ($acao === 'liberar4' || $acao === 'desfazer4') {
+            if (!$pode) $resp(['ok' => false, 'erros' => ['Só o financeiro libera pagamentos. Peça a um administrador para incluir o seu login em Capa Financeira → Configurações → “Vendas — pagamentos aos corretores”.']]);
+            if (!$chaves) $resp(['ok' => false, 'erros' => ['Marque os pagamentos.']]);
+        }
+        if ($acao === 'liberar4') {
+            if ($base || $calc['erros']) $resp(['ok' => false, 'erros' => array_merge($base, $calc['erros']), 'msg' => 'Corrija antes de liberar:']);
+            $err = [];
+            foreach ($chaves as $k) {
+                $p = $porChave[$k] ?? null;
+                if (!$p) { $err[] = 'Um dos pagamentos marcados não existe mais no cálculo (recarregue a página).'; continue; }
+                if (!$p['data']) $err[] = $rotP($p) . ': sem data de pagamento — informe a data manual da etapa.';
+                if ($p['valor'] <= 0) $err[] = $rotP($p) . ': valor zerado.';
+            }
+            if ($err) $resp(['ok' => false, 'erros' => $err, 'msg' => 'Não liberei nada:']);
+            $sts = cv_status_pagamentos($venda);
+            foreach ($chaves as $k) {
+                $p = $porChave[$k]; $ant = $e4n['liberados'][$k] ?? null;
+                $e4n['liberados'][$k] = ['por' => (string)$u['nome'], 'por_id' => (int)$u['id'], 'em' => date('Y-m-d H:i:s'), 'valor' => round((float)$p['valor'], 2), 'data' => $p['data'], 'condicao' => $p['condicao']]
+                                      + ($ant ? ['linha' => $ant['linha'] ?? null, 'capa' => $ant['capa'] ?? null] : []);
+                $hist[] = ['liberar', 'Pagamento ' . $rotP($p),
+                           $ant ? Distribuicao::brl((float)$ant['valor']) . ' em ' . cv_data_br($ant['data']) . (($sts[$k]['status'] ?? '') === 'exportado' ? ' (já estava no Omie)' : '') : 'aguardando',
+                           'liberado: ' . Distribuicao::brl((float)$p['valor']) . ' em ' . cv_data_br($p['data']) . ($p['condicao'] !== '' ? ' · ' . $p['condicao'] : '')];
+            }
+            $gerar = true;
+        }
+        if ($acao === 'desfazer4') {
+            $sts = cv_status_pagamentos($venda);
+            $err = [];
+            foreach ($chaves as $k) {
+                if (!isset($e4n['liberados'][$k])) continue;
+                if (($sts[$k]['status'] ?? '') === 'exportado') { $err[] = 'Um pagamento já foi enviado ao Omie (' . ($sts[$k]['codigo'] ?? '') . ') — não dá para desfazer a liberação aqui; exclua/ajuste o título no Omie e na Capa Financeira.'; continue; }
+                $x = $e4n['liberados'][$k];
+                $p = $porChave[$k] ?? ['nome' => preg_replace('/\|\d+$/', '', $k), 'cargo' => '', 'natureza' => '', 'etapa' => ''];
+                unset($e4n['liberados'][$k]);
+                $hist[] = ['desliberar', 'Pagamento ' . ($p['cargo'] !== '' ? $rotP($p) : str_replace('|', ' · ', (string)$p['nome'])), 'liberado: ' . Distribuicao::brl((float)$x['valor']) . ' em ' . cv_data_br($x['data']), 'aguardando liberação'];
+            }
+            if ($err) $resp(['ok' => false, 'erros' => $err]);
+            $gerar = true;
+        }
+        $rev = cv_gravar_e4($id, $rev, $e4n, $u, $hist);
+        $capaId = null;
+        if ($gerar) {
+            $capaId = cv_gerar_capa($id, $u);
+            cv_atualizar_conclusao($id, $u);
+            $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        }
+        $n = count($chaves);
+        $msg = match ($acao) {
+            'liberar4' => $n . ' pagamento(s) liberado(s). Contas a pagar na capa #' . $capaId . ' — revise e confirme na Capa Financeira para enviar ao Omie.',
+            'desfazer4' => 'Liberação desfeita (' . $n . '). Capa #' . $capaId . ' regerada sem esse(s) pagamento(s) — revise na Capa Financeira.',
+            default => $hist ? 'Datas e condições gravadas.' : 'Nada mudou.',
+        };
+        $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'capa_id' => $capaId, 'msg' => $msg, 'avisos' => Pagamentos::calcular(cv_carregar($id), $e4n, $fer)['avisos']]);
+    }
+
     /* ---------------- etapa 3: fluxo do cliente → contas a receber ---------------- */
     if (in_array($acao, ['previa3', 'salvar3', 'concluir3'], true)) {
         $venda = cv_carregar($id);

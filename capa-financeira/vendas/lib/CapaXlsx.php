@@ -23,7 +23,7 @@ final class CapaXlsx
 
     /** @param array $venda cv_carregar() · $pessoas nomes para a aba PESSOAS · $empresaNome · $ultima "dd/mm/aaaa hh:mm por Fulano" */
     /** @return array{receber: array<int,int>} linha da planilha → posição da parcela (ordem por data) */
-    public static function gerar(array $venda, array $pessoas, string $empresaNome, string $ultima, string $destino): array
+    public static function gerar(array $venda, array $pessoas, string $empresaNome, string $ultima, string $destino, array $opts = []): array
     {
         $x = new XlsxWriter();
         $s = $x->planilha('MODELO');
@@ -111,8 +111,13 @@ final class CapaXlsx
         }
         $temFluxo = !empty($venda['e3']['parcelas']);
         if ($temFluxo) $r = self::blocoFluxo($x, $s, $r, $venda, $calc, $R);
+        // etapa 4: pagamentos (no arquivo para importar, só os LIBERADOS — o leitor de capas cobra condição de linha do bloco sem lançamento)
+        $pag = $opts['pagamentos'] ?? null;
+        $pagLinhas = $pag ? array_values(array_filter($pag['pagamentos'], fn($p) => empty($opts['para_importar']) || $p['liberado'])) : [];
+        $temPag = (bool)($pag['pagamentos'] ?? []);
+        if ($temPag) $r = self::blocoPagamentos($x, $s, $r, $pag, $pagLinhas, !empty($opts['para_importar']));
         // (rótulos dos marcadores não podem começar com "FLUXO DE PAGAMENTO"/"PAGAMENTO PARA CORRETORES": o leitor de capas procura esses blocos)
-        foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'ETAPA 2 — DISTRIBUIÇÃO DAS COMISSÕES' : null, 3 => $temFluxo ? null : 'ETAPA 3 — FLUXO DO CLIENTE E RECEBIDOS', 4 => 'ETAPA 4 — PAGAMENTOS AOS CORRETORES']) as $n => $rot) {
+        foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'ETAPA 2 — DISTRIBUIÇÃO DAS COMISSÕES' : null, 3 => $temFluxo ? null : 'ETAPA 3 — FLUXO DO CLIENTE E RECEBIDOS', 4 => $temPag ? null : 'ETAPA 4 — PAGAMENTOS AOS CORRETORES']) as $n => $rot) {
             $x->set($s, "A$r", $rot, ['bold' => true, 'fill' => 'E7E6E6']);
             $x->set($s, "B$r", 'ainda não preenchida no portal (' . ($st[$venda["e{$n}_status"]] ?? $venda["e{$n}_status"]) . ')', ['italic' => true, 'color' => '6B7770']);
             $x->mesclar($s, "B$r:G$r");
@@ -124,7 +129,11 @@ final class CapaXlsx
         $x->largura($p, 'A', 40);
         foreach (array_values($pessoas) as $i => $nome) $x->set($p, 'A' . ($i + 1), $nome);
         // ---- lançamentos (o que vai para o Omie) — mesmo layout que o leitor de capas lê ----
-        $mapa = ['receber' => []];
+        $mapa = ['receber' => [], 'pagar' => []];
+        $liberados = $pag ? array_values(array_filter($pag['pagamentos'], fn($p) => $p['liberado'] && $p['liberado']['data'])) : [];
+        foreach ($liberados as &$lp) { [$lp['valor'], $lp['data']] = self::valorData($lp); $lp['condicao'] = (string)($lp['liberado']['condicao'] ?? $lp['condicao']); }
+        unset($lp);
+        usort($liberados, fn($a, $b) => [$a['data'], $a['natureza'], $a['cargo'], $a['nome']] <=> [$b['data'], $b['natureza'], $b['cargo'], $b['nome']]);
         if ($temFluxo) {
             $comp = $venda['compradores'];
             $desc = Venda::descricao($venda, $comp);
@@ -132,10 +141,11 @@ final class CapaXlsx
             $x->set($s, "A$r", 'MODELO DE DESCRIÇÃO', ['bold' => true]);
             $x->set($s, "B$r", Venda::descricaoPagar('NOME', 'CARGO', 'COMISSAO', $desc), ['italic' => true]);
             $r++;
-            $hdr = $r + 1; $ini = $hdr + 1; $fim = $ini + count($ordem) - 1;
+            $hdr = $r + 1; $ini = $hdr + 1; $fim = $ini + count($ordem) + count($liberados) - 1;
             $tot = array_sum(array_map(fn($p) => (float)$p['valor'], $ordem));
+            $totP = array_sum(array_map(fn($p) => (float)$p['valor'], $liberados));
             $x->set($s, "E$r", ['f' => "SUM(E$ini:E$fim)", 'v' => $tot], ['fmt' => 'brl', 'bold' => true]);
-            $x->set($s, "F$r", 0.0, ['fmt' => 'brl', 'bold' => true]);
+            $x->set($s, "F$r", ['f' => "SUM(F$ini:F$fim)", 'v' => $totP], ['fmt' => 'brl', 'bold' => true]);
             foreach (['A' => 'DATA', 'B' => 'CONTA', 'C' => 'Cliente e fornecedor', 'D' => 'histórico', 'E' => 'A RECEBER ', 'F' => 'A PAGAR '] as $c => $t) $x->set($s, "$c$hdr", $t, ['bold' => true, 'fill' => 'E7E6E6', 'border' => true]);
             $r = $ini;
             foreach ($ordem as $j => $p) {
@@ -148,9 +158,51 @@ final class CapaXlsx
                 $mapa['receber'][$r] = $j;
                 $r++;
             }
+            foreach ($liberados as $p) {   // contas a pagar: só pagamentos liberados pelo financeiro
+                $x->set($s, "A$r", ['d' => $p['data']], ['fmt' => 'data']);
+                $x->set($s, "C$r", $p['nome']);
+                $x->set($s, "D$r", Venda::descricaoPagar($p['nome'], $p['cargo'], $p['natureza'], $desc));
+                $x->set($s, "F$r", round((float)$p['valor'], 2), ['fmt' => 'brl']);
+                if ($p['condicao'] !== '') $x->set($s, "G$r", $p['condicao']);
+                $mapa['pagar'][$r] = $p['chave'];
+                $r++;
+            }
         }
         $x->salvar($destino);
         return $mapa;
+    }
+
+    /** linhas 86–109 do modelo: PAGAMENTO PARA CORRETORES (cargo, nome, %, valor, data, condição) por etapa */
+    private static function blocoPagamentos(XlsxWriter $x, string $s, int $r, array $pag, array $linhas, bool $paraImportar): int
+    {
+        $hd = ['bold' => true, 'fill' => 'E7E6E6', 'border' => true];
+        $x->set($s, "A$r", 'PAGAMENTO PARA CORRETORES', ['bold' => true]);
+        $x->mesclar($s, "A$r:E$r"); $r++;
+        foreach (['A' => 'CARGO', 'B' => 'NOME', 'C' => '%', 'D' => 'VALOR', 'E' => 'DATA', 'F' => 'CONDIÇÃO', 'G' => 'ETAPA', 'H' => 'SITUAÇÃO'] as $c => $t) $x->set($s, "$c$r", $t, $hd);
+        $r++;
+        $rot = array_column($pag['etapas'], 'rotulo', 'chave');
+        $ini = $r;
+        foreach ($linhas as $p) {
+            [$valor, $data] = self::valorData($p);
+            $x->set($s, "A$r", $p['cargo'], ['bold' => true]);
+            $x->set($s, "B$r", $p['nome']);
+            if ($p['pct'] > 0) $x->set($s, "C$r", (float)$p['pct'], ['fmt' => 'pct']);
+            $x->set($s, "D$r", $valor, ['fmt' => 'brl']);
+            $x->set($s, "E$r", $data ? ['d' => $data] : 'data manual', $data ? ['fmt' => 'data'] : ['italic' => true, 'color' => 'B4512F']);
+            if ($p['condicao'] !== '' && ($p['liberado'] || !$paraImportar)) $x->set($s, "F$r", $p['condicao']);
+            $x->set($s, "G$r", $rot[$p['etapa']] ?? $p['etapa']);
+            $x->set($s, "H$r", trim(($p['liberado'] ? 'LIBERADO' : 'aguardando liberação') . ($p['obs'] !== '' ? ' · ' . $p['obs'] : '')), ['italic' => true, 'color' => '6B7770']);
+            $r++;
+        }
+        $x->set($s, "A$r", 'TOTAL', ['bold' => true]);
+        $x->set($s, "D$r", $r > $ini ? ['f' => "SUM(D$ini:D" . ($r - 1) . ')', 'v' => array_sum(array_map(fn($p) => self::valorData($p)[0], $linhas))] : 0.0, ['fmt' => 'brl', 'bold' => true]);
+        return $r + 2;
+    }
+
+    /** pagamento liberado vale o que o financeiro liberou (se o cálculo mudou depois, é preciso liberar de novo) */
+    private static function valorData(array $p): array
+    {
+        return $p['liberado'] ? [round((float)$p['liberado']['valor'], 2), $p['liberado']['data']] : [round((float)$p['valor'], 2), $p['data']];
     }
 
     /** linhas 58–77 do modelo: fluxo de pagamento do cliente, recebidos e valor ainda devido (etapa 3) */

@@ -98,6 +98,18 @@ function cv_migrar(PDO $pdo): array
     if (!$col('cv_vendas', 'cep')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cep VARCHAR(9) NOT NULL DEFAULT '' AFTER bairro"); $feitos[] = 'cv_vendas.cep'; }
     if (!$col('cv_vendas', 'e2_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e2_dados JSON NULL AFTER obs'); $feitos[] = 'cv_vendas.e2_dados (distribuição)'; }
     if (!$col('cv_vendas', 'e3_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e3_dados JSON NULL AFTER e2_dados'); $feitos[] = 'cv_vendas.e3_dados (fluxo do cliente)'; }
+    if (!$col('cv_vendas', 'e4_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e4_dados JSON NULL AFTER e3_dados'); $feitos[] = 'cv_vendas.e4_dados (pagamentos)'; }
+    // feriados (data de pagamento: quinta feriado → quarta) e quem pode liberar pagamentos (além dos admins)
+    if (!(int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave = 'feriados'")->fetchColumn()) {
+        require_once __DIR__ . '/lib/Pagamentos.php';
+        $f = Pagamentos::feriadosPadrao((int)date('Y'), (int)date('Y') + 4);
+        $pdo->prepare("INSERT INTO cf_config (chave, valor) VALUES ('feriados', ?)")->execute([json_encode($f, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:feriados (' . count($f) . ')';
+    }
+    if (!(int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave = 'cv_liberadores'")->fetchColumn()) {
+        $pdo->exec("INSERT INTO cf_config (chave, valor) VALUES ('cv_liberadores', '[]')");
+        $feitos[] = 'config:cv_liberadores';
+    }
     if (!$col('cv_vendas', 'cancelada_de')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cancelada_de VARCHAR(20) NULL AFTER status"); $feitos[] = 'cv_vendas.cancelada_de'; }
 
     // lista de bairros (validação da etapa 1) — lista do Jhony (03/11/2026) + os que a Busca já reconhece
