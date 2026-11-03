@@ -13,6 +13,7 @@ $parcJs = array_map(fn($p) => ['data' => $p['data'], 'valor' => $p['valor'] !== 
 $empresaNome = '';
 foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa']) $empresaNome = (string)$em['nome'];
 ?>
+<style>.cv-alca{cursor:grab;touch-action:none;color:var(--mute);user-select:none;text-align:center;font-weight:700;vertical-align:middle!important}tr.cv-arrastando td{background:#fff8e1;opacity:.7}</style>
 <div class="cv-cols">
 <form id="cv-form3" class="cv-f" autocomplete="off" onsubmit="return false">
   <?php if ($v['e1_status'] === 'rascunho'): ?><div class="aviso" style="margin-bottom:10px">A etapa 1 ainda não foi concluída — dá para preencher o fluxo, mas só dá para concluir depois dela.</div><?php endif; ?>
@@ -28,14 +29,16 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     <div class="cv-bloco-h"><h2>Fluxo de pagamento do cliente</h2><small>tem que fechar em <b data-total-esp>—</b> (comissão + bônus)</small></div>
     <p class="cf-dica" style="margin-top:0">Cada linha vira uma conta a receber no Omie da <b><?= h($empresaNome ?: '(escolha a empresa na etapa 1)') ?></b>, em aberto — a baixa é dada lá. O que já entrou: marque “recebida” (com a data em que entrou) e, se for sinal, “arras”.</p>
     <table class="cv-tab" id="cv-parc">
-      <thead><tr><th style="width:140px">Data</th><th style="width:120px">Valor</th><th>Quem paga</th><th style="width:130px">Conta</th><th style="width:110px">Referência</th><th style="width:70px">Recebida</th><th style="width:55px">Arras</th><th style="width:105px" class="n">% / acum.</th><th style="width:30px"></th></tr></thead>
+      <thead><tr><th style="width:22px" title="arraste para reorganizar"></th><th style="width:140px">Data</th><th style="width:120px">Valor</th><th>Quem paga</th><th style="width:130px">Conta</th><th style="width:110px">Referência</th><th style="width:70px">Recebida</th><th style="width:55px">Arras</th><th style="width:105px" class="n">% / acum.</th><th style="width:30px"></th></tr></thead>
       <tbody></tbody>
-      <tfoot><tr><td style="text-align:right">total</td><td class="n" data-soma></td><td colspan="5" data-dif></td><td class="n" data-soma-pct></td><td></td></tr></tfoot>
+      <tfoot><tr><td></td><td style="text-align:right">total</td><td class="n" data-soma></td><td colspan="5" data-dif></td><td class="n" data-soma-pct></td><td></td></tr></tfoot>
     </table>
     <div class="cv-botoes" style="margin-top:8px">
       <button type="button" class="cv-mini-btn" id="cv-add-parc">+ parcela</button>
       <button type="button" class="cv-mini-btn" id="cv-gerar-parc">gerar várias parcelas…</button>
       <button type="button" class="cv-mini-btn" id="cv-completar">ajustar a última com a diferença</button>
+      <button type="button" class="cv-mini-btn" id="cv-ord-data" title="volta para a ordem por data">ordenar por data</button>
+      <span class="cf-dica" id="cv-ord-info" style="margin:0 0 0 6px"></span>
     </div>
     <div id="cv-gerador" class="cv-comp" style="display:none;margin-top:10px">
       <div class="cv-comp-top"><span>Gerar várias parcelas</span><button type="button" class="cf-x" data-ger-fechar title="fechar">✕</button></div>
@@ -51,7 +54,8 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
         </label>
         <label>Nº da 1ª na referência<input data-g="ref0" type="number" min="0" placeholder="ex.: 2 → PARCELA 02"></label>
         <label>Pular de quantos em quantos na referência<input data-g="refpasso" type="number" min="1" value="1" title="ex.: parcelas 02, 04, 06 → 2"></label>
-        <label>Quem paga<select data-g="pagador"></select></label>
+        <label>Quem paga<select data-g="pagador"></select>
+          <span data-g-outro style="display:none"><input data-g="outro_nome" placeholder="nome completo" style="margin-top:4px"><input data-g="outro_doc" placeholder="CPF ou CNPJ" style="margin-top:4px"></span></label>
         <label>Conta<select data-g="conta"></select></label>
       </div>
       <p class="cf-dica" data-g-previa style="margin:8px 0 0"></p>
@@ -96,7 +100,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   function addParc(p) {
     const tr = document.createElement('tr'); tr.dataset.k = k++;
     const conta = p.conta || contaPadrao;
-    tr.innerHTML = '<td><input type="date" data-f="data" value="' + esc(p.data || '') + '"></td>'
+    tr.innerHTML = '<td class="cv-alca" title="arraste para reorganizar">⋮⋮</td><td><input type="date" data-f="data" value="' + esc(p.data || '') + '"></td>'
       + '<td><input data-f="valor" class="cv-num" inputmode="decimal" value="' + esc(p.valor || '') + '"></td>'
       + '<td><select data-f="pagador">' + optsPag(p.pagador || 'c0') + '</select><div data-outro style="display:none;margin-top:4px"><input data-f="outro_nome" placeholder="nome completo" value="' + esc(p.outro_nome || '') + '" style="margin-bottom:4px"><input data-f="outro_doc" placeholder="CPF ou CNPJ" value="' + esc(p.outro_doc || '') + '"></div></td>'
       + '<td><select data-f="conta">' + contas.map(c => '<option' + (c === conta ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + (contas.includes(conta) ? '' : '<option selected>' + esc(conta) + '</option>') + '</select></td>'
@@ -119,10 +123,12 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   }
   parc0.forEach(addParc);
   if (!parc0.length) addParc({});
-  document.getElementById('cv-add-parc').onclick = () => { addParc({}); mudou(); };
+  document.getElementById('cv-add-parc').onclick = () => { addParc({}); mudou(); };   // linha nova entra no fim; ao preencher a data, reordena (se a ordem não for manual)
   /* gerador de parcelas: painel na própria página (não some ao trocar de aba) */
   const ger = document.getElementById('cv-gerador'), g = k => ger.querySelector('[data-g=' + k + ']');
-  g('pagador').innerHTML = optsPag('c0').replace('<option value="outro">Outro pagador (parente, empresa…)</option>', '');
+  g('pagador').innerHTML = optsPag('c0');
+  const gOutro = ger.querySelector('[data-g-outro]');
+  g('pagador').addEventListener('change', () => gOutro.style.display = g('pagador').value === 'outro' ? '' : 'none');
   g('conta').innerHTML = contas.map(c => '<option' + (c === contaPadrao ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
   g('valor').addEventListener('blur', e => CV.numBlur(e.target, false));
   g('passo').addEventListener('change', () => { if (!g('refpasso').dataset.mexeu) g('refpasso').value = g('passo').value; previaGer(); });
@@ -153,8 +159,10 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     if (!ds.length) { alert('Preencha a quantidade e a data da 1ª parcela.'); return; }
     if (!v) { alert('Informe o valor de cada parcela.'); return; }
     [...tb.querySelectorAll('tr')].forEach(tr => { if (!tr.querySelector('[data-f=data]').value && !tr.querySelector('[data-f=valor]').value) tr.remove(); });
-    ds.forEach((d, i) => addParc({data: d, valor: fmt(v), ref: refGer(i), pagador: g('pagador').value, conta: g('conta').value}));
+    if (g('pagador').value === 'outro' && (!g('outro_nome').value.trim() || !g('outro_doc').value.trim())) { alert('Informe o nome e o CPF/CNPJ de quem paga.'); return; }
+    ds.forEach((d, i) => addParc({data: d, valor: fmt(v), ref: refGer(i), pagador: g('pagador').value, outro_nome: g('outro_nome').value.toUpperCase().trim(), outro_doc: g('outro_doc').value, conta: g('conta').value}));
     ger.style.display = 'none';
+    if (!manual) ordenaPorData();
     mudou();
   };
   document.getElementById('cv-completar').onclick = () => {
@@ -165,9 +173,39 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     i.value = fmt(nv); mudou();
   };
 
+  /* ---------- ordem: por data por padrão; arrastar pela alça (⋮⋮) muda para ordem manual ---------- */
+  let manual = <?= !empty($e3['ordem_manual']) ? 'true' : 'false' ?>;
+  const info = document.getElementById('cv-ord-info');
+  const mostraOrdem = () => info.textContent = manual ? 'ordem manual (arrastada) — os gatilhos continuam calculados pela data' : 'ordenado por data';
+  function ordenaPorData() {
+    const rows = [...tb.querySelectorAll('tr')];
+    rows.map((tr, i) => [tr.querySelector('[data-f=data]').value || '9999-99-99', i, tr]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]).forEach(x => tb.appendChild(x[2]));
+  }
+  document.getElementById('cv-ord-data').onclick = () => { manual = false; ordenaPorData(); mostraOrdem(); mudou(); };
+  tb.addEventListener('change', ev => { if (ev.target.dataset.f === 'data' && !manual) ordenaPorData(); });
+  // arrastar com ponteiro (mouse ou toque) pela alça ⋮⋮ — sem depender do drag-and-drop nativo
+  let arrastando = null;
+  tb.addEventListener('pointerdown', ev => {
+    const alca = ev.target.closest('.cv-alca'); if (!alca || CV.somenteLeitura) return;
+    ev.preventDefault(); arrastando = alca.closest('tr'); arrastando.classList.add('cv-arrastando');
+    alca.setPointerCapture(ev.pointerId);
+  });
+  tb.addEventListener('pointermove', ev => {
+    if (!arrastando) return;
+    for (const tr of tb.querySelectorAll('tr')) {
+      if (tr === arrastando) continue;
+      const r = tr.getBoundingClientRect();
+      if (ev.clientY >= r.top && ev.clientY <= r.bottom) { tb.insertBefore(arrastando, ev.clientY < r.top + r.height / 2 ? tr : tr.nextSibling); break; }
+    }
+  });
+  const solta = () => { if (!arrastando) return; arrastando.classList.remove('cv-arrastando'); arrastando = null; manual = true; mostraOrdem(); mudou(); };
+  tb.addEventListener('pointerup', solta); tb.addEventListener('pointercancel', solta);
+  if (!manual) ordenaPorData();
+  mostraOrdem();
+
   function coleta() {
     const val = (tr, f) => { const i = tr.querySelector('[data-f=' + f + ']'); return i.type === 'checkbox' ? i.checked : i.value; };
-    return {travas: [...form.querySelectorAll('[name=trava]:checked')].map(x => x.value), conferido: document.getElementById('cv-conferido').checked,
+    return {travas: [...form.querySelectorAll('[name=trava]:checked')].map(x => x.value), conferido: document.getElementById('cv-conferido').checked, ordem_manual: manual,
             parcelas: [...tb.querySelectorAll('tr')].map(tr => ({k: +tr.dataset.k, data: val(tr, 'data'), valor: val(tr, 'valor'), pagador: val(tr, 'pagador'), outro_nome: val(tr, 'outro_nome'),
                         outro_doc: val(tr, 'outro_doc'), conta: val(tr, 'conta'), ref: val(tr, 'ref'), recebido: val(tr, 'recebido'), arras: val(tr, 'arras')}))};
   }

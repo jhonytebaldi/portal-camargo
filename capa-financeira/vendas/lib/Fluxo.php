@@ -36,7 +36,7 @@ final class Fluxo
     {
         $fmt = [];
         $d = ['travas' => array_values(array_intersect(array_keys(self::TRAVAS), (array)($in['travas'] ?? []))),
-              'conferido' => !empty($in['conferido']), 'parcelas' => []];
+              'conferido' => !empty($in['conferido']), 'ordem_manual' => !empty($in['ordem_manual']), 'parcelas' => []];
         foreach (array_values((array)($in['parcelas'] ?? [])) as $i => $p) {
             $data = Venda::data($p['data'] ?? '');
             if ($data === false) { $fmt[] = 'Parcela ' . ($i + 1) . ': data ilegível.'; $data = null; }
@@ -62,12 +62,21 @@ final class Fluxo
         return ['nome' => (string)($c['nome'] ?? ''), 'documento' => (string)($c['documento'] ?? ''), 'email' => (string)($c['email'] ?? ''), 'comprador' => $c ? $i : null];
     }
 
-    /** ordem do fluxo: por data (sem data por último), mantendo a ordem digitada no empate */
+    /** ordem do fluxo = a ordem gravada (a tela ordena por data por padrão, mas o usuário pode arrastar — ex.: balões no meio).
+     *  É a ordem da planilha e da numeração das parcelas no Omie. */
     public static function ordenadas(array $parcelas): array
     {
-        $idx = array_keys($parcelas);
-        usort($idx, fn($a, $b) => [($parcelas[$a]['data'] ?? '9999'), $a] <=> [($parcelas[$b]['data'] ?? '9999'), $b]);
-        return array_map(fn($i) => $parcelas[$i] + ['_i' => $i], $idx);
+        $out = [];
+        foreach (array_values($parcelas) as $i => $p) $out[] = $p + ['_i' => $i];
+        return $out;
+    }
+
+    /** ordem cronológica (sem data por último; empate mantém a ordem gravada) — usada para os acumulados e gatilhos */
+    public static function porData(array $parcelas): array
+    {
+        $o = self::ordenadas($parcelas);
+        usort($o, fn($a, $b) => [($a['data'] ?? '9999'), $a['_i']] <=> [($b['data'] ?? '9999'), $b['_i']]);
+        return $o;
     }
 
     /** % e acumulados; prévia dos gatilhos da etapa 4 (o fluxo enche primeiro a comissão base dos corretores) */
@@ -77,7 +86,7 @@ final class Fluxo
         $base = (float)$c1['comissao_base'];
         $soma = 0.0; $rec = 0.0; $arras = 0.0; $acum = 0.0;
         $linhas = []; $gat = []; $pend = self::GATILHOS;
-        foreach (self::ordenadas($d['parcelas']) as $p) {
+        foreach (self::porData($d['parcelas']) as $p) {   // acumulado sempre em ordem de data, qualquer que seja a ordem da lista
             $v = (float)$p['valor'];
             $soma += $v; $acum += $v;
             if ($p['recebido']) $rec += $v;
@@ -89,6 +98,7 @@ final class Fluxo
             $linhas[] = ['i' => $p['_i'], 'k' => $p['k'] ?? null, 'pct' => $total > 0 ? $v / $total : 0, 'pct_acum' => $total > 0 ? $acum / $total : 0,
                          'pct_base' => $pctBase, 'gatilhos' => $marca];
         }
+        usort($linhas, fn($a, $b) => $a['i'] <=> $b['i']);   // devolve na ordem da lista (índice = posição gravada)
         return ['total_fluxo' => $soma, 'total_esperado' => $total, 'diferenca' => $soma - $total, 'recebido' => $rec, 'devido' => $soma - $rec,
                 'arras' => $arras, 'linhas' => $linhas, 'gatilhos' => $gat];
     }
@@ -145,6 +155,8 @@ final class Fluxo
         $out = [];
         foreach (array_diff($a, $d) as $x) $out[] = ['Fluxo do cliente', $x, '(removido)'];
         foreach (array_diff($d, $a) as $x) $out[] = ['Fluxo do cliente', $antes ? '(novo)' : '', $x];
+        // mesma lista em outra ordem (parcelas arrastadas): muda a numeração das parcelas no Omie
+        if (!$out && $antes && $a !== $d) $out[] = ['Ordem das parcelas', 'ordem anterior', ($depois['ordem_manual'] ?? false) ? 'reorganizada à mão' : 'por data'];
         return $out;
     }
 
