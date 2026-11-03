@@ -9,7 +9,11 @@ $e2ok = $v['e2_status'] !== 'rascunho';
 $res = cv_resolver_pessoa();
 $padraoRecebem = array_map(function ($x) use ($res) { $r = $res($x['nome']); return ['nome' => $r[1] ?? $x['nome'], 'cargo' => $x['cargo'], 'valor' => $x['valor']]; }, Distribuicao::CONCLUSAO_PADRAO['recebem']);
 $pctTxt = fn($p) => $p === null ? '' : rtrim(rtrim(number_format((float)$p * 100, 3, ',', ''), '0'), ',');
-$linhasJs = array_map(fn($l) => ['bloco' => $l['bloco'], 'cargo' => $l['cargo'], 'nome' => $l['nome'], 'pct' => $pctTxt($l['pct'])], $e2['linhas']);
+// retenção: até 03/11 a linha tinha "nome" (ex.: QLV); agora o nome vira a observação
+$linhasJs = array_map(fn($l) => ['bloco' => $l['bloco'], 'cargo' => $l['cargo'], 'nome' => $l['nome'], 'obs' => ($l['obs'] ?? '') !== '' ? $l['obs'] : (Distribuicao::retencao($l['bloco']) ? $l['nome'] : ''), 'pct' => $pctTxt($l['pct'])], $e2['linhas']);
+$ultimos = array_map(fn($x) => ['pct' => $pctTxt($x['pct']), 'venda' => $x['venda']], cv_ultimos_pct((int)$id));
+$empresaNome = '';
+foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa']) $empresaNome = (string)$em['nome'];
 $c = $e2['conclusao'];
 $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['valor'] ?? 200), 2, ',', '.'), 'descricao' => (string)$c['descricao'],
            'recebem' => array_map(fn($x) => ['nome' => $x['nome'], 'cargo' => $x['cargo'], 'valor' => $x['valor'] !== null ? number_format((float)$x['valor'], 2, ',', '.') : ''], $c['recebem']),
@@ -24,9 +28,9 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   <?php foreach (Distribuicao::BLOCOS as $b => [$titulo, $base, $sub]): ?>
   <section class="card" data-bloco="<?= $b ?>">
     <div class="cv-bloco-h"><h2><?= h($titulo) ?></h2><small><?= h($sub) ?>: <b data-base>—</b></small></div>
-    <?php if ($b === 'adm'): ?><p class="cf-dica" style="margin-top:0">Valores que serão pagos pós-processos — são administrativos e saem da margem da Imobiliária Camargo.</p><?php endif; ?>
+    <?php if (Distribuicao::retencao($b)): ?><p class="cf-dica" style="margin-top:0">Fica com a própria empresa da venda (<b><?= h($empresaNome ?: 'escolha a empresa na etapa 1') ?></b>) — <b>não</b> vira conta a pagar. Use a observação para dizer do que se trata (ex.: INTEGRAÇÃO QLV).</p><?php endif; ?>
     <table class="cv-tab">
-      <thead><tr><th style="width:170px">Cargo</th><th>Nome (cadastro de Pessoas)</th><th style="width:90px">%</th><th style="width:130px" class="n">Valor</th><th style="width:34px"></th></tr></thead>
+      <thead><tr><th style="width:170px">Cargo</th><th><?= Distribuicao::retencao($b) ? 'Observação' : 'Nome (cadastro de Pessoas)' ?></th><th style="width:90px">%</th><th style="width:130px" class="n">Valor</th><th style="width:34px"></th></tr></thead>
       <tbody></tbody>
       <tfoot><tr><td></td><td style="text-align:right">total</td><td class="n" data-soma-pct></td><td class="n" data-soma-val></td><td></td></tr></tfoot>
     </table>
@@ -83,6 +87,8 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   const linhas0 = <?= json_encode($linhasJs, JSON_UNESCAPED_UNICODE) ?>;
   const conc0 = <?= json_encode($concJs, JSON_UNESCAPED_UNICODE) ?>;
   const padraoRecebem = <?= json_encode($padraoRecebem, JSON_UNESCAPED_UNICODE) ?>;
+  const ultimos = <?= json_encode($ultimos ?: new stdClass(), JSON_UNESCAPED_UNICODE) ?>;
+  const RET = ['adm', 'adm_bonus'];
   const {esc, brl, pc} = CV;
   const form = document.getElementById('cv-form2');
   let k = 0, ultimo = null;
@@ -91,9 +97,11 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   function addLinha(bloco, l) {
     const tb = form.querySelector('[data-bloco="' + bloco + '"] tbody');
     const tr = document.createElement('tr'); tr.dataset.k = k++;
+    const ret = RET.includes(bloco);
     tr.innerHTML = '<td><select data-f="cargo"><option value="">—</option>' + optsCargo(l.cargo || '') + '</select></td>'
-      + '<td><input data-f="nome" list="cv-lista-pessoas" value="' + esc(l.nome || '') + '"><span class="cv-desc-linha" data-dsc></span></td>'
-      + '<td><input data-f="pct" class="cv-num" inputmode="decimal" value="' + esc(l.pct || '') + '" placeholder="%"></td>'
+      + (ret ? '<td><input data-f="obs" value="' + esc(l.obs || '') + '" placeholder="do que se trata (ex.: INTEGRAÇÃO QLV)"><span class="cv-sug" data-omie></span></td>'
+             : '<td><input data-f="nome" list="cv-lista-pessoas" value="' + esc(l.nome || '') + '"><span class="cv-desc-linha" data-dsc></span><span class="cv-sug" data-omie></span></td>')
+      + '<td><input data-f="pct" class="cv-num" inputmode="decimal" value="' + esc(l.pct || '') + '" placeholder="%"><span class="cv-sug" data-ult></span></td>'
       + '<td class="n" data-val>—</td><td><button type="button" class="cf-x" title="remover a linha">✕</button></td>';
     tr.querySelector('.cf-x').onclick = () => { tr.remove(); mudou(); };
     tr.querySelector('[data-f=pct]').addEventListener('blur', e => CV.numBlur(e.target, true));
@@ -108,7 +116,7 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   function addReceb(x) {
     if (tbR.children.length >= 3) { alert('No máximo 3 pessoas.'); return; }
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td><input data-f="nome" list="cv-lista-pessoas" value="' + esc(x.nome || '') + '"></td><td><select data-f="cargo"><option value="">—</option>' + optsCargo(x.cargo || '') + '</select></td>'
+    tr.innerHTML = '<td><input data-f="nome" list="cv-lista-pessoas" value="' + esc(x.nome || '') + '"><span class="cv-sug" data-omie></span></td><td><select data-f="cargo"><option value="">—</option>' + optsCargo(x.cargo || '') + '</select></td>'
       + '<td><input data-f="valor" class="cv-num" inputmode="decimal" value="' + esc(x.valor || '') + '"></td><td><button type="button" class="cf-x">✕</button></td>';
     tr.querySelector('.cf-x').onclick = () => { tr.remove(); mudou(); };
     tr.querySelector('[data-f=valor]').addEventListener('blur', e => CV.numBlur(e.target, false));
@@ -160,8 +168,9 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   /* ---------- coleta + prévia ---------- */
   function coleta() {
     const linhas = [];
+    const val = (tr, f) => { const i = tr.querySelector('[data-f=' + f + ']'); return i ? i.value : ''; };
     form.querySelectorAll('[data-bloco]').forEach(sec => sec.querySelectorAll('tbody tr').forEach(tr => linhas.push({
-      k: +tr.dataset.k, bloco: sec.dataset.bloco, cargo: tr.querySelector('[data-f=cargo]').value, nome: tr.querySelector('[data-f=nome]').value, pct: tr.querySelector('[data-f=pct]').value})));
+      k: +tr.dataset.k, bloco: sec.dataset.bloco, cargo: val(tr, 'cargo'), nome: val(tr, 'nome'), obs: val(tr, 'obs'), pct: val(tr, 'pct')})));
     const rows = (tb, campos) => [...tb.querySelectorAll('tr')].map(tr => Object.fromEntries(campos.map(c => [c, tr.querySelector('[data-f=' + c + ']').value])));
     return {linhas, conclusao: {ativo: ativo.checked, valor: document.getElementById('cv-conc-valor').value, descricao: document.getElementById('cv-conc-desc').value,
             recebem: rows(tbR, ['nome', 'cargo', 'valor']), descontos: rows(tbD, ['ref', 'valor'])}};
@@ -175,23 +184,38 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
       sec.querySelectorAll('tbody tr').forEach(tr => {
         const l = porK[tr.dataset.k];
         tr.querySelector('[data-val]').textContent = l ? brl(l.valor) : '—';
-        tr.querySelector('[data-dsc]').textContent = l && l.desconto ? 'bruto ' + brl(l.bruto) + ' − ' + brl(l.desconto) + ' (conclusão do processo)' : '';
+        const dsc = tr.querySelector('[data-dsc]'); if (dsc) dsc.textContent = l && l.desconto ? 'bruto ' + brl(l.bruto) + ' − ' + brl(l.desconto) + ' (conclusão do processo)' : '';
+        const om = tr.querySelector('[data-omie]');
+        if (RET.includes(b)) om.textContent = 'recebe: ' + (j.empresa || '(empresa da venda)');
+        else om.innerHTML = l && l.pessoa_id ? chipOmie(j.omie && j.omie[l.pessoa_id]) : '';
+        const ul = tr.querySelector('[data-ult]'), u = l && l.pessoa_id ? ultimos[b + '|' + l.cargo + '|' + l.pessoa_id] : null, pin = tr.querySelector('[data-f=pct]');
+        ul.innerHTML = u && u.pct !== pin.value ? 'último: ' + esc(u.pct) + '% (#' + u.venda + ') <button type="button" data-usar-pct="' + esc(u.pct) + '">usar</button>' : '';
       });
       sec.querySelector('[data-soma-pct]').textContent = pc(j.calc.pct[b]);
       sec.querySelector('[data-soma-val]').textContent = brl(j.calc.tot[b]);
     });
     const R = [['Comissões pagas' + (j.calc.recebem ? ' (com a conclusão do processo)' : ''), j.calc.comissoes], ['Bônus', j.calc.bonus],
                ['Comissões pagas + bônus (' + pc(j.calc.pct_pagos) + ')', j.calc.pagos, 't'], ['Saldo pra imobiliária (' + pc(j.calc.pct_saldo) + ')', j.calc.saldo, 't'],
-               ['− Administrativos pós-processo (' + pc(j.calc.pct_adm) + ')', j.calc.adm, 'sub'], ['Saldo final da imobiliária (' + pc(j.calc.pct_saldo_final) + ')', j.calc.saldo_final, 't']];
+               ['− Retenções para Imobiliária (' + pc(j.calc.pct_adm) + ')', j.calc.adm, 'sub'], ['Saldo final da imobiliária (' + pc(j.calc.pct_saldo_final) + ')', j.calc.saldo_final, 't']];
     document.getElementById('cv-res').innerHTML = '<tr class="sub"><td>Comissão + bônus da venda</td><td>' + brl(j.c1.comissao_mais_bonus) + '</td></tr>'
       + R.map(([r, x, c]) => '<tr class="' + (c || '') + '"><td>' + esc(r) + '</td><td>' + brl(x) + '</td></tr>').join('')
       + (j.c1.bonus > 0 ? '<tr class="sub"><td>Bônus distribuído</td><td>' + pc(j.calc.pct_bonus_total) + ' de 100%</td></tr>' : '');
+    const rIds = j.recebem_ids || [];
+    [...tbR.querySelectorAll('tr')].filter(tr => tr.querySelector('[data-f=nome]').value.trim() || tr.querySelector('[data-f=valor]').value.trim())
+      .forEach((tr, i) => { const pid = rIds[i]; tr.querySelector('[data-omie]').innerHTML = pid ? chipOmie(j.omie && j.omie[pid]) : (tr.querySelector('[data-f=nome]').value.trim() ? '<span style="color:var(--clay)">⚠ não está no cadastro de Pessoas</span>' : ''); });
     document.getElementById('cv-pessoas').innerHTML = Object.entries(j.calc.por_pessoa).map(([n, x]) => '<tr><td>' + esc(n) + '</td><td>' + brl(x) + '</td></tr>').join('') || '<tr><td>—</td><td></td></tr>';
     const p = document.getElementById('cv-pend');
     p.innerHTML = (j.erros.length ? '<b class="e">Falta para concluir a etapa 2:</b><ul>' + j.erros.map(e => '<li class="e">' + esc(e) + '</li>').join('') + '</ul>' : '<b style="color:var(--moss)">✔ Distribuição pronta para concluir</b>')
       + (j.avisos.length ? '<b class="a" style="display:block;margin-top:8px">Atenção:</b><ul>' + j.avisos.map(e => '<li class="a">' + esc(e) + '</li>').join('') + '</ul>' : '');
     preencheRefs();
   }
+  const chaveN = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  function chipOmie(o) {
+    if (!o) return '';
+    const ok = o.status === 'ok', cls = ok ? 'color:var(--moss)' : (o.status === 'so_nome' ? 'color:#7a5a00' : 'color:var(--clay)');
+    return '<span style="' + cls + '">' + (ok ? '✔ paga para: ' : '⚠ ') + esc(ok ? o.paga_para + (o.doc ? ' · ' + o.doc : '') : o.msg) + '</span>';
+  }
+  form.addEventListener('click', ev => { const b = ev.target.closest('[data-usar-pct]'); if (!b) return; const i = b.closest('td').querySelector('[data-f=pct]'); i.value = b.dataset.usarPct; b.parentNode.innerHTML = ''; mudou(); });
   let t = null, seq = 0;
   async function previa() { const n = ++seq; const j = await CV.api({acao:'previa2', e2: coleta()}); if (n === seq) { if (j.ok) render(j); else CV.msg('erro', CV.lista(j.erros || [])); } }
   function mudou() { CV.sujo = true; clearTimeout(t); t = setTimeout(previa, 350); }

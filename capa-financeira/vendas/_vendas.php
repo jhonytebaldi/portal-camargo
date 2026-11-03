@@ -224,3 +224,54 @@ function cv_etapa_badge(string $st): string
     [$t, $c] = $m[$st] ?? [$st, ''];
     return '<span class="cf-status ' . $c . '">' . h($t) . '</span>';
 }
+
+/**
+ * Quem recebe confere com o Omie da empresa da venda, do mesmo jeito que a exportação faz
+ * (Exportacao::fornecedor: CNPJ ou CPF conforme "pagar por" no cadastro de Pessoas → cadastro no Omie).
+ * @return array<int, array{status:string, msg:string, paga_para:string, doc:string}> por pessoa_id
+ */
+function cv_pessoas_omie(string $empresa, array $ids): array
+{
+    require_once dirname(__DIR__) . '/lib/Exportacao.php';
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if (!$ids) return [];
+    $pessoas = cf_pessoas(false);
+    $out = [];
+    foreach ($ids as $id) {
+        $p = $pessoas[$id] ?? null;
+        if (!$p) { $out[$id] = ['status' => 'nao', 'msg' => 'pessoa não encontrada no cadastro', 'paga_para' => '', 'doc' => '']; continue; }
+        [$texto, $aviso] = Exportacao::fornecedor($p);
+        $dig = preg_replace('/\D+/', '', $texto);
+        $doc = in_array(strlen($dig), [11, 14], true) ? $texto : '';
+        $nome = (string)($p['razao_social'] ?: $p['nome']);
+        $base = ['paga_para' => $nome, 'doc' => $doc];
+        if ($doc === '') { $out[$id] = $base + ['status' => 'sem_doc', 'msg' => 'sem CNPJ/CPF no cadastro de Pessoas — complete o cadastro em Pessoas']; continue; }
+        if ($empresa === '') { $out[$id] = $base + ['status' => 'erro', 'msg' => 'escolha a empresa da venda na etapa 1 para conferir no Omie']; continue; }
+        if (defined('CV_OMIE_FAKE') && CV_OMIE_FAKE) { $out[$id] = $base + ['status' => 'ok', 'msg' => 'simulação local: ' . $nome]; continue; }
+        if (!isset(OmieApi::contas()[$empresa])) { $out[$id] = $base + ['status' => 'erro', 'msg' => 'Omie da empresa não configurado no portal']; continue; }
+        try {
+            $l = OmieEnvio::localizarCadastro($empresa, $doc, $nome);
+            $out[$id] = $base + ['status' => $l['status'], 'msg' => $l['msg'] . ($aviso ? ' · ' . $aviso : '')];
+        } catch (Throwable $e) {
+            $out[$id] = $base + ['status' => 'erro', 'msg' => 'não consegui consultar o Omie agora: ' . $e->getMessage()];
+        }
+    }
+    return $out;
+}
+
+/** % usado da última vez por pessoa+bloco+cargo em outras vendas (sugestão, nunca preenchido sozinho): "bloco|CARGO|id" → [pct, venda] */
+function cv_ultimos_pct(int $vendaAtual): array
+{
+    $out = [];
+    $st = db()->prepare("SELECT id, e2_dados FROM cv_vendas WHERE e2_dados IS NOT NULL AND id <> ? AND status <> 'cancelada' ORDER BY atualizado_em DESC LIMIT 500");
+    $st->execute([$vendaAtual]);
+    foreach ($st->fetchAll() as $r) {
+        $d = json_decode((string)$r['e2_dados'], true);
+        foreach (($d['linhas'] ?? []) as $l) {
+            if (empty($l['pessoa_id']) || $l['pct'] === null) continue;
+            $k = $l['bloco'] . '|' . $l['cargo'] . '|' . (int)$l['pessoa_id'];
+            if (!isset($out[$k])) $out[$k] = ['pct' => (float)$l['pct'], 'venda' => (int)$r['id']];
+        }
+    }
+    return $out;
+}

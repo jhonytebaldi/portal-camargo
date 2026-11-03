@@ -49,9 +49,20 @@ try {
         $c1 = Venda::calc($venda);
         $val = Distribuicao::validar($d, $c1);
         if ($venda['e1_status'] === 'rascunho') $val['erros'][] = 'Conclua a etapa 1 antes de concluir a distribuição (os valores dependem dela).';
+        // quem recebe tem que existir no Omie da empresa da venda (empresa/CNPJ conforme o cadastro de Pessoas)
+        $ids = array_merge(array_column($d['linhas'], 'pessoa_id'), $d['conclusao']['ativo'] ? array_column($d['conclusao']['recebem'], 'pessoa_id') : []);
+        $omie = cv_pessoas_omie((string)$venda['empresa'], $ids);
+        if ($omie !== null) {
+            $pes = cf_pessoas(false);
+            foreach ($omie as $pid => $o) {
+                $nm = (string)($pes[$pid]['nome'] ?? $pid);
+                if ($o['status'] === 'so_nome') $val['avisos'][] = "$nm: " . $o['msg'];
+                elseif ($o['status'] !== 'ok') $val['erros'][] = "$nm: não confere com o Omie da " . strtoupper((string)$venda['empresa']) . ' — ' . $o['msg'];
+            }
+        }
         if ($acao === 'previa2') {
             $calc = Distribuicao::calc($d, $c1);
-            $resp(['ok' => true, 'calc' => $calc, 'c1' => $c1, 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
+            $resp(['ok' => true, 'calc' => $calc, 'c1' => $c1, 'omie' => $omie, 'recebem_ids' => $d['conclusao']['ativo'] ? array_column($d['conclusao']['recebem'], 'pessoa_id') : [], 'empresa' => strtoupper((string)$venda['empresa']), 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
         }
         if ($venda['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
         if ($fmt) $resp(['ok' => false, 'erros' => $fmt]);
@@ -66,7 +77,7 @@ try {
         }
         $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
         $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'avisos' => $val['avisos'],
-               'msg' => $acao === 'salvar2' ? 'Rascunho da distribuição salvo.' : ($concluida ? 'Alterações gravadas (etapa 2 continua concluída).' : 'Etapa 2 concluída.')]);
+               'msg' => ($acao === 'salvar2' && !$concluida) ? 'Rascunho da distribuição salvo.' : ($concluida ? 'Alterações gravadas (etapa 2 continua concluída).' : 'Etapa 2 concluída.')]);
     }
 
     if ($acao === 'add_bairro') {

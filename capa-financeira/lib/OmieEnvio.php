@@ -80,10 +80,14 @@ final class OmieEnvio
     }
     private static function listaCache(string $nome, callable $carrega, bool $forcar = false): array
     {
+        static $mem = [];   // mesma requisição: não decodifica o JSON de novo a cada consulta
         $f = self::cacheArq($nome);
-        if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j)) return $j; }
+        if (!$forcar && isset($mem[$nome]) && is_file($f) && filemtime($f) === $mem[$nome][0]) return $mem[$nome][1];
+        if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j)) { $mem[$nome] = [filemtime($f), $j]; return $j; } }
         $lista = $carrega();
         @file_put_contents($f, json_encode($lista, JSON_UNESCAPED_UNICODE));
+        clearstatcache(true, $f);
+        $mem[$nome] = [@filemtime($f), $lista];
         return $lista;
     }
     /** títulos da empresa/tipo indexados pelo código de integração (só os nossos: 1234-P001) */

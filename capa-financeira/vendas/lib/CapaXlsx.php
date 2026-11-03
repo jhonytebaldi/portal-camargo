@@ -105,7 +105,7 @@ final class CapaXlsx
 
         $st = ['rascunho' => 'em preenchimento', 'concluida' => 'concluída', 'conferida' => 'conferida'];
         if (!empty($venda['e2']['linhas'])) {
-            $r = self::blocoDistribuicao($x, $s, $r, $venda, $R, $calc);
+            $r = self::blocoDistribuicao($x, $s, $r, $venda, $R, $calc, $empresaNome);
         }
         foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'DISTRIBUIÇÃO DAS COMISSÕES (etapa 2)' : null, 3 => 'FLUXO DE PAGAMENTO DO CLIENTE E RECEBIDOS (etapa 3)', 4 => 'PAGAMENTO PARA CORRETORES (etapa 4)']) as $n => $rot) {
             $x->set($s, "A$r", $rot, ['bold' => true, 'fill' => 'E7E6E6']);
@@ -122,7 +122,7 @@ final class CapaXlsx
     }
 
     /** linhas 29–56 do modelo: comissões, bônus, saldo e administrativos (etapa 2). Devolve a próxima linha livre. */
-    private static function blocoDistribuicao(XlsxWriter $x, string $s, int $r, array $venda, array $R, array $c1): int
+    private static function blocoDistribuicao(XlsxWriter $x, string $s, int $r, array $venda, array $R, array $c1, string $empresaNome): int
     {
         require_once __DIR__ . '/Distribuicao.php';
         $d = $venda['e2'];
@@ -138,12 +138,13 @@ final class CapaXlsx
             $x->set($s, "A$r", $rot, ['bold' => true]);
             $x->set($s, "B$r", ['f' => "G$r", 'v' => $l['valor']], $brl);
             if ($l['desconto'] > 0) $x->set($s, "D$r", 'descontado ' . Distribuicao::brl($l['desconto']) . ' (conclusão do processo)', ['italic' => true, 'color' => 'B4512F']);
-            $x->set($s, "E$r", mb_strtoupper($l['nome'], 'UTF-8'), ['fill' => 'FFF8E1', 'border' => true]);
+            if (($l['obs'] ?? '') !== '') $x->set($s, "D$r", $l['obs'], ['italic' => true, 'fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "E$r", mb_strtoupper($l['nome'] !== '' ? $l['nome'] : $l['recebe'] ?? '', 'UTF-8'), ['fill' => 'FFF8E1', 'border' => true]);
             $x->set($s, "F$r", (float)$l['pct'], ['fmt' => 'pct', 'fill' => 'FFF8E1', 'border' => true]);
             $x->set($s, "G$r", ['f' => $f, 'v' => $l['valor']], $brl);
             $r++;
         };
-        $porBloco = fn(string $b) => array_values(array_filter($calc['linhas'], fn($l) => $l['bloco'] === $b));
+        $porBloco = fn(string $b) => array_values(array_map(fn($l) => $l + ['recebe' => $empresaNome], array_filter($calc['linhas'], fn($l) => $l['bloco'] === $b)));
 
         // comissões + quem concluiu o processo
         $cab('DESCRIÇÃO');
@@ -181,9 +182,9 @@ final class CapaXlsx
         // administrativos
         $adm = array_merge($porBloco('adm'), $porBloco('adm_bonus'));
         if ($adm) {
-            $x->set($s, "A$r", 'VALORES QUE SERÃO PAGOS PÓS PROCESSOS, ESSES VALORES SÃO ADMINISTRATIVOS E SÃO PAGOS COM A MARGEM DA IMOBILIÁRIA CAMARGO', ['bold' => true, 'wrap' => true]);
+            $x->set($s, "A$r", 'RETENÇÕES PARA IMOBILIÁRIA — FICAM COM A EMPRESA DA VENDA (' . $empresaNome . '); NÃO SÃO CONTAS A PAGAR', ['bold' => true, 'wrap' => true]);
             $x->mesclar($s, "A$r:G$r"); $x->altura($s, $r, 30); $r++;
-            $cab('DESCRIÇÃO');
+            $cab('DESCRIÇÃO'); $x->set($s, 'D' . ($r - 1), 'OBSERVAÇÃO', ['bold' => true, 'fill' => 'E7E6E6', 'border' => true]);
             $iniA = $r;
             foreach ($porBloco('adm') as $l) $linha($l['cargo'], $l, $fin);
             foreach ($porBloco('adm_bonus') as $l) $linha('BONUS - ' . $l['cargo'] . ' IMOB', $l, $bon);

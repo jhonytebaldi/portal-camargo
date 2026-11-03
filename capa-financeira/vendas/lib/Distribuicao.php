@@ -8,9 +8,11 @@
    Blocos (base de cálculo):
      comissao   → VALOR FINAL PARA CÁLCULO DAS COMISSÕES (etapa 1)
      bonus      → VALOR BÔNUS PARA DISTRIBUIÇÃO
-     adm        → administrativos pós-processo, pagos com a margem da
-                  imobiliária, sobre o valor final (ex.: integração QLV, pré-venda)
-     adm_bonus  → administrativo sobre o bônus (ex.: bônus integração imob.)
+     adm        → RETENÇÕES PARA IMOBILIÁRIA sobre o valor final (ex.: integração
+                  QLV, pré-venda). Não têm "pessoa": ficam com a própria empresa da
+                  venda (Vertical ou Camargo); a linha só leva uma observação dizendo
+                  do que se trata. Não viram conta a pagar.
+     adm_bonus  → retenção sobre o bônus (ex.: bônus integração imob.)
    O bônus (bonus + adm_bonus) tem que fechar 100%.
 
    Guardado em cv_vendas.e2_dados (JSON):
@@ -27,8 +29,8 @@ final class Distribuicao
     public const BLOCOS = [
         'comissao' => ['Comissões', 'valor_final', 'sobre o valor final para cálculo das comissões'],
         'bonus' => ['Bônus', 'bonus_distribuicao', 'sobre o valor do bônus para distribuição'],
-        'adm' => ['Administrativos pós-processo (comissão)', 'valor_final', 'pagos com a margem da imobiliária, sobre o valor final'],
-        'adm_bonus' => ['Administrativos pós-processo (bônus)', 'bonus_distribuicao', 'pagos com a margem da imobiliária, sobre o bônus'],
+        'adm' => ['Retenções para Imobiliária (comissão)', 'valor_final', 'ficam com a empresa da venda, sobre o valor final'],
+        'adm_bonus' => ['Retenções para Imobiliária (bônus)', 'bonus_distribuicao', 'ficam com a empresa da venda, sobre o bônus'],
     ];
     /** linhas que aparecem numa distribuição nova (só o cargo; nome e % a preencher) */
     public const MODELO = [
@@ -45,6 +47,9 @@ final class Distribuicao
                 'conclusao' => ['ativo' => false, 'valor' => self::CONCLUSAO_PADRAO['valor'], 'descricao' => '', 'recebem' => [], 'descontos' => []]];
     }
 
+    public const RETENCAO = ['adm', 'adm_bonus'];
+    public static function retencao(string $bloco): bool { return in_array($bloco, self::RETENCAO, true); }
+
     public static function ref(string $cargo, string $nome): string { return Venda::texto($cargo) . '|' . Venda::texto($nome); }
 
     /**
@@ -58,11 +63,18 @@ final class Distribuicao
             $bloco = isset(self::BLOCOS[$l['bloco'] ?? '']) ? $l['bloco'] : 'comissao';
             $cargo = Venda::texto($l['cargo'] ?? '');
             $nome = Venda::texto($l['nome'] ?? '', false);
+            $obs = Venda::texto($l['obs'] ?? '', false);
             $pct = Venda::percentual($l['pct'] ?? null);
             if ($pct === false) { $fmt[] = "Linha " . ($i + 1) . ": percentual ilegível."; $pct = null; }
+            $k = isset($l['k']) ? ['k' => (int)$l['k']] : [];
+            if (self::retencao($bloco)) {       // retenção: sem pessoa (é a própria empresa da venda), só observação
+                if ($obs === '' && $pct === null) continue;
+                $linhas[] = ['bloco' => $bloco, 'cargo' => $cargo, 'pessoa_id' => null, 'nome' => '', 'obs' => $obs, 'pct' => $pct] + $k;
+                continue;
+            }
             if ($nome === '' && $pct === null) continue;     // linha do modelo não usada
             $r = $nome !== '' ? $resolver($nome) : null;
-            $linhas[] = ['bloco' => $bloco, 'cargo' => $cargo, 'pessoa_id' => $r[0] ?? null, 'nome' => $r[1] ?? $nome, 'pct' => $pct] + (isset($l['k']) ? ['k' => (int)$l['k']] : []);
+            $linhas[] = ['bloco' => $bloco, 'cargo' => $cargo, 'pessoa_id' => $r[0] ?? null, 'nome' => $r[1] ?? $nome, 'pct' => $pct] + $k;
         }
         $c = (array)($in['conclusao'] ?? []);
         $conc = ['ativo' => !empty($c['ativo']), 'valor' => null, 'descricao' => Venda::texto($c['descricao'] ?? '', false), 'recebem' => [], 'descontos' => []];
@@ -125,10 +137,16 @@ final class Distribuicao
         $e = []; $a = [];
         $calc = self::calc($d, $c1);
         $vistos = []; $temCorretor = false; $temBonus = false;
-        $rot = fn(array $l) => self::BLOCOS[$l['bloco']][0] . ' · ' . ($l['cargo'] ?: '(sem cargo)') . ($l['nome'] !== '' ? ' · ' . $l['nome'] : '');
+        $rot = fn(array $l) => self::BLOCOS[$l['bloco']][0] . ' · ' . ($l['cargo'] ?: '(sem cargo)') . ($l['nome'] !== '' ? ' · ' . $l['nome'] : (($l['obs'] ?? '') !== '' ? ' · ' . $l['obs'] : ''));
         foreach ($d['linhas'] as $l) {
             $q = $rot($l);
             if (!in_array($l['cargo'], self::CARGOS, true)) $e[] = "$q: escolha o cargo da lista.";
+            if (self::retencao($l['bloco'])) {
+                if (($l['obs'] ?? '') === '') $e[] = "$q: escreva na observação do que se trata (ex.: INTEGRAÇÃO QLV).";
+                if ($l['pct'] === null || $l['pct'] <= 0) $e[] = "$q: falta o %.";
+                if (in_array($l['bloco'], ['bonus', 'adm_bonus'], true)) $temBonus = true;
+                continue;
+            }
             if ($l['nome'] === '') $e[] = "$q: falta o nome.";
             elseif (!$l['pessoa_id']) $e[] = "$q: \"{$l['nome']}\" não está no cadastro de Pessoas — escolha da lista (ou cadastre a pessoa em Pessoas).";
             if ($l['pct'] === null || $l['pct'] <= 0) $e[] = "$q: falta o %.";
@@ -144,7 +162,7 @@ final class Distribuicao
             if (abs($calc['pct_bonus_total'] - 1) > 0.00001) $e[] = 'O bônus tem que fechar 100% (bônus + administrativo do bônus) — está em ' . self::pctTxt($calc['pct_bonus_total']) . '.';
         } elseif ($temBonus) $e[] = 'Esta venda não tem bônus (etapa 1) — remova as linhas de bônus.';
         if ($calc['saldo'] < -0.005) $e[] = 'As comissões + bônus passam do que a imobiliária recebe (saldo negativo: ' . self::brl($calc['saldo']) . ').';
-        elseif ($calc['saldo_final'] < -0.005) $e[] = 'Com os administrativos pós-processo, o saldo da imobiliária fica negativo (' . self::brl($calc['saldo_final']) . ').';
+        elseif ($calc['saldo_final'] < -0.005) $e[] = 'As retenções para imobiliária passam do saldo da imobiliária (' . self::brl($calc['saldo_final']) . ').';
 
         $c = $d['conclusao'];
         if ($c['ativo']) {
@@ -186,7 +204,7 @@ final class Distribuicao
     {
         if (!$d) return [];
         $out = [];
-        foreach ($d['linhas'] as $l) $out[] = self::BLOCOS[$l['bloco']][0] . ' · ' . $l['cargo'] . ' · ' . $l['nome'] . ' · ' . self::pctTxt((float)$l['pct']);
+        foreach ($d['linhas'] as $l) $out[] = self::BLOCOS[$l['bloco']][0] . ' · ' . $l['cargo'] . ' · ' . ($l['nome'] !== '' ? $l['nome'] : 'obs: ' . ($l['obs'] ?? '')) . ' · ' . self::pctTxt((float)$l['pct']);
         $c = $d['conclusao'];
         if ($c['ativo']) {
             $out[] = 'Conclusão do processo: ' . self::brl((float)$c['valor']) . ' — ' . $c['descricao'];
