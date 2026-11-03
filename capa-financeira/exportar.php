@@ -362,6 +362,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
         }
+        if ($acao === 'buscar_cliente') {
+            // cadastros parecidos no Omie (lista em cache) para o usuário escolher como cliente/fornecedor da linha
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa — as chaves ficam no omie.php da configuração do portal');
+            $termo = trim((string)($in['termo'] ?? '')); if ($termo === '') $falha('digite parte do nome ou o CPF/CNPJ para buscar');
+            if (!empty($in['atualizar'])) { try { OmieEnvio::cadastros($empresa, true); } catch (Throwable $e) {} }
+            $lista = array_map(fn($c) => ['codigo' => (int)$c['codigo_cliente_omie'], 'nome' => (string)$c['razao_social'], 'fantasia' => (string)($c['nome_fantasia'] ?? ''), 'doc' => (string)($c['cnpj_cpf'] ?? ''), 'inativo' => ($c['inativo'] ?? 'N') === 'S', 'pontos' => (int)($c['pontos'] ?? 0), 'de' => (int)($c['de'] ?? 0)], OmieEnvio::buscarCadastros($empresa, $termo));
+            exit(json_encode(['ok' => true, 'lista' => $lista], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'usar_cliente' || $acao === 'cadastrar_cliente') {
+            // define o cliente/fornecedor da linha: um cadastro existente (pelo documento, ou pelo nome exato se não tiver documento) ou um novo, criado agora no Omie
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            $id = (int)($in['id'] ?? 0);
+            $st = $pdo->prepare("SELECT l.*, c.empresa AS emp FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.status = 'confirmado'"); $st->execute([$id]);
+            if (!($l = $st->fetch()) || $l['emp'] !== $empresa) $falha('linha não está confirmada/pendente de exportação (ou é de outra empresa) — recarregue a página');
+            if ($acao === 'cadastrar_cliente') {
+                if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+                if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('API do Omie bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
+                try { $r = OmieEnvio::incluirCadastro($empresa, (string)($in['nome'] ?? ''), (string)($in['doc'] ?? ''), (string)($in['email'] ?? '')); }
+                catch (Throwable $e) { $falha('não cadastrei no Omie: ' . $e->getMessage() . (OmieEnvio::erroTemporario($e->getMessage()) ? ' — aguarde alguns minutos e tente de novo' : '')); }
+                $cad = $r['cadastro'];
+                cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $l['tipo'] === 'R' ? 'R' : 'P', 'incluir', 'ok', (int)$cad['codigo_cliente_omie'], $r['pedido'], $cad, 'cliente/fornecedor ' . $r['msg'], (int)$u['id'], true);
+                $msg = $r['msg'];
+            } else {
+                $cod = (int)($in['codigo'] ?? 0); $cad = null;
+                foreach (OmieEnvio::cadastros($empresa)['por_nome'] as $lista) foreach ($lista as $c) if ((int)$c['codigo_cliente_omie'] === $cod) { $cad = $c; break 2; }
+                if (!$cad) $falha('cadastro não encontrado na lista do Omie — clique em "atualizar lista" e tente de novo');
+                $msg = 'cliente definido: ' . $cad['razao_social'] . ' (cód. ' . $cad['codigo_cliente_omie'] . ')';
+            }
+            // guarda o documento (identifica sem ambiguidade); sem documento, o nome exato do cadastro
+            $valor = preg_replace('/\D+/', '', (string)($cad['cnpj_cpf'] ?? '')); if (!in_array(strlen($valor), [11, 14], true)) $valor = mb_substr((string)$cad['razao_social'], 0, 60);
+            $pdo->prepare('UPDATE cf_lancamentos SET cliente_omie = ? WHERE id = ?')->execute([$valor, $id]);
+            exit(json_encode(['ok' => true, 'msg' => $msg, 'valor' => $valor, 'nome' => (string)$cad['razao_social']], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'vincular_linha') {
             // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
             $id = (int)($in['id'] ?? 0); $omieId = (int)($in['omie_id'] ?? 0);
@@ -378,28 +412,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute(['devolvida em ' . date('d/m/Y H:i') . ' — não estava no Omie após a importação da planilha', $id]);
             cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, (string)($in['empresa'] ?? ''), $l['tipo'] === 'R' ? 'R' : 'P', 'incluir', 'recusado', null, null, null, 'linha devolvida para confirmado: título não encontrado no Omie após importação da planilha', (int)$u['id']);
             exit(json_encode(['ok' => true]));
-        }
-        if ($acao === 'forcar_reenvio') {
-            // título excluído à mão no Omie: a linha (que no portal continua "exportada") volta para a fila, para ser enviada de novo
-            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
-            $codigo = strtoupper(trim((string)($in['codigo'] ?? '')));
-            if ($codigo === '') $falha('informe o código do título (ex.: 933-R004)');
-            $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.codigo_integracao = ? AND l.status = 'exportado' AND c.empresa = ? ORDER BY l.id DESC LIMIT 1");
-            $st->execute([$codigo, $empresa]);
-            if (!($l = $st->fetch())) $falha("não há linha exportada com o código $codigo nesta empresa");
-            $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
-            if ($apiDisp = (OmieApi::disponivel() && isset(OmieApi::contas()[$empresa]))) {
-                try {
-                    $t0 = OmieEnvio::titulos($empresa, $tipo)['por_codigo'][$codigo] ?? null;
-                    $ainda = $t0 ? OmieEnvio::consultarPorOmieId($empresa, $tipo, (int)$t0['omie_id']) : null;
-                } catch (Throwable $e) { $falha('não consegui conferir no Omie agora: ' . $e->getMessage()); }
-                if ($ainda) $falha("o título $codigo ainda existe no Omie (status " . ($ainda['status_titulo'] ?? '?') . ') — só force o reenvio de título que foi excluído lá');
-                OmieEnvio::lembrarTitulo($empresa, $tipo, $codigo, null);
-            }
-            $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL, omie_id = NULL, alteracao_pos_exportacao = 0, omie_erro = ? WHERE id = ?")
-                ->execute(['reenvio forçado em ' . date('d/m/Y H:i') . ' por ' . $u['nome'] . ' — título não existe mais no Omie', (int)$l['id']]);
-            cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipo, 'incluir', 'recusado', null, null, null, 'reenvio forçado: linha voltou para a fila (título excluído no Omie)', (int)$u['id']);
-            exit(json_encode(['ok' => true, 'msg' => "$codigo voltou para a fila de envio" . ($apiDisp ? ' (conferido: não existe mais no Omie)' : ' (sem API: não deu para conferir no Omie)')], JSON_UNESCAPED_UNICODE));
         }
         if ($acao === 'desfazer_linha') {
             $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
@@ -556,6 +568,22 @@ portal_header('Exportar para o Omie', $u);
 </div>
 
 <div id="exp-resultado" style="display:none;margin:0 0 10px;padding:12px 14px;border-radius:8px;font-size:15px;font-weight:600"></div>
+<div id="cli-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;align-items:flex-start;justify-content:center;padding:40px 12px;overflow:auto">
+  <div style="background:#fff;border-radius:10px;max-width:760px;width:100%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">Cliente no Omie — <span id="cli-cod"></span></h3><button type="button" class="cf-x" id="cli-fechar">✖ fechar</button></div>
+    <p class="cf-dica" style="margin:6px 0 10px">Escolha um cadastro já existente no Omie (busca por parte do nome ou pelo CPF/CNPJ) ou cadastre o cliente agora. O escolhido vai para o campo "Cliente (como está no Omie)" da linha: pelo documento, quando o cadastro tem um; senão pelo nome exato.</p>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="text" id="cli-busca" class="cf-in" style="flex:1;min-width:240px" placeholder="parte do nome ou CPF/CNPJ"><button type="button" class="btn cf-btn-sec" id="cli-buscar">Buscar</button><button type="button" class="cf-x" id="cli-atualizar" title="recarrega a lista de cadastros do Omie (use se acabou de cadastrar por lá)">↻ atualizar lista</button></div>
+    <div id="cli-lista" style="margin:10px 0"></div>
+    <details id="cli-novo" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">＋ Cadastrar cliente novo no Omie</summary>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:8px">
+        <label>Nome (até 60 caracteres)<input type="text" id="cli-nome" class="cf-in" maxlength="60" style="width:100%"><small class="cf-raw"><span id="cli-nome-n">0</span>/60</small></label>
+        <label>CPF ou CNPJ<input type="text" id="cli-doc" class="cf-in" style="width:100%" placeholder="só números ou com pontuação"></label>
+        <label style="grid-column:1/3">E-mail (opcional)<input type="email" id="cli-email" class="cf-in" style="width:100%"></label>
+      </div>
+      <p><button type="button" class="btn" id="cli-cadastrar">Cadastrar no Omie e usar nesta linha</button> <span class="cf-raw" id="cli-novo-msg"></span></p>
+    </details>
+  </div>
+</div>
 <?php if (!$linhas): ?>
   <p class="home-sub">Nada pendente de exportação para <?= h($emp['nome']) ?> (<?= $tipo === 'P' ? 'contas a pagar' : 'contas a receber' ?>). Confirme capas na revisão para elas aparecerem aqui.</p>
 <?php else: ?>
@@ -606,7 +634,7 @@ portal_header('Exportar para o Omie', $u);
   <td><input type="checkbox" class="exp-sel" <?= $ok ? 'checked' : 'disabled' ?>></td>
   <td><a href="/capa-financeira/revisar.php?id=<?= (int)$l['capa_id'] ?>"><?= h((string)$l['capa_cod']) ?></a><br><small class="cf-raw"><?= h(mb_substr((string)$l['capa_cliente'], 0, 40)) ?></small></td>
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['cf_raw']) ?></small></td>
-  <td><input type="text" class="cf-in exp-edit" data-campo="cliente_omie" value="<?= h((string)$l['cliente_omie']) ?>" placeholder="<?= h($m['cols']['C']['s'] ?? '') ?>" maxlength="60" title="vazio = CPF do 1º comprador da capa (ou o nome, se a capa não tem CPF)"></td>
+  <td><input type="text" class="cf-in exp-edit" data-campo="cliente_omie" value="<?= h((string)$l['cliente_omie']) ?>" placeholder="<?= h($m['cols']['C']['s'] ?? '') ?>" maxlength="60" title="vazio = CPF do 1º comprador da capa (ou o nome, se a capa não tem CPF)"><?php if ($apiOk): ?><br><button type="button" class="cf-x exp-cli-omie" data-nome="<?= h((string)$l['capa_cliente']) ?>" data-doc="<?= h(Exportacao::cpfPrimeiroComprador(cf_exp_capa($l))) ?>" title="escolher um cadastro existente no Omie ou cadastrar o cliente agora">🔍 escolher / cadastrar no Omie</button><?php endif; ?></td>
   <td><?= h((string)$l['categoria']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="conta_corrente" list="contas-omie" value="<?= h((string)$l['conta_corrente']) ?>" placeholder="<?= h($m['cols']['E']['s'] ?? 'nome exato no Omie') ?>" maxlength="40"></td>
   <td class="cf-num"><?= cf_brl($l['valor']) ?></td>
@@ -644,20 +672,6 @@ portal_header('Exportar para o Omie', $u);
 <td><button type="button" class="cf-x exp-desfazer-linha" title="exclui este título no Omie (se ainda não foi baixado) e devolve a linha para 'confirmado'">↩ excluir do Omie</button></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <?php endif; ?>
-
-<details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600">Título excluído à mão no Omie? Forçar reenvio</summary>
-  <p class="cf-dica">Linhas que já foram ao Omie ficam marcadas como enviadas e não voltam para a fila (nem quando a capa ganha versão nova). Se alguém excluiu o título direto no Omie, informe o código para ele voltar para a fila e ser enviado de novo. O portal confere antes que o título não existe mais lá.</p>
-  <p><input id="exp-forcar-cod" placeholder="ex.: 933-R004" style="padding:7px 9px;border:2px solid var(--line);border-radius:6px;font:inherit"> <button type="button" class="btn cf-btn-sec" id="exp-forcar">forçar reenvio</button></p>
-</details>
-<script>
-document.getElementById('exp-forcar').onclick = async () => {
-  const codigo = document.getElementById('exp-forcar-cod').value.trim(); if (!codigo) return;
-  if (!confirm('Forçar o reenvio de ' + codigo + '? Ele volta para a fila e será enviado de novo ao Omie.')) return;
-  const r = await fetch(location.pathname, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao:'forcar_reenvio', empresa: <?= json_encode($empresa) ?>, codigo, csrf: <?= json_encode(csrf_token()) ?>})});
-  let j = null; try { j = await r.json(); } catch (e) {}
-  alert(j && j.ok ? j.msg : 'Não foi: ' + (j && j.erro ? j.erro : r.status)); if (j && j.ok) location.reload();
-};
-</script>
 
 <h2 class="cf-h2">Exportações anteriores <small><?= h($emp['nome']) ?></small></h2>
 <?php if ($tipo === 'P' && $historico): ?>
@@ -707,6 +721,48 @@ document.getElementById('exp-forcar').onclick = async () => {
   }
   // conferências já feitas (salvas): mostra ao abrir a página
   document.querySelectorAll('.exp-conf-salva').forEach(el => { try { renderConferencia(el.closest('tr'), JSON.parse(el.dataset.conf)); } catch(e) {} });
+  // escolher / cadastrar cliente no Omie (linha de contas a receber)
+  (function(){
+    const modal = document.getElementById('cli-modal'); if (!modal) return;
+    let linha = null; const esc = s => String(s ?? '').replace(/</g,'&lt;');
+    const fmtDoc = d => { d = String(d||'').replace(/\D/g,''); return d.length === 11 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4') : d.length === 14 ? d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,'$1.$2.$3/$4-$5') : d; };
+    document.querySelectorAll('.exp-cli-omie').forEach(b => b.addEventListener('click', () => {
+      linha = b.closest('tr'); document.getElementById('cli-cod').textContent = linha.querySelector('b').textContent;
+      document.getElementById('cli-busca').value = b.dataset.nome || ''; document.getElementById('cli-lista').innerHTML = '';
+      document.getElementById('cli-nome').value = (b.dataset.nome || '').slice(0, 60); document.getElementById('cli-nome-n').textContent = document.getElementById('cli-nome').value.length;
+      document.getElementById('cli-doc').value = fmtDoc(b.dataset.doc || ''); document.getElementById('cli-email').value = ''; document.getElementById('cli-novo-msg').textContent = ''; document.getElementById('cli-novo').open = false;
+      modal.style.display = 'flex'; buscar(false);
+    }));
+    document.getElementById('cli-fechar').addEventListener('click', () => modal.style.display = 'none');
+    modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+    document.getElementById('cli-nome').addEventListener('input', e => document.getElementById('cli-nome-n').textContent = e.target.value.length);
+    async function buscar(atualizar){
+      const termo = document.getElementById('cli-busca').value.trim(); const box = document.getElementById('cli-lista');
+      if (!termo) { box.innerHTML = '<div class="cf-flag cf-leve">digite parte do nome ou o CPF/CNPJ</div>'; return; }
+      box.innerHTML = '<div class="cf-raw">buscando na lista de cadastros do Omie…</div>';
+      const j = await post({acao:'buscar_cliente', termo, atualizar: atualizar ? 1 : 0}); if (!j) { box.innerHTML = ''; return; }
+      if (!j.lista.length) { box.innerHTML = '<div class="cf-flag cf-leve">nenhum cadastro parecido no Omie — confira a grafia, clique em "atualizar lista" se acabou de cadastrar por lá, ou cadastre abaixo</div>'; document.getElementById('cli-novo').open = true; return; }
+      box.innerHTML = '<table class="grid cf-tbl"><thead><tr><th>Cadastro no Omie</th><th>CPF/CNPJ</th><th>Cód.</th><th></th></tr></thead><tbody>' + j.lista.map(c => '<tr><td>' + esc(c.nome) + (c.fantasia && c.fantasia !== c.nome ? '<br><small class="cf-raw">' + esc(c.fantasia) + '</small>' : '') + (c.inativo ? ' <span class="cf-tag cf-grave">inativo</span>' : '') + (c.de ? '<br><small class="cf-raw">bate ' + c.pontos + ' de ' + c.de + ' palavra(s)</small>' : '') + '</td><td>' + (c.doc ? esc(c.doc) : '<span class="cf-raw">sem documento</span>') + '</td><td>' + c.codigo + '</td><td><button type="button" class="cf-x cli-usar" data-codigo="' + c.codigo + '" data-nome="' + esc(c.nome) + '">usar este</button></td></tr>').join('') + '</tbody></table>';
+      box.querySelectorAll('.cli-usar').forEach(u => u.addEventListener('click', async () => {
+        if (!confirm('Usar "' + u.dataset.nome + '" (cód. ' + u.dataset.codigo + ') como cliente desta linha?')) return;
+        const r = await post({acao:'usar_cliente', id: +linha.dataset.id, codigo: +u.dataset.codigo}); if (!r) return;
+        toast(r.msg + ' — recarregando'); setTimeout(() => location.reload(), 700);
+      }));
+    }
+    document.getElementById('cli-buscar').addEventListener('click', () => buscar(false));
+    document.getElementById('cli-busca').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); buscar(false); } });
+    document.getElementById('cli-atualizar').addEventListener('click', () => buscar(true));
+    document.getElementById('cli-cadastrar').addEventListener('click', async () => {
+      const nome = document.getElementById('cli-nome').value.trim(), doc = document.getElementById('cli-doc').value.trim(), email = document.getElementById('cli-email').value.trim(); const msg = document.getElementById('cli-novo-msg');
+      if (!nome) { msg.textContent = 'informe o nome'; return; } if (nome.length > 60) { msg.textContent = 'nome com ' + nome.length + ' caracteres — abrevie até 60'; return; }
+      const dig = doc.replace(/\D/g,''); if (dig.length !== 11 && dig.length !== 14) { msg.textContent = 'CPF/CNPJ deve ter 11 ou 14 dígitos'; return; }
+      if (!confirm('Cadastrar no Omie (' + empresa.toUpperCase() + '):\n\nNome: ' + nome + '\nCPF/CNPJ: ' + fmtDoc(dig) + '\nE-mail: ' + (email || '—') + '\n\nO cadastro é criado no Omie agora e passa a ser o cliente desta linha.')) return;
+      const b = document.getElementById('cli-cadastrar'); b.disabled = true; msg.textContent = 'cadastrando no Omie…';
+      const r = await post({acao:'cadastrar_cliente', id: +linha.dataset.id, nome, doc: dig, email}); b.disabled = false;
+      if (!r) { msg.textContent = ''; return; }
+      toast(r.msg + ' — recarregando'); setTimeout(() => location.reload(), 900);
+    });
+  })();
   function toast(msg){ const t = document.createElement('div'); t.className = 'cf-toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 4000); }
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   function soma(){ let n = 0, t = 0; document.querySelectorAll('.exp-sel:checked').forEach(c => { n++; t += parseFloat(c.closest('tr').dataset.valor) || 0; });

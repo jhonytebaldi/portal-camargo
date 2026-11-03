@@ -251,7 +251,7 @@ function cf_flag_curto(string $f): string
 /** Cabeçalho padrão das telas: trilha (esquerda), título, subtítulo e o menu do módulo (direita). */
 function cf_cabecalho(string $titulo, string $sub, array $trilha, string $atual = '', string $extra = ''): void
 {
-    $menu = ['vendas' => ['/capa-financeira/vendas/', 'Vendas (formulário)'], 'capas' => ['/capa-financeira/', 'Capas'], 'exportar' => ['/capa-financeira/exportar.php', 'Exportar p/ Omie'], 'recibos' => ['/capa-financeira/recibos.php', 'Recibos'],
+    $menu = ['capas' => ['/capa-financeira/', 'Capas'], 'exportar' => ['/capa-financeira/exportar.php', 'Exportar p/ Omie'], 'recibos' => ['/capa-financeira/recibos.php', 'Recibos'],
              'recibos-omie' => ['/recibos-omie/', 'Recibos do Omie'], 'pessoas' => ['/capa-financeira/pessoas.php', 'Pessoas'], 'config' => ['/capa-financeira/configuracoes.php', 'Configurações']];
     echo '<div class="cf-top"><div><nav class="cf-trilha"><a href="/">Portal</a>';
     foreach ($trilha as $i => [$txt, $href]) echo ' <span>›</span> ' . ($href && $i < count($trilha) - 1 ? '<a href="' . h($href) . '">' . h($txt) . '</a>' : '<b>' . h($txt) . '</b>');
@@ -340,4 +340,22 @@ window.cfNf = {
 };
 </script>
 HTML;
+}
+
+/** CPF (11) ou CNPJ (14) com dígitos verificadores válidos. */
+function cf_doc_valido(string $doc): bool
+{
+    $d = preg_replace('/\D+/', '', $doc);
+    if (strlen($d) === 11) {
+        if (preg_match('/^(\d)\1{10}$/', $d)) return false;
+        for ($t = 9; $t < 11; $t++) { $soma = 0; for ($i = 0; $i < $t; $i++) $soma += (int)$d[$i] * (($t + 1) - $i); $dv = (($soma * 10) % 11) % 10; if ((int)$d[$t] !== $dv) return false; }
+        return true;
+    }
+    if (strlen($d) === 14) {
+        if (preg_match('/^(\d)\1{13}$/', $d)) return false;
+        $pesos = [[5,4,3,2,9,8,7,6,5,4,3,2], [6,5,4,3,2,9,8,7,6,5,4,3,2]];
+        for ($t = 12; $t < 14; $t++) { $soma = 0; foreach ($pesos[$t - 12] as $i => $pz) $soma += (int)$d[$i] * $pz; $dv = $soma % 11 < 2 ? 0 : 11 - $soma % 11; if ((int)$d[$t] !== $dv) return false; }
+        return true;
+    }
+    return false;
 }
