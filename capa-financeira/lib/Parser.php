@@ -253,7 +253,9 @@ final class CapaParser
             if ($k !== '' && !isset($lab[$k])) $lab[$k] = $r;
         }
         $val = fn(string $k, int $col = 2) => isset($lab[$k]) ? $ws->cell($lab[$k], $col) : null;
-        $cod = $val('COD');
+        // rótulos do modelo antigo e do MODELO_ATUALIZADO (03/11/2026): BAIRRO, UNIDADE/ENDEREÇO, COD. IMÓVEL, "...COMISSÃO DA IMOB e VGV"
+        $val1 = function (array $ks, int $col = 2) use ($val) { foreach ($ks as $k) { $x = $val($k, $col); if ($x !== null) return $x; } return null; };
+        $cod = $val1(['COD', 'COD. IMOVEL', 'COD IMOVEL']);
         // Modelo 09/2026: compradores em linhas "COMPRADOR 01/02" (B nome, C nascimento, D CPF) e data da venda
         // ao lado do rótulo "DATA DA VENDA". Modelo antigo: "CLIENTE" em B2 e data em G3 (sem rótulo).
         $compradores = []; $docFlags = [];
@@ -280,11 +282,11 @@ final class CapaParser
         return [[
             'cliente' => $cliente, 'compradores' => $compradores,
             'construtora' => self::norm($val('CONTRUTORA') ?? $val('CONSTRUTORA')),
-            'bairro' => self::norm($val('OBRA/BAIRRO')),
-            'unidade' => self::norm($val('GEMINADO') ?? $val('UNIDADE')),
+            'bairro' => self::norm($val1(['OBRA/BAIRRO', 'BAIRRO'])),
+            'unidade' => self::norm($val1(['GEMINADO', 'UNIDADE', 'UNIDADE/ENDERECO'])),
             'cod' => $codOut,
             'data_venda' => $dataVenda, 'data_venda_flag' => $dvFlag,
-            'valor_contrato' => self::money($val('VALOR CONTRATO')), 'vgv' => self::money($val('VGV')),
+            'valor_contrato' => self::money($val('VALOR CONTRATO')), 'vgv' => self::money($val1(['VGV', 'VALOR PARA CALCULO DA COMISSAO DA IMOB E VGV'])),
             'valor_bonus' => self::money($val('VALOR BONUS')),
             'obs_c8' => self::norm($ws->ref('C8')) !== '' ? self::norm($ws->ref('C8')) : null,
             'doc_flags' => $docFlags,

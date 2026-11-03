@@ -187,6 +187,9 @@ try {
     require_once dirname(__DIR__) . '/capa-financeira/lib/Parser.php';
     require_once dirname(__DIR__) . '/capa-financeira/schema.php';
     foreach (cf_migrar($pdo) as $f) $feitos[] = 'capa-financeira: ' . $f;
+    // ---- Formulário da capa de venda em etapas (capa-financeira/vendas/schema.php) -----
+    require_once dirname(__DIR__) . '/capa-financeira/vendas/schema.php';
+    foreach (cv_migrar($pdo) as $f) $feitos[] = 'vendas: ' . $f;
     // ---- Recibos do Omie (recibos-omie/schema.php) -----
     require_once dirname(__DIR__) . '/recibos-omie/schema.php';
     foreach (ro_migrar($pdo) as $f) $feitos[] = 'recibos-omie: ' . $f;

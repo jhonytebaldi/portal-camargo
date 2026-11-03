@@ -19,3 +19,20 @@ Implementação de referência em Python (`capa_parser.py`) + 13 capas reais fic
 upload.php (parse + diff com versão anterior do mesmo COD + possível duplicata) → revisar.php (pessoa, data,
 natureza, nota fiscal, alertas graves com "ok") → confirmar (gera `COD-P001`/`COD-R001`, reaproveita códigos
 da versão anterior, marca a anterior como substituída).
+
+## Vendas — formulário da capa em etapas (`vendas/`)
+Em vez de enviar a planilha pronta, a equipe preenche a capa no portal, por etapas, e baixa o .xlsx quando quiser
+(`COMPRADORES_x_CONSTRUTORA_dd-mm-aaaa.xlsx`, com a data da última edição). Regras de negócio no doc do projeto
+"formulario-capa-venda-regras.md". Fase 1 (pronta): etapa 1 — dados da venda.
+- Tabelas `cv_vendas`, `cv_compradores`, `cv_historico` (criadas por `admin/migrar.php` → `vendas/schema.php`).
+- `vendas/lib/Venda.php` é a fonte única dos cálculos (linhas 9–27 da capa), da descrição padrão e das validações;
+  a tela pede a prévia ao servidor (`vendas/api.php`, ação `previa`), não recalcula em JS.
+- Compradores: CPF ou CNPJ (inclusive o CNPJ alfanumérico), conferidos/cadastrados SEMPRE no Omie da Vertical ao
+  concluir a etapa 1 (`vendas/lib/OmieCompradores.php`, com confirmação na tela).
+- Histórico: cada campo alterado (antes → depois), conclusão, vínculo/cadastro no Omie e download do .xlsx, com o usuário.
+- Trava otimista (`rev`): se duas pessoas editam a mesma venda, a segunda gravação é recusada (nada se perde em silêncio).
+- Código do imóvel: mostra o que a Busca tem (construtora/endereço/bairro) em itálico, SEM pré-preencher.
+- `.xlsx`: `vendas/xlsx.php` + `vendas/lib/CapaXlsx.php` (gravador próprio `lib/XlsxWriter.php`, fórmulas com valor em cache).
+- Desenvolvimento local: `define('CV_OMIE_FAKE', true)` no config.php troca o Omie por um JSON (NUNCA em produção).
+- O Parser passou a aceitar também os rótulos do MODELO_ATUALIZADO (BAIRRO, UNIDADE/ENDEREÇO, COD. IMÓVEL e
+  "VALOR PARA CALCULO DA COMISSÃO DA IMOB e VGV"). **Replicar no `capa_parser.py` de referência** (paridade).
