@@ -125,7 +125,8 @@ details.cv-par summary{cursor:pointer;font-size:13px;font-weight:600;color:var(-
     'Preencha por partes: dá pra salvar rascunho a qualquer momento e continuar depois. Cada alteração fica registrada no histórico com o seu nome.',
     [['Capa Financeira', '/capa-financeira/'], ['Vendas', '/capa-financeira/vendas/'], [$venda ? '#' . $id : 'Nova', null]], 'vendas'); ?>
 
-<?php if (!empty($_GET['ok'])): ?><div class="cv-msg ok">✔ <?= h((string)$_GET['ok']) ?></div><?php endif; ?>
+<?php if (!empty($_GET['ok'])): ?><div class="cv-msg ok" data-cf-modal="<?= str_contains((string)$_GET['ok'], 'Atenção:') ? 'parcial' : 'ok' ?>" data-cf-titulo="<?= h(cv_titulo_ok((string)$_GET['ok'])) ?>">✔ <?= h((string)$_GET['ok']) ?></div>
+<script>try { const u = new URL(location.href); u.searchParams.delete('ok'); history.replaceState(null, '', u); } catch (e) {}</script><?php endif; ?>
 <?php if ($cancelada): ?><div class="cv-msg erro">Esta venda está <b>cancelada</b> — só leitura. Use “Descancelar” no painel ao lado para voltar ao estado anterior.</div><?php endif; ?>
 <div id="cv-msg"></div>
 
@@ -146,15 +147,40 @@ details.cv-par summary{cursor:pointer;font-size:13px;font-weight:600;color:var(-
 window.CV = {
   csrf: <?= json_encode(csrf_token()) ?>, id: <?= (int)$id ?>, rev: <?= (int)$v['rev'] ?>, etapa: <?= $etapa ?>,
   somenteLeitura: <?= $cancelada ? 'true' : 'false' ?>, sujo: false,
+  // ações demoradas (conferência no Omie, geração/importação da capa): modal com a porcentagem
+  PASSOS: {
+    concluir: ['Etapa 1 — dados da venda', ['Validando os dados', 'Conferindo os compradores no Omie', 'Gravando']],
+    salvar: ['Gravando a etapa 1', ['Validando os dados', 'Conferindo no Omie', 'Gravando']],
+    salvar2: ['Gravando a distribuição', ['Validando', 'Conferindo quem recebe no Omie', 'Gravando']],
+    concluir2: ['Etapa 2 — distribuição', ['Validando', 'Conferindo quem recebe no Omie', 'Gravando']],
+    salvar3: ['Gravando o fluxo do cliente', ['Validando o fluxo', 'Conferindo quem paga no Omie', 'Gerando a planilha da capa', 'Importando na Capa Financeira']],
+    concluir3: ['Etapa 3 — contas a receber', ['Validando o fluxo', 'Conferindo quem paga no Omie', 'Gerando a planilha da capa', 'Importando na Capa Financeira']],
+    salvar4: ['Gravando os pagamentos', ['Validando', 'Gravando']],
+    liberar4: ['Liberando os pagamentos', ['Conferindo os pagamentos', 'Gerando a planilha da capa', 'Importando na Capa Financeira (contas a pagar)']],
+    desfazer4: ['Desfazendo a liberação', ['Conferindo', 'Gerando a planilha da capa', 'Importando na Capa Financeira']],
+    cancelar: ['Cancelando a venda', ['Conferindo os títulos no Omie', 'Excluindo os títulos sem baixa', 'Cancelando a venda']],
+    descancelar: ['Descancelando a venda', ['Gravando']],
+  },
   async api(dados) {
-    const r = await fetch('/capa-financeira/vendas/api.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':this.csrf}, body: JSON.stringify({...dados, csrf: this.csrf, id: this.id, rev: this.rev})});
-    try { return await r.json(); } catch (e) { return {ok:false, erros:['Resposta inválida do servidor (HTTP ' + r.status + ')']}; }
+    const ps = this.PASSOS[dados.acao];
+    const prog = ps && window.CFModal ? CFModal.progresso({titulo: ps[0], etapas: ps[1], atraso: 250}).faixa(0, 92) : null;
+    let j;
+    try {
+      const r = await fetch('/capa-financeira/vendas/api.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':this.csrf}, body: JSON.stringify({...dados, csrf: this.csrf, id: this.id, rev: this.rev})});
+      try { j = await r.json(); } catch (e) { j = {ok:false, erros:['Resposta inválida do servidor (HTTP ' + r.status + ')']}; }
+    } catch (e) { j = {ok:false, erros:['Sem conexão com o portal — confira a internet e tente de novo.']}; }
+    if (prog) { if (j.ok) await prog.fim(); else prog.fechar(); }
+    return j;
   },
   esc: s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'),
   brl: v => (v < 0 ? '−' : '') + 'R$ ' + Math.abs(+v || 0).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'),
   pc: v => String(+((+v || 0) * 100).toFixed(3)).replace('.', ',') + '%',
   lista: a => '<ul>' + a.map(x => '<li>' + CV.esc(x) + '</li>').join('') + '</ul>',
-  msg(cls, html) { const m = document.getElementById('cv-msg'); m.innerHTML = '<div class="cv-msg ' + cls + '">' + html + '</div>'; m.scrollIntoView({block:'center'}); },
+  alerta(t) { return window.CFModal ? CFModal.aviso({tipo: 'parcial', titulo: 'Atenção', texto: t}) : alert(t); },
+  msg(cls, html) {
+    const m = document.getElementById('cv-msg'); m.innerHTML = '<div class="cv-msg ' + cls + '">' + html + '</div>'; m.scrollIntoView({block:'center'});
+    if (window.CFModal) CFModal.aviso({tipo: cls === 'ok' ? 'ok' : 'erro', html});
+  },
   vai(texto) { this.sujo = false; location.href = '/capa-financeira/vendas/editar.php?id=' + this.id + '&etapa=' + this.etapa + '&ok=' + encodeURIComponent(texto || 'Salvo.'); },
   numBlur(i, pct) {
     let s = i.value.replace(/[R$\s%]/g, ''); if (s === '') return;
@@ -174,7 +200,7 @@ document.addEventListener('click', async ev => {
         + (p.capas.length ? '\n\nAs contas geradas na Capa Financeira (ainda não enviadas ao Omie) serão descartadas — ao descancelar, conclua a etapa 3 de novo.' : '') + '\n\nInforme o motivo:');
       if (!motivo) return;
       const j = await CV.api({acao:'cancelar', motivo});
-      if (j.ok) { CV.sujo = false; location.href = '/capa-financeira/vendas/'; } else CV.msg('erro', CV.lista(j.erros || []));
+      if (j.ok) { CV.sujo = false; await CFModal.aviso({tipo: 'ok', titulo: 'Venda cancelada', texto: 'Ela saiu da lista; o histórico fica guardado e dá para descancelar depois.'}); location.href = '/capa-financeira/vendas/'; } else CV.msg('erro', CV.lista(j.erros || []));
       return;
     }
     const bloq = enviados.filter(t => t.acao === 'bloqueado');
@@ -193,12 +219,12 @@ document.addEventListener('click', async ev => {
     m.querySelector('[data-x]').onclick = () => m.remove();
     m.querySelector('[data-ok]').onclick = async () => {
       const motivo = m.querySelector('[data-motivo]').value.trim();
-      if (!motivo) { alert('Informe o motivo.'); return; }
-      if (!m.querySelector('[data-entendi]').checked) { alert('Marque que entendeu o que vai acontecer no Omie.'); return; }
+      if (!motivo) { CV.alerta('Informe o motivo.'); return; }
+      if (!m.querySelector('[data-entendi]').checked) { CV.alerta('Marque que entendeu o que vai acontecer no Omie.'); return; }
       m.querySelectorAll('button').forEach(b => b.disabled = true);
       const j = await CV.api({acao:'cancelar', motivo, confirmado: true});
       m.remove();
-      if (j.ok) { CV.sujo = false; alert('Venda cancelada.' + (j.resultado && j.resultado.length ? '\n\nOmie:\n' + j.resultado.join('\n') : '')); location.href = '/capa-financeira/vendas/'; }
+      if (j.ok) { CV.sujo = false; await CFModal.aviso({tipo: 'ok', titulo: 'Venda cancelada', html: j.resultado && j.resultado.length ? '<b>Omie:</b>' + CV.lista(j.resultado) : ''}); location.href = '/capa-financeira/vendas/'; }
       else CV.msg('erro', CV.lista(j.erros || []));
     };
   }

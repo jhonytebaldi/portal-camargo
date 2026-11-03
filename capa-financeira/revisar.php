@@ -250,7 +250,7 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
     body.csrf = csrf; body.capa_id = capaId;
     const r = await fetch('/capa-financeira/acao.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':csrf}, body: JSON.stringify(body)});
     let j = null; try { j = await r.json(); } catch(e) {}
-    if (!r.ok || !j || !j.ok) { alert('Não salvou: ' + (j && j.erro ? j.erro : r.status)); return null; }
+    if (!r.ok || !j || !j.ok) { const t = j && j.erro ? j.erro : 'erro ' + r.status; if (window.CFModal) await CFModal.aviso({tipo: 'erro', titulo: 'Não salvou', texto: t}); else alert('Não salvou: ' + t); return null; }
     return j;
   }
   function atualizaPend(j){
@@ -384,7 +384,8 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
   const bc = document.getElementById('btn-confirmar');
   if (bc) bc.addEventListener('click', async () => {
     if (!confirm('Confirmar esta capa? Os lançamentos passam a valer para exportação e recibos.')) return;
-    const j = await acao({acao:'confirmar'}); if (j) location.href = '/capa-financeira/?ok=confirmada&id=' + capaId;
+    const pg = window.CFModal ? CFModal.progresso({titulo: 'Confirmando a capa', atraso: 250}).faixa(0, 92) : null;
+    const j = await acao({acao:'confirmar'}); if (pg) { if (j) await pg.fim(); else pg.fechar(); } if (j) location.href = '/capa-financeira/?ok=confirmada&id=' + capaId;
   });
   document.querySelectorAll('.cf-usar-nome').forEach(b => b.addEventListener('click', async () => {
     const box = b.closest('.cf-escolha'); const campo = box.dataset.campo;

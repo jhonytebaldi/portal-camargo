@@ -27,7 +27,7 @@ portal_header('Capa Financeira', $u);
 ?>
 <style>main.wrap{max-width:1500px}</style>
 <?php cf_cabecalho('Capa Financeira → Omie', 'Envie a capa da venda, revise os lançamentos, confirme. Depois gere as planilhas do Omie e os recibos.', [['Capa Financeira', null]], 'capas'); ?>
-<?php if (($_GET['ok'] ?? '') === 'confirmada'): ?><div class="cf-sucesso">✔ Capa #<?= (int)($_GET['id'] ?? 0) ?> confirmada. Os lançamentos já aparecem em <a href="/capa-financeira/exportar.php">Exportar para o Omie</a><?= $nExportar ? ' (' . $nExportar . ' pendentes)' : '' ?> e em <a href="/capa-financeira/recibos.php">Recibos</a>.</div><?php endif; ?>
+<?php if (($_GET['ok'] ?? '') === 'confirmada'): ?><div class="cf-sucesso" data-cf-modal="ok" data-cf-titulo="Capa confirmada">✔ Capa #<?= (int)($_GET['id'] ?? 0) ?> confirmada. Os lançamentos já aparecem em <a href="/capa-financeira/exportar.php">Exportar para o Omie</a><?= $nExportar ? ' (' . $nExportar . ' pendentes)' : '' ?> e em <a href="/capa-financeira/recibos.php">Recibos</a>.</div><?php endif; ?>
 
 <?php if ($nPessoas === 0): ?>
 <div class="aviso">O dicionário de pessoas está vazio. Cadastre a equipe em <a href="/capa-financeira/pessoas.php">Pessoas</a> (dá pra importar a planilha DADOS CORRETORES EQUIPE) — sem isso todo favorecido vai aparecer como "não identificado".</div>
@@ -93,7 +93,7 @@ portal_header('Capa Financeira', $u);
     if (!confirm('Excluir a capa #' + b.dataset.id + ' (' + b.dataset.nome + ') de vez? Não tem como desfazer — dá pra reenviar a planilha depois.')) return;
     const r = await fetch('/capa-financeira/acao.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':csrf}, body: JSON.stringify({acao:'excluir', capa_id: +b.dataset.id, csrf})});
     let j = null; try { j = await r.json(); } catch(e) {}
-    if (!j || !j.ok) { alert('Não excluiu: ' + (j && j.erro ? j.erro : r.status)); return; }
+    if (!j || !j.ok) { const t = j && j.erro ? j.erro : 'erro ' + r.status; if (window.CFModal) CFModal.aviso({tipo: 'erro', titulo: 'Não excluiu', texto: t}); else alert('Não excluiu: ' + t); return; }
     b.closest('tr').remove();
   }));
 })();

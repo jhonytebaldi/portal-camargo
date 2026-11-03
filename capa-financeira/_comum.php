@@ -253,6 +253,8 @@ function cf_cabecalho(string $titulo, string $sub, array $trilha, string $atual 
 {
     $menu = ['vendas' => ['/capa-financeira/vendas/', 'Vendas (formulário)'], 'capas' => ['/capa-financeira/', 'Capas'], 'exportar' => ['/capa-financeira/exportar.php', 'Exportar p/ Omie'], 'recibos' => ['/capa-financeira/recibos.php', 'Recibos'],
              'recibos-omie' => ['/recibos-omie/', 'Recibos do Omie'], 'pessoas' => ['/capa-financeira/pessoas.php', 'Pessoas'], 'config' => ['/capa-financeira/configuracoes.php', 'Configurações']];
+    $js = __DIR__ . '/cf-modal.js';
+    echo '<script src="/capa-financeira/cf-modal.js?v=' . (is_file($js) ? filemtime($js) : 1) . '"></script>';
     echo '<div class="cf-top"><div><nav class="cf-trilha"><a href="/">Portal</a>';
     foreach ($trilha as $i => [$txt, $href]) echo ' <span>›</span> ' . ($href && $i < count($trilha) - 1 ? '<a href="' . h($href) . '">' . h($txt) . '</a>' : '<b>' . h($txt) . '</b>');
     echo '</nav><h1 class="home-titulo">' . $titulo . '</h1>';

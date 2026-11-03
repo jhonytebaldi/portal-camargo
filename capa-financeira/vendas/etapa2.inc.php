@@ -106,7 +106,7 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   const ativo = document.getElementById('cv-conc-ativo'), corpo = document.getElementById('cv-conc-corpo');
   const tbR = document.getElementById('cv-receb'), tbD = document.getElementById('cv-descs');
   function addReceb(x) {
-    if (tbR.children.length >= 3) { alert('No máximo 3 pessoas.'); return; }
+    if (tbR.children.length >= 3) { CV.alerta('No máximo 3 pessoas.'); return; }
     const tr = document.createElement('tr');
     tr.innerHTML = '<td><input data-f="nome" list="cv-lista-pessoas" value="' + esc(x.nome || '') + '"><span class="cv-sug" data-omie></span></td><td><select data-f="cargo"><option value="">—</option>' + optsCargo(x.cargo || '') + '</select></td>'
       + '<td><input data-f="valor" class="cv-num" inputmode="decimal" value="' + esc(x.valor || '') + '"></td><td><button type="button" class="cf-x">✕</button></td>';
@@ -136,7 +136,7 @@ $concJs = ['ativo' => (bool)$c['ativo'], 'valor' => number_format((float)($c['va
   function dividir(cargos) {
     const refs = refsComissao().filter(l => cargos.includes(l.cargo));
     const vistos = new Set(), alvo = refs.filter(l => !vistos.has(l.ref) && vistos.add(l.ref));
-    if (!alvo.length) { alert('Não há ' + cargos.join(' / ') + ' preenchido nas comissões.'); return; }
+    if (!alvo.length) { CV.alerta('Não há ' + cargos.join(' / ') + ' preenchido nas comissões.'); return; }
     const total = num(document.getElementById('cv-conc-valor').value); const cent = Math.round(total * 100);
     const parte = Math.floor(cent / alvo.length), resto = cent - parte * alvo.length;
     tbD.innerHTML = '';

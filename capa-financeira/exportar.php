@@ -705,7 +705,7 @@ document.getElementById('exp-forcar').onclick = async () => {
   if (!confirm('Forçar o reenvio de ' + codigo + '? Ele volta para a fila e será enviado de novo ao Omie.')) return;
   const r = await fetch(location.pathname, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao:'forcar_reenvio', empresa: <?= json_encode($empresa) ?>, codigo, csrf: <?= json_encode(csrf_token()) ?>})});
   let j = null; try { j = await r.json(); } catch (e) {}
-  alert(j && j.ok ? j.msg : 'Não foi: ' + (j && j.erro ? j.erro : r.status)); if (j && j.ok) location.reload();
+  await CFModal.aviso(j && j.ok ? {tipo: 'ok', titulo: 'Reenvio liberado', texto: j.msg} : {tipo: 'erro', texto: j && j.erro ? j.erro : 'erro ' + r.status}); if (j && j.ok) location.reload();
 };
 </script>
 
@@ -738,9 +738,10 @@ document.getElementById('exp-forcar').onclick = async () => {
     401:'Você não está mais logado — recarregue a página e entre de novo.', 413:'Requisição grande demais para o servidor — selecione menos linhas.'};
   async function post(body){ body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
     let r; try { r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); }
-    catch(e) { alert('Sem conexão com o portal (a requisição não chegou ao servidor). Confira sua internet e tente de novo.'); return null; }
+    catch(e) { await aviso('erro', 'Sem conexão com o portal', 'A requisição não chegou ao servidor. Confira sua internet e tente de novo.'); return null; }
     let j = null; try { j = await r.json(); } catch(e) {}
-    if (!r.ok || !j || !j.ok) { alert(j && j.erro ? j.erro : ('Erro ' + r.status + ': ' + (HTTP_EXPL[r.status] || 'resposta inesperada do servidor. Tente de novo; se persistir, me avise com este código.'))); return null; } return j; }
+    if (!r.ok || !j || !j.ok) { await aviso('erro', 'Não foi possível concluir', j && j.erro ? j.erro : ('Erro ' + r.status + ': ' + (HTTP_EXPL[r.status] || 'resposta inesperada do servidor. Tente de novo; se persistir, me avise com este código.'))); return null; } return j; }
+  function aviso(tipo, titulo, texto, detalhe) { return window.CFModal ? CFModal.aviso({tipo, titulo, texto, detalhe}) : Promise.resolve(alert(titulo + '\n\n' + texto + (detalhe ? '\n\n' + detalhe : ''))); }
   function renderConferencia(tr, linhas){
     let html = '<div class="cf-flags" style="margin-top:6px">' + linhas.map(l => '<div class="cf-flag ' + (l.ok ? 'cf-ok' : (l.existe ? 'cf-leve' : 'cf-grave')) + '">' + l.codigo + ': ' + l.msg.replace(/</g,'&lt;')
       + (l.ok ? '' : (l.existe ? ' <button type="button" class="cf-x exp-vincular" data-id="' + l.id + '" data-omie="' + l.omie_id + '" title="guarda o vínculo com este título do Omie como está (não altera nada no Omie)">✔ vincular como está no Omie</button>'
@@ -851,9 +852,9 @@ document.getElementById('exp-forcar').onclick = async () => {
     const body = {acao:'gerar', ids, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value};
     let j = await postRaw(body);
     if (j && !j.ok && j.pode_forcar) { if (confirm(j.erro + '\n\nGerar mesmo assim?')) { body.forcar = 1; j = await postRaw(body); } else j = null; }
-    if (j && !j.ok) { alert(j.erro || 'erro'); j = null; }
+    if (j && !j.ok) { await aviso('erro', 'Planilha não gerada', j.erro || 'erro'); j = null; }
     if (!j) { bg.disabled = false; return; }
-    if (j.avisos && j.avisos.length) alert('Planilha gerada (' + j.n + ' linhas). Avisos:\n\n- ' + j.avisos.join('\n- '));
+    await aviso(j.avisos && j.avisos.length ? 'parcial' : 'ok', 'Planilha gerada (' + j.n + ' linhas)', j.avisos && j.avisos.length ? 'Com avisos — veja os detalhes. O download começa ao fechar.' : 'O download começa ao fechar.', j.avisos && j.avisos.length ? '- ' + j.avisos.join('\n- ') : '');
     location.href = '/capa-financeira/exportar.php?baixar=' + j.exportacao_id;
     setTimeout(() => location.href = '/capa-financeira/exportar.php?empresa=' + empresa + '&tipo=' + tipo, 1500);
   });
@@ -861,8 +862,11 @@ document.getElementById('exp-forcar').onclick = async () => {
     const id = +b.closest('tr').dataset.id; const api = b.dataset.modo === 'api';
     if (!confirm(api ? 'Desfazer o envio #' + id + '? Os títulos serão EXCLUÍDOS no Omie (os que já tiverem baixa ficam e são avisados) e as linhas voltam para "confirmado".'
                      : 'Desfazer a exportação #' + id + '? As linhas voltam para "confirmado" e aparecem de novo para exportar. Só faça isso se a planilha NÃO foi importada no Omie.')) return;
-    b.disabled = true; const j = await post({acao:'desfazer', id}); if (!j) { b.disabled = false; return; }
-    if (api) alert('Excluídos no Omie: ' + j.excluidos + (j.recusas.length ? '\n\nNão excluídos:\n- ' + j.recusas.join('\n- ') : ''));
+    b.disabled = true; const pg = api && window.CFModal ? CFModal.progresso({titulo: 'Excluindo os títulos no Omie', atraso: 250}).faixa(0, 92) : null;
+    const j = await post({acao:'desfazer', id}); if (!j) { if (pg) pg.fechar(); b.disabled = false; return; }
+    if (pg) await pg.fim();
+    if (api) await aviso(j.recusas.length ? 'parcial' : 'ok', 'Envio desfeito', 'Excluídos no Omie: ' + j.excluidos, j.recusas.length ? 'Não excluídos:\n- ' + j.recusas.join('\n- ') : '');
+    else await aviso('ok', 'Exportação desfeita', 'As linhas voltaram para "confirmado".');
     location.reload();
   }));
   document.querySelectorAll('.exp-conferir-exp').forEach(b => b.addEventListener('click', async () => {
@@ -948,12 +952,16 @@ document.getElementById('exp-forcar').onclick = async () => {
     bca.disabled = true; bca.textContent = 'Conferindo no Omie…';
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
     const linhas = {}; const BL = 8;
+    const prog = window.CFModal ? CFModal.progresso({titulo: 'Conferindo ' + ids.length + ' título(s) no Omie'}) : null;
     for (let i = 0; i < ids.length; i += BL) {
-      bca.textContent = 'Conferindo no Omie… ' + Math.min(i + BL, ids.length) + '/' + ids.length;
+      const ate = Math.min(i + BL, ids.length);
+      bca.textContent = 'Conferindo no Omie… ' + ate + '/' + ids.length;
+      if (prog) prog.pct(i / ids.length * 100).faixa(i / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo ' + (i + 1) + '–' + ate + ' de ' + ids.length + ' (cadastros, categorias, contas)…');
       const j = await post({acao:'conferir_api', ids: ids.slice(i, i + BL), data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
-      if (!j) { bca.disabled = false; bca.textContent = 'Conferir para envio'; return; }
+      if (!j) { if (prog) prog.fechar(); bca.disabled = false; bca.textContent = 'Conferir para envio'; return; }
       Object.assign(linhas, j.linhas);
     }
+    if (prog) await prog.fim();
     bca.disabled = false; bca.textContent = 'Conferir para envio';
     const r = mostraConferencia(linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
     const tot = r.nOk + r.nErr;
@@ -965,6 +973,7 @@ document.getElementById('exp-forcar').onclick = async () => {
     const c = cores[tipo] || cores.parcial; b.style.display = ''; b.style.background = c[0]; b.style.border = '1px solid ' + c[1]; b.style.color = c[2];
     b.innerHTML = texto.replace(/</g,'&lt;') + (detalhe ? '<details style="margin-top:6px;font-weight:400;font-size:13px"><summary>detalhes</summary><pre style="white-space:pre-wrap;margin:6px 0 0">' + detalhe.replace(/</g,'&lt;') + '</pre></details>' : '');
     b.scrollIntoView({block:'nearest'});
+    if (window.CFModal) CFModal.aviso({tipo: tipo === 'ok' ? 'ok' : (tipo === 'erro' ? 'erro' : 'parcial'), titulo: texto.replace(/^[✔⚠✖]\s*/, '').split(':')[0], texto: texto.replace(/^[✔⚠✖]\s*/, ''), detalhe});
   }
   try { const salvo = sessionStorage.getItem('exp-resultado'); if (salvo) { const o = JSON.parse(salvo); banner(o.tipo, o.texto, o.detalhe); sessionStorage.removeItem('exp-resultado'); } } catch(e) {}
   const be = document.getElementById('btn-enviar');
@@ -974,10 +983,13 @@ document.getElementById('exp-forcar').onclick = async () => {
     if (!confirm('Enviar ' + ids.length + ' título(s) para o Omie pela API? Cada linha é conferida antes; as que passarem são incluídas no Omie na hora (dá pra desfazer enquanto não forem baixadas).')) return;
     be.disabled = true;
     const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 5;
+    const prog = window.CFModal ? CFModal.progresso({titulo: 'Enviando ' + ids.length + ' título(s) para o Omie', tau: 6}) : null;
     for (let i = 0; i < ids.length; i += BL) {
-      be.textContent = 'Enviando… ' + Math.min(i + BL, ids.length) + '/' + ids.length;
+      const ate = Math.min(i + BL, ids.length);
+      be.textContent = 'Enviando… ' + ate + '/' + ids.length;
+      if (prog) prog.pct(i / ids.length * 100).faixa(i / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo e enviando ' + (i + 1) + '–' + ate + ' de ' + ids.length + (j.enviadas.length ? ' · ' + j.enviadas.length + ' já no Omie' : '') + '…');
       const r = await post({acao:'enviar_api', ids: ids.slice(i, i + BL), exportacao_id: j.exportacao_id, ultimo: i + BL >= ids.length ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
-      if (!r) { if (j.enviadas.length) alert('O envio parou no meio. Já enviados: ' + j.enviadas.map(e => e.codigo).join(', ') + '. Recarregue a página: os enviados aparecem em "Enviados pela API" e os demais continuam pendentes.'); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; if (j.enviadas.length) location.reload(); return; }
+      if (!r) { if (prog) prog.fechar(); if (j.enviadas.length) await aviso('parcial', 'O envio parou no meio', 'Já enviados: ' + j.enviadas.map(e => e.codigo).join(', ') + '. Os enviados aparecem em "Enviados pela API" e os demais continuam pendentes.'); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; if (j.enviadas.length) location.reload(); return; }
       j.enviadas.push(...r.enviadas); j.falhas.push(...r.falhas); j.avisos.push(...r.avisos); j.total += r.total; if (r.exportacao_id) j.exportacao_id = r.exportacao_id;
       if (r.parou) { ids.slice(i + BL).forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
     }
@@ -985,6 +997,7 @@ document.getElementById('exp-forcar').onclick = async () => {
     if (j.enviadas.length) det += 'Enviados (' + j.enviadas.length + '):\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
     if (j.falhas.length) det += '\n\nNÃO enviados (' + j.falhas.length + '):\n' + j.falhas.map(f => '  ' + f.codigo + ': ' + f.msg).join('\n');
     if (j.avisos.length) det += '\n\nAvisos:\n' + j.avisos.map(a => '  ' + a).join('\n');
+    if (prog) await prog.fim();
     const n = j.enviadas.length, f = j.falhas.length;
     const texto = f === 0 ? '✔ Envio concluído: ' + n + ' de ' + n + ' título(s) no Omie (100%) — ' + brl(j.total) : (n ? '⚠ Envio parcial: ' + n + ' enviado(s) (' + brl(j.total) + ') · ' + f + ' para revisar — continuam na lista com o motivo em vermelho' : '✖ Nenhum título enviado: ' + f + ' para revisar — veja o motivo em vermelho em cada linha');
     try { sessionStorage.setItem('exp-resultado', JSON.stringify({tipo: f === 0 ? 'ok' : (n ? 'parcial' : 'erro'), texto, detalhe: det.trim()})); } catch(e) { alert(texto + '\n\n' + det); }

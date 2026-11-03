@@ -202,7 +202,7 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
   });
 
   async function enviar(acao, extra) {
-    if (editando) { alert('Aplique ou cancele a linha que está editando.'); return; }
+    if (editando) { CV.alerta('Aplique ou cancele a linha que está editando.'); return; }
     document.querySelectorAll('.cv-barra-fim button').forEach(b => b.disabled = true);
     const j = await CV.api({acao, e4: e4(), ...extra});
     if (j.rev) CV.rev = j.rev;

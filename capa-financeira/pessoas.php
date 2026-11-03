@@ -113,8 +113,8 @@ portal_header('Pessoas — Capa Financeira', $u);
 <style>main.wrap{max-width:1400px}</style>
 <script src="/capa-financeira/pix.js?v=<?= @filemtime(__DIR__ . '/pix.js') ?: 1 ?>"></script>
 <?php cf_cabecalho('Pessoas (dicionário)', 'Quem recebe comissão ou repasse. O nome da capa só é associado sozinho quando bate exatamente com o nome ou um apelido daqui; o resto você escolhe na revisão.', [['Capa Financeira', '/capa-financeira/'], ['Pessoas', null]], 'pessoas'); ?>
-<?php if ($msg): ?><div class="ok-box"><?= h($msg) ?></div><?php endif; ?>
-<?php if ($erro): ?><div class="erro"><?= h($erro) ?></div><?php endif; ?>
+<?php if ($msg): ?><div class="ok-box" data-cf-modal="ok"><?= h($msg) ?></div><?php endif; ?>
+<?php if ($erro): ?><div class="erro" data-cf-modal="erro"><?= h($erro) ?></div><?php endif; ?>
 
 <div class="cf-duas">
 <section class="card">

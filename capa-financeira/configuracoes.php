@@ -83,8 +83,8 @@ $paraTexto = fn(array $m) => implode("\n", array_map(fn($k, $v) => "$k = $v", ar
 portal_header('Configurações — Capa Financeira', $u);
 ?>
 <?php cf_cabecalho('Configurações', 'Dicionários usados na extração e na exportação. Os nomes de categoria e conta corrente têm que ser exatamente como estão no Omie.', [['Capa Financeira', '/capa-financeira/'], ['Configurações', null]], 'config'); ?>
-<?php if ($msg): ?><div class="ok-box"><?= h($msg) ?></div><?php endif; ?>
-<?php if ($erro): ?><div class="erro"><?= h($erro) ?></div><?php endif; ?>
+<?php if ($msg): ?><div class="ok-box" data-cf-modal="ok"><?= h($msg) ?></div><?php endif; ?>
+<?php if ($erro): ?><div class="erro" data-cf-modal="erro"><?= h($erro) ?></div><?php endif; ?>
 
 <div class="cf-duas">
 <section class="card">

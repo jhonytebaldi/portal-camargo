@@ -156,10 +156,10 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   ger.querySelectorAll('[data-ger-fechar]').forEach(b => b.onclick = () => ger.style.display = 'none');
   ger.querySelector('[data-ger-ok]').onclick = () => {
     const ds = datasGer(), v = num(g('valor').value);
-    if (!ds.length) { alert('Preencha a quantidade e a data da 1ª parcela.'); return; }
-    if (!v) { alert('Informe o valor de cada parcela.'); return; }
+    if (!ds.length) { CV.alerta('Preencha a quantidade e a data da 1ª parcela.'); return; }
+    if (!v) { CV.alerta('Informe o valor de cada parcela.'); return; }
     [...tb.querySelectorAll('tr')].forEach(tr => { if (!tr.querySelector('[data-f=data]').value && !tr.querySelector('[data-f=valor]').value) tr.remove(); });
-    if (g('pagador').value === 'outro' && (!g('outro_nome').value.trim() || !g('outro_doc').value.trim())) { alert('Informe o nome e o CPF/CNPJ de quem paga.'); return; }
+    if (g('pagador').value === 'outro' && (!g('outro_nome').value.trim() || !g('outro_doc').value.trim())) { CV.alerta('Informe o nome e o CPF/CNPJ de quem paga.'); return; }
     ds.forEach((d, i) => addParc({data: d, valor: fmt(v), ref: refGer(i), pagador: g('pagador').value, outro_nome: g('outro_nome').value.toUpperCase().trim(), outro_doc: g('outro_doc').value, conta: g('conta').value}));
     ger.style.display = 'none';
     if (!manual) ordenaPorData();
@@ -167,9 +167,9 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   };
   document.getElementById('cv-completar').onclick = () => {
     if (!ultimo) return; const rows = [...tb.querySelectorAll('tr')]; if (!rows.length) return;
-    const dif = ultimo.calc.diferenca; if (Math.abs(dif) < 0.005) { alert('O fluxo já fecha.'); return; }
+    const dif = ultimo.calc.diferenca; if (Math.abs(dif) < 0.005) { CV.alerta('O fluxo já fecha.'); return; }
     const i = rows[rows.length - 1].querySelector('[data-f=valor]'); const nv = num(i.value) - dif;
-    if (nv <= 0) { alert('A diferença é maior que a última parcela.'); return; }
+    if (nv <= 0) { CV.alerta('A diferença é maior que a última parcela.'); return; }
     i.value = fmt(nv); mudou();
   };
 
@@ -259,7 +259,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     m.querySelector('[data-x]').onclick = () => { m.remove(); CV.sujo = false; location.href = '/capa-financeira/vendas/editar.php?id=' + CV.id + '&etapa=3'; };
     m.querySelector('[data-ok]').onclick = () => {
       const docs = [...m.querySelectorAll('input[data-doc]:checked')].map(x => x.dataset.doc);
-      if (docs.length < pend.length) { alert('Marque todos para cadastrar — ou volte e corrija os dados.'); return; }
+      if (docs.length < pend.length) { CV.alerta('Marque todos para cadastrar — ou volte e corrija os dados.'); return; }
       m.remove(); salvar('concluir3', docs);
     };
   }
