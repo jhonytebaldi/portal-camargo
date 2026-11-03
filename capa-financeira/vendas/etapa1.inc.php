@@ -290,7 +290,7 @@ $e1ok = $v['e1_status'] !== 'rascunho';
     m.querySelector('[data-x]').onclick = () => { m.remove(); CV.sujo = false; location.href = '/capa-financeira/vendas/editar.php?id=' + CV.id; };
     m.querySelector('[data-ok]').onclick = () => {
       const docs = [...m.querySelectorAll('input[data-doc]:checked')].map(x => x.dataset.doc);
-      if (docs.length < pend.length) { alert('Marque todos os compradores para cadastrar — ou volte e corrija os dados (ex.: o documento no Omie).'); return; }
+      if (docs.length < pend.length) { CV.alerta('Marque todos os compradores para cadastrar — ou volte e corrija os dados (ex.: o documento no Omie).'); return; }
       m.remove(); salvar('concluir', docs);
     };
   }

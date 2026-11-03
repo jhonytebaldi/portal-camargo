@@ -531,3 +531,18 @@ function cv_data_br(?string $d): string
 {
     return $d ? implode('/', array_reverse(explode('-', substr($d, 0, 10)))) : '';
 }
+
+/** título do modal de sucesso conforme a mensagem */
+function cv_titulo_ok(string $m): string
+{
+    return match (true) {
+        str_contains($m, 'liberado') => 'Pagamentos liberados',
+        str_contains($m, 'Liberação desfeita') => 'Liberação desfeita',
+        str_contains($m, 'Etapa 1 concluída') => 'Etapa 1 concluída',
+        str_contains($m, 'Etapa 2 concluída') => 'Etapa 2 concluída',
+        str_contains($m, 'Etapa 3 concluída') => 'Etapa 3 concluída',
+        str_contains($m, 'descancelada') => 'Venda descancelada',
+        str_contains($m, 'Rascunho') => 'Rascunho salvo',
+        default => 'Salvo!',
+    };
+}
