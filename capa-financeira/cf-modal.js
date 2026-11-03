@@ -1,6 +1,7 @@
 /* =====================================================================
    capa-financeira/cf-modal.js — modal de avisos e de progresso do módulo.
      CFModal.aviso({tipo:'ok'|'erro'|'parcial'|'info', titulo, html|texto, detalhe}) → Promise (fecha no OK / Esc)
+     CFModal.pergunta({tipo:'info'|'parcial'|'erro', titulo, html|texto, ok:'Sim', cancelar:'Cancelar'}) → Promise<bool> (Enter = sim, Esc = não)
      const p = CFModal.progresso({titulo, etapas:[...], atraso:ms})
        p.faixa(de, ate, texto)   anda sozinho de "de" até perto de "ate" (requisição em andamento)
        p.pct(n, texto)           vai até n%
@@ -23,6 +24,9 @@
 .cfm-det{margin-top:10px;font-size:13px}.cfm-det pre{white-space:pre-wrap;background:#f6f6f2;border-radius:6px;padding:8px;max-height:260px;overflow:auto;margin:6px 0 0}
 .cfm-bt{display:flex;justify-content:center;margin-top:16px}.cfm-bt button{font:inherit;font-size:15px;font-weight:600;padding:10px 34px;border-radius:8px;border:0;background:#2f6b4f;color:#fff;cursor:pointer}
 .cfm-erro .cfm-bt button{background:#b4512f}
+.cfm-bt.cfm-2{gap:10px}.cfm-bt .cfm-nao{background:#eef0ea;color:#333}
+.cfm-txt pre.cfm-pre{white-space:pre-wrap;background:#f6f6f2;border-radius:6px;padding:8px 10px;margin:8px 0 0;font:inherit;font-size:13.5px}
+.cfm-janela{width:min(780px,94vw)}
 .cfm-prog .cfm-tit{margin-bottom:14px}
 .cfm-pct{text-align:center;font-size:40px;font-weight:800;color:#2f6b4f;font-variant-numeric:tabular-nums;line-height:1}
 .cfm-barra{height:14px;border-radius:8px;background:#e8ebe6;overflow:hidden;margin:14px 0 10px;position:relative}
@@ -70,6 +74,25 @@
       b.onclick = sai; document.addEventListener('keydown', tecla);
       fundo.onclick = e => { if (e.target === fundo) sai(); };
       setTimeout(() => b.focus(), 50);
+    });
+  }
+
+  /** pergunta sim/não com o mesmo visual do aviso; resolve true (ok) ou false (cancelar/Esc/fundo) */
+  function pergunta(o) {
+    o = o || {};
+    if (prog) { prog.parar(); prog = null; }
+    const tipo = ICO[o.tipo] ? o.tipo : 'info';
+    const corpo = o.html !== undefined ? o.html : esc(o.texto || '');
+    const cx = abrir('cfm-' + tipo, '<div class="cfm-ico">' + (o.icone || '?') + '</div><h2 class="cfm-tit">' + esc(o.titulo || 'Confirma?') + '</h2>'
+      + (corpo ? '<div class="cfm-txt">' + corpo + '</div>' : '')
+      + '<div class="cfm-bt cfm-2"><button type="button" class="cfm-nao">' + esc(o.cancelar || 'Cancelar') + '</button><button type="button" class="cfm-sim">' + esc(o.ok || 'Sim') + '</button></div>');
+    return new Promise(res => {
+      const sim = cx.querySelector('.cfm-sim'), nao = cx.querySelector('.cfm-nao');
+      const sai = v => { document.removeEventListener('keydown', tecla); fechar(); res(v); };
+      const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); sai(false); } else if (e.key === 'Enter') { e.preventDefault(); sai(true); } };
+      sim.onclick = () => sai(true); nao.onclick = () => sai(false); document.addEventListener('keydown', tecla);
+      fundo.onclick = e => { if (e.target === fundo) sai(false); };
+      setTimeout(() => sim.focus(), 50);
     });
   }
 
@@ -126,7 +149,7 @@
     return api;
   }
 
-  window.CFModal = {aviso, progresso, fechar};
+  window.CFModal = {aviso, pergunta, progresso, fechar, esc};
   const auto = () => {
     const el = document.querySelector('[data-cf-modal]');
     if (el) aviso({tipo: el.dataset.cfModal, titulo: el.dataset.cfTitulo || undefined, html: el.innerHTML.replace(/^\s*[✔✖⚠]\s*/, '')});
