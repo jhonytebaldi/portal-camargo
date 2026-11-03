@@ -104,17 +104,102 @@ final class CapaXlsx
         $x->mesclar($s, "B$r:G$r"); $x->altura($s, $r, 34); $r += 2;
 
         $st = ['rascunho' => 'em preenchimento', 'concluida' => 'concluída', 'conferida' => 'conferida'];
-        foreach ([2 => 'DISTRIBUIÇÃO DAS COMISSÕES (etapa 2)', 3 => 'FLUXO DE PAGAMENTO DO CLIENTE E RECEBIDOS (etapa 3)', 4 => 'PAGAMENTO PARA CORRETORES (etapa 4)'] as $n => $rot) {
+        if (!empty($venda['e2']['linhas'])) {
+            $r = self::blocoDistribuicao($x, $s, $r, $venda, $R, $calc);
+        }
+        foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'DISTRIBUIÇÃO DAS COMISSÕES (etapa 2)' : null, 3 => 'FLUXO DE PAGAMENTO DO CLIENTE E RECEBIDOS (etapa 3)', 4 => 'PAGAMENTO PARA CORRETORES (etapa 4)']) as $n => $rot) {
             $x->set($s, "A$r", $rot, ['bold' => true, 'fill' => 'E7E6E6']);
             $x->set($s, "B$r", 'ainda não preenchida no portal (' . ($st[$venda["e{$n}_status"]] ?? $venda["e{$n}_status"]) . ')', ['italic' => true, 'color' => '6B7770']);
             $x->mesclar($s, "B$r:G$r");
             $r += 2;
         }
 
-        // ---- PESSOAS (lista para validação das etapas seguintes) ----
+        // ---- PESSOAS (lista para validação) ----
         $p = $x->planilha('PESSOAS');
         $x->largura($p, 'A', 40);
         foreach (array_values($pessoas) as $i => $nome) $x->set($p, 'A' . ($i + 1), $nome);
         $x->salvar($destino);
     }
+
+    /** linhas 29–56 do modelo: comissões, bônus, saldo e administrativos (etapa 2). Devolve a próxima linha livre. */
+    private static function blocoDistribuicao(XlsxWriter $x, string $s, int $r, array $venda, array $R, array $c1): int
+    {
+        require_once __DIR__ . '/Distribuicao.php';
+        $d = $venda['e2'];
+        $calc = Distribuicao::calc($d, $c1);
+        $brl = ['fmt' => 'brl']; $hd = ['bold' => true, 'fill' => 'E7E6E6', 'border' => true];
+        $fin = '$B$' . $R['final']; $bon = '$B$' . $R['bdist']; $cb = '$B$' . $R['cb'];
+        $cab = function (string $a) use ($x, $s, &$r, $hd) {
+            foreach (['A' => $a, 'B' => 'VALOR', 'E' => 'NOME', 'F' => '%', 'G' => 'Valor'] as $c => $t) $x->set($s, "$c$r", $t, $hd);
+            $r++;
+        };
+        $linha = function (string $rot, array $l, string $base) use ($x, $s, &$r, $brl) {
+            $f = $base . '*F' . $r . ($l['desconto'] > 0 ? '-' . self::n($l['desconto']) : '');
+            $x->set($s, "A$r", $rot, ['bold' => true]);
+            $x->set($s, "B$r", ['f' => "G$r", 'v' => $l['valor']], $brl);
+            if ($l['desconto'] > 0) $x->set($s, "D$r", 'descontado ' . Distribuicao::brl($l['desconto']) . ' (conclusão do processo)', ['italic' => true, 'color' => 'B4512F']);
+            $x->set($s, "E$r", mb_strtoupper($l['nome'], 'UTF-8'), ['fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "F$r", (float)$l['pct'], ['fmt' => 'pct', 'fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "G$r", ['f' => $f, 'v' => $l['valor']], $brl);
+            $r++;
+        };
+        $porBloco = fn(string $b) => array_values(array_filter($calc['linhas'], fn($l) => $l['bloco'] === $b));
+
+        // comissões + quem concluiu o processo
+        $cab('DESCRIÇÃO');
+        $ini = $r;
+        foreach ($porBloco('comissao') as $l) $linha($l['cargo'], $l, $fin);
+        if (!empty($d['conclusao']['ativo'])) foreach ($d['conclusao']['recebem'] as $rc) {
+            $x->set($s, "A$r", $rc['cargo'], ['bold' => true]);
+            $x->set($s, "B$r", ['f' => "G$r", 'v' => (float)$rc['valor']], $brl);
+            $x->set($s, "D$r", 'conclusão do processo', ['italic' => true, 'color' => '6B7770']);
+            $x->set($s, "E$r", mb_strtoupper($rc['nome'], 'UTF-8'), ['fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "G$r", (float)$rc['valor'], $brl + ['fill' => 'FFF8E1', 'border' => true]);
+            $r++;
+        }
+        $fimCom = $r - 1; $r++;
+        // bônus
+        $iniB = $r + 1;
+        if ($porBloco('bonus')) {
+            $cab('BONUS');
+            foreach ($porBloco('bonus') as $l) $linha($l['cargo'], $l, $bon);
+            $x->set($s, "E$r", 'TOTAL', ['bold' => true]);
+            $x->set($s, "F$r", ['f' => "SUM(F$iniB:F" . ($r - 1) . ')', 'v' => $calc['pct']['bonus']], ['fmt' => 'pct', 'bold' => true]);
+            $x->set($s, "G$r", ['f' => "SUM(G$iniB:G" . ($r - 1) . ')', 'v' => $calc['bonus']], $brl + ['bold' => true]);
+            $fimB = $r - 1; $r += 2;
+            $somaB = "+SUM(B$iniB:B$fimB)";
+        } else $somaB = '';
+        // totais
+        $x->set($s, "A$r", 'COMISSÕES PAGAS + BÔNUS', ['bold' => true]);
+        $x->set($s, "B$r", ['f' => "SUM(B$ini:B$fimCom)$somaB", 'v' => $calc['pagos']], $brl + ['bold' => true, 'fill' => 'E3EDE8']);
+        $x->set($s, "C$r", ['f' => "B$r/$cb", 'v' => $calc['pct_pagos']], ['fmt' => 'pct']);
+        $rp = $r; $r += 2;
+        $x->set($s, "A$r", 'SALDO PRA IMOBILIÁRIA', ['bold' => true]);
+        $x->set($s, "B$r", ['f' => "$cb-B$rp", 'v' => $calc['saldo']], $brl + ['bold' => true, 'fill' => 'E3EDE8']);
+        $x->set($s, "C$r", ['f' => "B$r/$cb", 'v' => $calc['pct_saldo']], ['fmt' => 'pct']);
+        $r += 2;
+        // administrativos
+        $adm = array_merge($porBloco('adm'), $porBloco('adm_bonus'));
+        if ($adm) {
+            $x->set($s, "A$r", 'VALORES QUE SERÃO PAGOS PÓS PROCESSOS, ESSES VALORES SÃO ADMINISTRATIVOS E SÃO PAGOS COM A MARGEM DA IMOBILIÁRIA CAMARGO', ['bold' => true, 'wrap' => true]);
+            $x->mesclar($s, "A$r:G$r"); $x->altura($s, $r, 30); $r++;
+            $cab('DESCRIÇÃO');
+            $iniA = $r;
+            foreach ($porBloco('adm') as $l) $linha($l['cargo'], $l, $fin);
+            foreach ($porBloco('adm_bonus') as $l) $linha('BONUS - ' . $l['cargo'] . ' IMOB', $l, $bon);
+            $x->set($s, "A$r", 'TOTAL', ['bold' => true]);
+            $x->set($s, "B$r", ['f' => "SUM(B$iniA:B" . ($r - 1) . ')', 'v' => $calc['adm']], $brl + ['bold' => true]);
+            $x->set($s, "C$r", ['f' => "B$r/$cb", 'v' => $calc['pct_adm']], ['fmt' => 'pct']);
+            $r += 2;
+        }
+        if (!empty($d['conclusao']['ativo'])) {
+            $desc = array_map(fn($y) => str_replace('|', ' ', $y['ref']) . ' ' . Distribuicao::brl((float)$y['valor']), $d['conclusao']['descontos']);
+            $x->set($s, "A$r", 'CONCLUSÃO DO PROCESSO', ['bold' => true]);
+            $x->set($s, "B$r", Distribuicao::brl((float)$d['conclusao']['valor']) . ' — ' . $d['conclusao']['descricao'] . ' · descontado de: ' . implode('; ', $desc), ['wrap' => true, 'valign' => 'top']);
+            $x->mesclar($s, "B$r:G$r"); $x->altura($s, $r, 30); $r += 2;
+        }
+        return $r;
+    }
+
+    private static function n(float $f): string { return rtrim(rtrim(sprintf('%.4F', $f), '0'), '.'); }
 }

@@ -8,6 +8,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/_comum.php';
 require_once __DIR__ . '/lib/Venda.php';
 require_once __DIR__ . '/lib/OmieCompradores.php';
+require_once __DIR__ . '/lib/Distribuicao.php';
 
 /** venda + compradores; null se não existe */
 function cv_carregar(int $id): ?array
@@ -22,6 +23,7 @@ function cv_carregar(int $id): ?array
         $v[$k] = $v[$k] === null ? null : (float)$v[$k];
     $st = db()->prepare('SELECT * FROM cv_compradores WHERE venda_id = ? ORDER BY ordem, id');
     $st->execute([$id]);
+    $v['e2'] = $v['e2_dados'] ? (json_decode((string)$v['e2_dados'], true) ?: null) : null;
     $v['compradores'] = array_map(function ($c) {
         $c['omie_codigo'] = $c['omie_codigo'] !== null ? (int)$c['omie_codigo'] : null;
         return $c;
@@ -99,10 +101,69 @@ function cv_sugestao_cod(string $cod): ?array
     return null;
 }
 
-/** contexto da validação (construtoras conhecidas + mesmo COD) */
+/** lista de bairros válidos (cf_config 'bairros'): chave → [nome, regiao, cidade] */
+function cv_bairros(): array
+{
+    $out = [];
+    foreach ((array)cf_config('bairros', []) as $b) $out[Venda::chave((string)$b['nome'])] = $b;
+    uasort($out, fn($a, $b) => strcmp(Venda::chave($a['nome']), Venda::chave($b['nome'])));
+    return $out;
+}
+
+/** cadastra um bairro novo na lista (pedido confirmado na tela) */
+function cv_add_bairro(string $nome, string $regiao, string $cidade): array
+{
+    $nome = trim(preg_replace('/\s+/u', ' ', $nome) ?? '');
+    if (mb_strlen($nome) < 3) throw new RuntimeException('Nome de bairro muito curto.');
+    $lista = (array)cf_config('bairros', []);
+    foreach ($lista as $b) if (Venda::chave((string)$b['nome']) === Venda::chave($nome)) return $b;
+    $novo = ['nome' => mb_convert_case(mb_strtolower($nome, 'UTF-8'), MB_CASE_TITLE, 'UTF-8'), 'regiao' => $regiao !== '' ? $regiao : '—', 'cidade' => $cidade !== '' ? $cidade : 'Joinville'];
+    $lista[] = $novo;
+    cf_config_set('bairros', $lista);
+    return $novo;
+}
+
+/** pessoa do cadastro (cf_pessoas) pelo nome ou apelido → [id, nome do cadastro] */
+function cv_resolver_pessoa(): callable
+{
+    $pessoas = cf_pessoas(true);
+    return function (string $nome) use ($pessoas): ?array {
+        $id = cf_resolver_pessoa($nome, $pessoas);
+        return $id ? [$id, (string)$pessoas[$id]['nome']] : null;
+    };
+}
+
+/** contexto da validação (construtoras e bairros conhecidos + mesmo COD) */
 function cv_contexto(array $v, int $vendaId): array
 {
-    return ['construtoras' => cv_construtoras(), 'mesmo_cod' => cv_mesmo_cod((string)$v['cod_imovel'], (string)$v['unidade'], $vendaId)];
+    return ['construtoras' => cv_construtoras(), 'bairros' => cv_bairros(), 'mesmo_cod' => cv_mesmo_cod((string)$v['cod_imovel'], (string)$v['unidade'], $vendaId)];
+}
+
+/** grava a etapa 2 (distribuição) com histórico e trava otimista */
+function cv_gravar_e2(int $id, int $rev, array $d, array $u): array
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $st = $pdo->prepare('SELECT rev, e2_dados FROM cv_vendas WHERE id = ? FOR UPDATE');
+        $st->execute([$id]);
+        $row = $st->fetch();
+        if (!$row) throw new RuntimeException('Venda não encontrada.');
+        if ((int)$row['rev'] !== $rev) throw new RuntimeException('Esta venda foi alterada por outra pessoa enquanto você editava. Recarregue a página (suas mudanças não foram gravadas).');
+        $antes = $row['e2_dados'] ? json_decode((string)$row['e2_dados'], true) : null;
+        foreach ($d['linhas'] as &$l) unset($l['k']);   // índice da tela, não é dado
+        unset($l);
+        $pdo->prepare('UPDATE cv_vendas SET e2_dados = ?, rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?')
+            ->execute([json_encode($d, JSON_UNESCAPED_UNICODE), (int)$u['id'], $id]);
+        $dif = Distribuicao::diferencas($antes, $d);
+        foreach ($dif as [$campo, $a, $dd]) cv_hist($id, 2, $antes ? 'alterar' : 'preencher', $campo, $a, $dd, $u);
+        $novo = (int)$pdo->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        $pdo->commit();
+        return ['rev' => $novo, 'mudou' => count($dif)];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
 }
 
 /**

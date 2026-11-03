@@ -19,9 +19,9 @@ else $where[] = "v.status <> 'cancelada'";
 if ($q !== '') {
     $doc = Venda::docLimpo($q);
     $like = '%' . $q . '%';
-    $w = "(v.construtora LIKE ? OR v.endereco LIKE ? OR v.bairro LIKE ? OR v.unidade LIKE ? OR v.cod_imovel = ? OR v.id = ?
+    $w = "(v.construtora LIKE ? OR v.endereco LIKE ? OR v.bairro LIKE ? OR v.unidade LIKE ? OR v.cod_imovel = ? OR v.id = ? OR CONVERT(v.e2_dados USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ?
            OR EXISTS (SELECT 1 FROM cv_compradores c WHERE c.venda_id = v.id AND (c.nome LIKE ? OR c.email LIKE ?";
-    array_push($args, $like, $like, $like, $like, preg_replace('/\D+/', '', $q), (int)preg_replace('/\D+/', '', $q), $like, $like);
+    array_push($args, $like, $like, $like, $like, preg_replace('/\D+/', '', $q), (int)preg_replace('/\D+/', '', $q), $like, $like, $like);
     if (strlen($doc) >= 5 && preg_match('/\d/', $doc)) { $w .= ' OR c.documento LIKE ?'; $args[] = '%' . $doc . '%'; }
     $w .= ')))';
     $where[] = $w;
@@ -42,7 +42,7 @@ portal_header('Vendas — capa em etapas', $u);
 
 <div class="cf-barra">
   <form class="cv-busca" method="get">
-    <input type="search" name="q" value="<?= h($q) ?>" placeholder="Buscar por comprador, CPF/CNPJ, e-mail, construtora, endereço, unidade, COD ou nº da venda" autofocus>
+    <input type="search" name="q" value="<?= h($q) ?>" placeholder="Buscar por comprador, CPF/CNPJ, e-mail, corretor, construtora, endereço, unidade, COD ou nº da venda" autofocus>
     <select name="st">
       <?php foreach (['' => 'Em andamento + concluídas', 'concluida' => 'Concluídas', 'cancelada' => 'Canceladas', 'todas' => 'Todas'] as $k => $n): ?>
         <option value="<?= $k ?>"<?= $k === $st ? ' selected' : '' ?>><?= $n ?></option>

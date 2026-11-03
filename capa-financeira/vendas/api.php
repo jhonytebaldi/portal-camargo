@@ -32,10 +32,56 @@ try {
         [$v, $comp, $fmt] = Venda::doFormulario((array)($in['venda'] ?? []));
         $val = Venda::validarE1($v, $comp, cv_contexto($v, $id));
         $calc = array_map(fn($x) => round($x, 6), Venda::calc($v));
+        $bs = cv_bairros(); $kb = Venda::chave((string)$v['bairro']);
+        $bairro = ['vazio' => $kb === '', 'na_lista' => isset($bs[$kb]), 'nome' => $bs[$kb]['nome'] ?? null,
+                   'sugestao' => ($kb !== '' && !isset($bs[$kb])) ? Venda::parecido((string)$v['bairro'], array_map(fn($b) => $b['nome'], $bs), 75) : null];
         $resp(['ok' => true, 'calc' => $calc, 'descricao' => Venda::descricao($v, $comp),
                'exemplo_pagar' => Venda::descricaoPagar('NOME DO CORRETOR', 'CORRETOR', 'COMISSAO', Venda::descricao($v, $comp)),
                'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos'],
-               'sugestao' => cv_sugestao_cod((string)$v['cod_imovel'])]);
+               'sugestao' => cv_sugestao_cod((string)$v['cod_imovel']), 'bairro' => $bairro]);
+    }
+
+    /* ---------------- etapa 2: distribuição ---------------- */
+    if (in_array($acao, ['previa2', 'salvar2', 'concluir2'], true)) {
+        $venda = cv_carregar($id);
+        if (!$venda) $resp(['ok' => false, 'erros' => ['Salve a etapa 1 antes de preencher a distribuição.']]);
+        [$d, $fmt] = Distribuicao::doFormulario((array)($in['e2'] ?? []), cv_resolver_pessoa());
+        $c1 = Venda::calc($venda);
+        $val = Distribuicao::validar($d, $c1);
+        if ($venda['e1_status'] === 'rascunho') $val['erros'][] = 'Conclua a etapa 1 antes de concluir a distribuição (os valores dependem dela).';
+        if ($acao === 'previa2') {
+            $calc = Distribuicao::calc($d, $c1);
+            $resp(['ok' => true, 'calc' => $calc, 'c1' => $c1, 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
+        }
+        if ($venda['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
+        if ($fmt) $resp(['ok' => false, 'erros' => $fmt]);
+        $concluida = $venda['e2_status'] !== 'rascunho';
+        if (($acao === 'concluir2' || $concluida) && $val['erros']) {
+            $resp(['ok' => false, 'erros' => $val['erros'], 'msg' => $concluida ? 'A distribuição já está concluída: as alterações só são gravadas se tudo continuar válido.' : 'Corrija antes de concluir:']);
+        }
+        $g = cv_gravar_e2($id, $rev, $d, $u);
+        if ($acao === 'concluir2' && !$concluida) {
+            db()->prepare("UPDATE cv_vendas SET e2_status = 'concluida', e2_em = NOW(), e2_por = ?, rev = rev + 1 WHERE id = ?")->execute([(int)$u['id'], $id]);
+            cv_hist($id, 2, 'concluir', 'Etapa 2', 'rascunho', 'concluída', $u);
+        }
+        $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'avisos' => $val['avisos'],
+               'msg' => $acao === 'salvar2' ? 'Rascunho da distribuição salvo.' : ($concluida ? 'Alterações gravadas (etapa 2 continua concluída).' : 'Etapa 2 concluída.')]);
+    }
+
+    if ($acao === 'add_bairro') {
+        $b = cv_add_bairro((string)($in['nome'] ?? ''), Venda::texto($in['regiao'] ?? '', false), Venda::texto($in['cidade'] ?? '', false));
+        if ($id) cv_hist($id, 1, 'bairro_novo', 'Lista de bairros', null, 'cadastrou "' . $b['nome'] . '" (' . $b['regiao'] . ', ' . $b['cidade'] . ')', $u);
+        $resp(['ok' => true, 'bairro' => $b]);
+    }
+
+    if ($acao === 'descancelar') {
+        $atual = cv_carregar($id);
+        if (!$atual || $atual['status'] !== 'cancelada') $resp(['ok' => false, 'erros' => ['Esta venda não está cancelada.']]);
+        $volta = in_array($atual['cancelada_de'], ['andamento', 'concluida'], true) ? $atual['cancelada_de'] : 'andamento';
+        db()->prepare('UPDATE cv_vendas SET status = ?, cancelada_de = NULL, rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?')->execute([$volta, (int)$u['id'], $id]);
+        cv_hist($id, 0, 'descancelar', 'Venda', 'cancelada', $volta, $u);
+        $resp(['ok' => true]);
     }
 
     if ($acao === 'omie') {
@@ -111,10 +157,11 @@ try {
     if ($acao === 'cancelar') {
         $atual = cv_carregar($id);
         if (!$atual) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']], 404);
-        if ($atual['capa_id']) $resp(['ok' => false, 'erros' => ['Esta venda já gerou capa na Capa Financeira — cancele por lá.']]);
+        // contas já geradas/enviadas ao Omie: o cancelamento com exclusão dos títulos entra junto com a etapa 3 (geração das contas)
+        if ($atual['capa_id']) $resp(['ok' => false, 'erros' => ['Esta venda já gerou contas na Capa Financeira — o cancelamento com exclusão dos títulos no Omie ainda não está disponível por aqui.']]);
         $motivo = Venda::texto($in['motivo'] ?? '', false);
         if ($motivo === '') $resp(['ok' => false, 'erros' => ['Informe o motivo do cancelamento.']]);
-        db()->prepare("UPDATE cv_vendas SET status = 'cancelada', rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?")->execute([(int)$u['id'], $id]);
+        db()->prepare("UPDATE cv_vendas SET cancelada_de = status, status = 'cancelada', rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?")->execute([(int)$u['id'], $id]);
         cv_hist($id, 0, 'cancelar', 'Venda', $atual['status'], 'cancelada — ' . $motivo, $u);
         $resp(['ok' => true]);
     }

@@ -90,5 +90,28 @@ function cv_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cv_historico';
     }
+    // colunas acrescentadas depois da 1ª versão
+    $col = function (string $t, string $c) use ($pdo): bool {
+        $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+        $st->execute([$t, $c]); return (int)$st->fetchColumn() > 0;
+    };
+    if (!$col('cv_vendas', 'cep')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cep VARCHAR(9) NOT NULL DEFAULT '' AFTER bairro"); $feitos[] = 'cv_vendas.cep'; }
+    if (!$col('cv_vendas', 'e2_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e2_dados JSON NULL AFTER obs'); $feitos[] = 'cv_vendas.e2_dados (distribuição)'; }
+    if (!$col('cv_vendas', 'cancelada_de')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cancelada_de VARCHAR(20) NULL AFTER status"); $feitos[] = 'cv_vendas.cancelada_de'; }
+
+    // lista de bairros (validação da etapa 1) — lista do Jhony (03/11/2026) + os que a Busca já reconhece
+    $tem = (int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave = 'bairros'")->fetchColumn();
+    if (!$tem) {
+        $lista = [];
+        $add = function (string $regiao, array $nomes) use (&$lista) { foreach ($nomes as $n) $lista[] = ['nome' => $n, 'regiao' => $regiao, 'cidade' => 'Joinville']; };
+        $add('Norte', ['América', 'Atiradores', 'Glória', 'Costa e Silva', 'Santo Antônio', 'Bom Retiro', 'Saguaçu', 'Dona Francisca', 'Jardim Sofia', 'Jardim Paraíso', 'Rio Bonito', 'Zona Industrial Norte']);
+        $add('Sul', ['Anita Garibaldi', 'Floresta', 'Guanabara', 'Itaum', 'Bucarein', 'Fátima', 'Adhemar Garcia', 'Jarivatuba', 'Parque Guarani', 'Petrópolis', 'Boehmerwald', 'Itinga', 'Profipo', 'Santa Catarina', 'Ulysses Guimarães', 'Paranaguamirim', 'João Costa']);
+        $add('Leste', ['Aventureiro', 'Iririú', 'Boa Vista', 'Comasa', 'Espinheiros', 'Jardim Iririú', 'Vila Cubatão', 'Zona Industrial Tupy', 'Morro do Amaral']);
+        $add('Oeste', ['Vila Nova', 'Morro do Meio', 'Nova Brasília', 'São Marcos']);
+        $add('Centro', ['Centro']);
+        $add('Distrito', ['Pirabeiraba']);
+        $pdo->prepare("INSERT INTO cf_config (chave, valor) VALUES ('bairros', ?)")->execute([json_encode($lista, JSON_UNESCAPED_UNICODE)]);
+        $feitos[] = 'config:bairros (' . count($lista) . ')';
+    }
     return $feitos;
 }

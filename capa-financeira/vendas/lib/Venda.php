@@ -26,9 +26,9 @@ final class Venda
     /** campos da etapa 1 em cv_vendas → [rótulo no histórico, tipo] */
     public const CAMPOS_E1 = [
         'empresa' => ['Empresa', 'txt'], 'construtora' => ['Construtora', 'txt'], 'endereco' => ['Endereço', 'txt'],
-        'bairro' => ['Bairro', 'txt'], 'unidade' => ['Unidade', 'txt'], 'cod_imovel' => ['Cód. do imóvel', 'txt'],
+        'bairro' => ['Bairro', 'txt'], 'cep' => ['CEP', 'txt'], 'unidade' => ['Unidade', 'txt'], 'cod_imovel' => ['Cód. do imóvel', 'txt'],
         'status_imovel' => ['Planta/Pronto', 'txt'], 'data_venda' => ['Data da venda', 'data'],
-        'valor_contrato' => ['Valor do contrato', 'brl'], 'valor_bonus' => ['Bônus (venda maior)', 'brl'],
+        'valor_contrato' => ['Valor do contrato', 'brl'], 'valor_bonus' => ['Bônus', 'brl'],
         'documentacao' => ['Documentação', 'brl'], 'descontos' => ['Descontos adicionais', 'brl'],
         'pct_corretores' => ['% comissão corretores', 'pct'], 'pct_fundo' => ['% fundo de MKT', 'pct'],
         'pct_nf' => ['% desconto NF', 'pct'], 'pct_nf_bonus' => ['% NF do bônus', 'pct'],
@@ -235,6 +235,8 @@ final class Venda
         $v['empresa'] = in_array($in['empresa'] ?? '', ['camargo', 'vertical'], true) ? $in['empresa'] : '';
         foreach (['construtora', 'endereco', 'bairro', 'unidade'] as $k) $v[$k] = self::texto($in[$k] ?? '');
         $v['cod_imovel'] = preg_replace('/\D+/', '', (string)($in['cod_imovel'] ?? '')) ?? '';
+        $cep = preg_replace('/\D+/', '', (string)($in['cep'] ?? '')) ?? '';
+        $v['cep'] = strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : $cep;
         $v['status_imovel'] = in_array($in['status_imovel'] ?? '', ['PLANTA', 'PRONTO'], true) ? $in['status_imovel'] : null;
         $v['obs'] = self::texto($in['obs'] ?? '', false) ?: null;
         $d = self::data($in['data_venda'] ?? '');
@@ -300,13 +302,17 @@ final class Venda
 
         if ($v['construtora'] === '') $e[] = 'Falta a construtora.';
         elseif (isset($contexto['construtoras']) && !isset($contexto['construtoras'][self::chave($v['construtora'])])) {
-            $k = self::chave($v['construtora']); $melhor = null; $pm = 0.0;
-            foreach ($contexto['construtoras'] as $kk => $c) { similar_text($k, (string)$kk, $pct); if ($pct > $pm) { $pm = $pct; $melhor = $c['nome']; } }
+            $melhor = self::parecido($v['construtora'], array_map(fn($c) => $c['nome'], $contexto['construtoras']), 80);
             $a[] = 'Construtora "' . $v['construtora'] . '" não aparece em capas anteriores nem no Omie'
-                 . ($melhor && $pm >= 80 ? ' — você quis dizer "' . $melhor . '"?' : ' — confira a grafia (escolha da lista quando existir).');
+                 . ($melhor ? ' — você quis dizer "' . $melhor . '"?' : ' — confira a grafia (escolha da lista quando existir).');
         }
         if ($v['endereco'] === '') $e[] = 'Falta o endereço da obra.';
         if ($v['bairro'] === '') $e[] = 'Falta o bairro.';
+        elseif (isset($contexto['bairros']) && !isset($contexto['bairros'][self::chave($v['bairro'])])) {
+            $sug = self::parecido($v['bairro'], array_map(fn($b) => $b['nome'], $contexto['bairros']), 75);
+            $e[] = 'Bairro "' . $v['bairro'] . '" não está na lista de bairros' . ($sug ? ' — você quis dizer "' . mb_strtoupper($sug, 'UTF-8') . '"?' : '') . ' Se for um bairro novo, cadastre pelo botão ao lado do campo.';
+        }
+        if ($v['cep'] !== '' && strlen($v['cep']) !== 9) $e[] = 'CEP incompleto (8 dígitos).';
         if ($v['unidade'] === '') $e[] = 'Falta a unidade.';
         if ($v['cod_imovel'] === '') $e[] = 'Falta o código do imóvel.';
         if (!$v['status_imovel']) $e[] = 'Marque se o imóvel é PLANTA ou PRONTO.';
@@ -328,6 +334,14 @@ final class Venda
         }
         foreach ($contexto['mesmo_cod'] ?? [] as $m) $a[] = $m;
         return ['erros' => $e, 'avisos' => $a];
+    }
+
+    /** nome mais parecido da lista (similaridade ≥ $min %) ou null */
+    public static function parecido(string $nome, array $lista, float $min): ?string
+    {
+        $k = self::chave($nome); $melhor = null; $pm = 0.0;
+        foreach ($lista as $n) { similar_text($k, self::chave((string)$n), $pct); if ($pct > $pm) { $pm = $pct; $melhor = (string)$n; } }
+        return $pm >= $min ? $melhor : null;
     }
 
     public static function chave(string $s): string

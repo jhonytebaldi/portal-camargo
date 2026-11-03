@@ -36,3 +36,7 @@ Em vez de enviar a planilha pronta, a equipe preenche a capa no portal, por etap
 - Desenvolvimento local: `define('CV_OMIE_FAKE', true)` no config.php troca o Omie por um JSON (NUNCA em produção).
 - O Parser passou a aceitar também os rótulos do MODELO_ATUALIZADO (BAIRRO, UNIDADE/ENDEREÇO, COD. IMÓVEL e
   "VALOR PARA CALCULO DA COMISSÃO DA IMOB e VGV"). **Replicar no `capa_parser.py` de referência** (paridade).
+- Fase 2 (pronta): etapa 2 — distribuição (`vendas/lib/Distribuicao.php`, `cv_vendas.e2_dados`): blocos comissão / bônus /
+  administrativos pós-processo, nomes só do cadastro de Pessoas, bônus fechando 100% e "Conclusão do processo"
+  (quem concluiu recebe; o valor é descontado de linhas de comissão). Etapa 1 ganhou CEP (ViaCEP no navegador) e
+  lista de bairros validada (`cf_config` 'bairros', bairro novo só com confirmação). Venda cancelada pode ser descancelada.
