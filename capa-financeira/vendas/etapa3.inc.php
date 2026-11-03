@@ -34,8 +34,28 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     </table>
     <div class="cv-botoes" style="margin-top:8px">
       <button type="button" class="cv-mini-btn" id="cv-add-parc">+ parcela</button>
-      <button type="button" class="cv-mini-btn" id="cv-gerar-parc">gerar parcelas mensais…</button>
+      <button type="button" class="cv-mini-btn" id="cv-gerar-parc">gerar várias parcelas…</button>
       <button type="button" class="cv-mini-btn" id="cv-completar">ajustar a última com a diferença</button>
+    </div>
+    <div id="cv-gerador" class="cv-comp" style="display:none;margin-top:10px">
+      <div class="cv-comp-top"><span>Gerar várias parcelas</span><button type="button" class="cf-x" data-ger-fechar title="fechar">✕</button></div>
+      <div class="cv-g cv-g4">
+        <label>Quantidade de parcelas<input data-g="n" type="number" min="1" max="120" value="12"></label>
+        <label>Valor de cada parcela<input data-g="valor" class="cv-num" inputmode="decimal" placeholder="0,00"></label>
+        <label>Data da 1ª parcela<input data-g="data" type="date"></label>
+        <label>Periodicidade
+          <select data-g="passo">
+            <option value="1">mensal (todo mês)</option><option value="2">a cada 2 meses</option><option value="3">trimestral (a cada 3)</option>
+            <option value="4">a cada 4 meses</option><option value="6">semestral (a cada 6)</option><option value="12">anual (a cada 12)</option>
+          </select>
+        </label>
+        <label>Nº da 1ª na referência<input data-g="ref0" type="number" min="0" placeholder="ex.: 2 → PARCELA 02"></label>
+        <label>Pular de quantos em quantos na referência<input data-g="refpasso" type="number" min="1" value="1" title="ex.: parcelas 02, 04, 06 → 2"></label>
+        <label>Quem paga<select data-g="pagador"></select></label>
+        <label>Conta<select data-g="conta"></select></label>
+      </div>
+      <p class="cf-dica" data-g-previa style="margin:8px 0 0"></p>
+      <div class="cv-botoes" style="margin-top:8px"><button type="button" class="btn" data-ger-ok>Adicionar estas parcelas</button><button type="button" class="btn cf-btn-sec" data-ger-fechar>Cancelar</button></div>
     </div>
   </section>
 
@@ -100,20 +120,41 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   parc0.forEach(addParc);
   if (!parc0.length) addParc({});
   document.getElementById('cv-add-parc').onclick = () => { addParc({}); mudou(); };
-  document.getElementById('cv-gerar-parc').onclick = () => {
-    const n = parseInt(prompt('Quantas parcelas mensais?', '12') || '0', 10); if (!n || n < 1 || n > 120) return;
-    const v = prompt('Valor de cada parcela (R$):', '1.800,00'); if (!v) return;
-    const d0 = prompt('Data da primeira (dd/mm/aaaa):', ''); if (!d0) return;
-    const m = d0.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (!m) { alert('Data inválida.'); return; }
-    const passo = parseInt(prompt('A cada quantos meses?', '1') || '1', 10) || 1;
-    const ref0 = parseInt(prompt('Número da 1ª parcela na referência (PARCELA nn) — deixe vazio para não preencher:', '') || '0', 10);
+  /* gerador de parcelas: painel na própria página (não some ao trocar de aba) */
+  const ger = document.getElementById('cv-gerador'), g = k => ger.querySelector('[data-g=' + k + ']');
+  g('pagador').innerHTML = optsPag('c0').replace('<option value="outro">Outro pagador (parente, empresa…)</option>', '');
+  g('conta').innerHTML = contas.map(c => '<option' + (c === contaPadrao ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
+  g('valor').addEventListener('blur', e => CV.numBlur(e.target, false));
+  g('passo').addEventListener('change', () => { if (!g('refpasso').dataset.mexeu) g('refpasso').value = g('passo').value; previaGer(); });
+  g('refpasso').addEventListener('input', () => g('refpasso').dataset.mexeu = '1');
+  function datasGer() {
+    const n = parseInt(g('n').value, 10), passo = parseInt(g('passo').value, 10) || 1, d0 = g('data').value;
+    if (!n || n < 1 || n > 120 || !/^\d{4}-\d{2}-\d{2}$/.test(d0)) return [];
+    const [y, m, dia] = d0.split('-').map(Number), out = [];
     for (let i = 0; i < n; i++) {
-      const d = new Date(+m[3], +m[2] - 1 + i * passo, 1); const ult = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-      d.setDate(Math.min(+m[1], ult));
-      const iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-      addParc({data: iso, valor: fmt(num(v)), ref: ref0 ? 'PARCELA ' + String(ref0 + i * passo).padStart(2, '0') : ''});
+      const base = new Date(y, m - 1 + i * passo, 1), ult = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+      out.push(base.getFullYear() + '-' + String(base.getMonth() + 1).padStart(2, '0') + '-' + String(Math.min(dia, ult)).padStart(2, '0'));
     }
+    return out;
+  }
+  function refGer(i) { const r0 = parseInt(g('ref0').value, 10), rp = parseInt(g('refpasso').value, 10) || 1; return r0 > 0 ? 'PARCELA ' + String(r0 + i * rp).padStart(2, '0') : ''; }
+  function previaGer() {
+    const ds = datasGer(), v = num(g('valor').value), el = ger.querySelector('[data-g-previa]');
+    if (!ds.length) { el.textContent = 'Preencha a quantidade e a data da 1ª parcela.'; return; }
+    const br = d => d.split('-').reverse().join('/');
+    el.innerHTML = ds.length + ' parcela(s)' + (v ? ' de ' + brl(v) + ' = <b>' + brl(v * ds.length) + '</b>' : '') + ': ' + esc(br(ds[0])) + (ds.length > 1 ? ', ' + esc(br(ds[1])) : '') + (ds.length > 2 ? ' … ' + esc(br(ds[ds.length - 1])) : '')
+      + (refGer(0) ? ' · referências ' + esc(refGer(0)) + (ds.length > 1 ? ' … ' + esc(refGer(ds.length - 1)) : '') : '');
+  }
+  ger.addEventListener('input', previaGer); ger.addEventListener('change', previaGer);
+  document.getElementById('cv-gerar-parc').onclick = () => { ger.style.display = ''; g('n').focus(); previaGer(); };
+  ger.querySelectorAll('[data-ger-fechar]').forEach(b => b.onclick = () => ger.style.display = 'none');
+  ger.querySelector('[data-ger-ok]').onclick = () => {
+    const ds = datasGer(), v = num(g('valor').value);
+    if (!ds.length) { alert('Preencha a quantidade e a data da 1ª parcela.'); return; }
+    if (!v) { alert('Informe o valor de cada parcela.'); return; }
     [...tb.querySelectorAll('tr')].forEach(tr => { if (!tr.querySelector('[data-f=data]').value && !tr.querySelector('[data-f=valor]').value) tr.remove(); });
+    ds.forEach((d, i) => addParc({data: d, valor: fmt(v), ref: refGer(i), pagador: g('pagador').value, conta: g('conta').value}));
+    ger.style.display = 'none';
     mudou();
   };
   document.getElementById('cv-completar').onclick = () => {
