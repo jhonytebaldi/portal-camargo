@@ -182,6 +182,53 @@ final class OmieEnvio
         return $r;
     }
 
+    /** cadastros parecidos com o termo (nome por palavras, ou documento), a partir da lista em cache — sem consulta que "erra" */
+    public static function buscarCadastros(string $empresa, string $termo, int $max = 12): array
+    {
+        $cad = self::cadastros($empresa); $dig = preg_replace('/\D+/', '', $termo);
+        if (in_array(strlen($dig), [11, 14], true) && !empty($cad['por_doc'][$dig])) return array_slice($cad['por_doc'][$dig], 0, $max);
+        $toks = array_values(array_filter(preg_split('/\s+/', CapaParser::key($termo)) ?: [], fn($t) => mb_strlen($t) > 2 && !in_array($t, ['LTDA', 'EPP', 'ME', 'EIRELI', 'DE', 'DA', 'DO', 'DOS', 'DAS', 'E'], true)));
+        if (!$toks) return [];
+        $pont = []; $regs = [];
+        foreach ($cad['por_nome'] as $k => $lista) {
+            $n = 0; foreach ($toks as $t) if (str_contains($k, $t)) $n++;
+            if ($n === 0) continue;
+            foreach ($lista as $r) { $id = (int)$r['codigo_cliente_omie']; if (($pont[$id] ?? 0) < $n) { $pont[$id] = $n; $regs[$id] = $r; } }
+        }
+        arsort($pont);
+        return array_map(fn($id) => $regs[$id] + ['pontos' => $pont[$id], 'de' => count($toks)], array_slice(array_keys($pont), 0, $max));
+    }
+
+    /**
+     * Cadastra cliente/fornecedor no Omie (IncluirCliente) e já o coloca na lista em cache. Recusa documento inválido ou já cadastrado.
+     * @return array{cadastro: array, msg: string}
+     */
+    public static function incluirCadastro(string $empresa, string $nome, string $doc, string $email): array
+    {
+        $nome = trim((string)preg_replace('/\s+/', ' ', $nome)); $dig = preg_replace('/\D+/', '', $doc); $email = trim($email);
+        if ($nome === '') throw new RuntimeException('informe o nome do cliente');
+        if (mb_strlen($nome) > 60) throw new RuntimeException('o nome tem ' . mb_strlen($nome) . ' caracteres — o Omie aceita até 60; abrevie');
+        if (!in_array(strlen($dig), [11, 14], true)) throw new RuntimeException('CPF/CNPJ deve ter 11 ou 14 dígitos (veio com ' . strlen($dig) . ')');
+        if (!cf_doc_valido($dig)) throw new RuntimeException('CPF/CNPJ inválido (dígito verificador não confere): ' . cf_fmt_doc($dig));
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('e-mail inválido: ' . $email);
+        $cad = self::cadastros($empresa);
+        if (!empty($cad['por_doc'][$dig])) { $j = $cad['por_doc'][$dig][0]; throw new RuntimeException('já existe cadastro no Omie com esse documento: ' . $j['razao_social'] . ' (cód. ' . $j['codigo_cliente_omie'] . ') — use "escolher existente"'); }
+        $ped = ['codigo_cliente_integracao' => 'CV' . $dig, 'razao_social' => $nome, 'nome_fantasia' => $nome, 'cnpj_cpf' => cf_fmt_doc($dig), 'pessoa_fisica' => strlen($dig) === 11 ? 'S' : 'N'];
+        if ($email !== '') $ped['email'] = $email;
+        $r = OmieApi::call($empresa, 'geral/clientes/', 'IncluirCliente', $ped);
+        $id = (int)($r['codigo_cliente_omie'] ?? 0);
+        if (!$id) throw new RuntimeException('o Omie não devolveu o código do cadastro: ' . json_encode($r, JSON_UNESCAPED_UNICODE));
+        $reg = ['codigo_cliente_omie' => $id, 'razao_social' => $nome, 'nome_fantasia' => $nome, 'cnpj_cpf' => cf_fmt_doc($dig), 'inativo' => 'N', 'dadosBancarios' => ['cChavePix' => '']];
+        // mesmo padrão de código de integração da área de vendas (OmieCompradores): CV + documento
+        // entra na lista em cache sem nova chamada
+        $f = self::cacheArq("cadastros-$empresa");
+        if (is_file($f) && is_array($j = json_decode((string)file_get_contents($f), true))) {
+            $j['por_doc'][$dig][] = $reg; $j['por_nome'][CapaParser::key($nome)][] = $reg;
+            @file_put_contents($f, json_encode($j, JSON_UNESCAPED_UNICODE)); @touch($f, filemtime($f) ?: time());
+        }
+        return ['cadastro' => $reg, 'msg' => 'cadastrado no Omie: ' . $nome . ' (cód. ' . $id . ', ' . cf_fmt_doc($dig) . ')', 'pedido' => $ped];
+    }
+
     private static function listarClientes(string $empresa, array $filtro): array
     {
         try { $r = OmieApi::call($empresa, 'geral/clientes/', 'ListarClientes', ['pagina' => 1, 'registros_por_pagina' => 50, 'apenas_importado_api' => 'N', 'clientesFiltro' => $filtro]); return $r['clientes_cadastro'] ?? []; }
