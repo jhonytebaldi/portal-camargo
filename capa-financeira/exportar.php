@@ -413,6 +413,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, (string)($in['empresa'] ?? ''), $l['tipo'] === 'R' ? 'R' : 'P', 'incluir', 'recusado', null, null, null, 'linha devolvida para confirmado: título não encontrado no Omie após importação da planilha', (int)$u['id']);
             exit(json_encode(['ok' => true]));
         }
+        if ($acao === 'forcar_reenvio') {
+            // título excluído à mão no Omie: a linha (que no portal continua "exportada") volta para a fila, para ser enviada de novo
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            $codigo = strtoupper(trim((string)($in['codigo'] ?? '')));
+            if ($codigo === '') $falha('informe o código do título (ex.: 933-R004)');
+            $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.codigo_integracao = ? AND l.status = 'exportado' AND c.empresa = ? ORDER BY l.id DESC LIMIT 1");
+            $st->execute([$codigo, $empresa]);
+            if (!($l = $st->fetch())) $falha("não há linha exportada com o código $codigo nesta empresa");
+            $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
+            if ($apiDisp = (OmieApi::disponivel() && isset(OmieApi::contas()[$empresa]))) {
+                try {
+                    $t0 = OmieEnvio::titulos($empresa, $tipo)['por_codigo'][$codigo] ?? null;
+                    $ainda = $t0 ? OmieEnvio::consultarPorOmieId($empresa, $tipo, (int)$t0['omie_id']) : null;
+                } catch (Throwable $e) { $falha('não consegui conferir no Omie agora: ' . $e->getMessage()); }
+                if ($ainda) $falha("o título $codigo ainda existe no Omie (status " . ($ainda['status_titulo'] ?? '?') . ') — só force o reenvio de título que foi excluído lá');
+                OmieEnvio::lembrarTitulo($empresa, $tipo, $codigo, null);
+            }
+            $pdo->prepare("UPDATE cf_lancamentos SET status = 'confirmado', exportacao_id = NULL, omie_id = NULL, alteracao_pos_exportacao = 0, omie_erro = ? WHERE id = ?")
+                ->execute(['reenvio forçado em ' . date('d/m/Y H:i') . ' por ' . $u['nome'] . ' — título não existe mais no Omie', (int)$l['id']]);
+            cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipo, 'incluir', 'recusado', null, null, null, 'reenvio forçado: linha voltou para a fila (título excluído no Omie)', (int)$u['id']);
+            exit(json_encode(['ok' => true, 'msg' => "$codigo voltou para a fila de envio" . ($apiDisp ? ' (conferido: não existe mais no Omie)' : ' (sem API: não deu para conferir no Omie)')], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'desfazer_linha') {
             $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
             $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.status = 'exportado' AND l.omie_id IS NOT NULL AND c.empresa = ?"); $st->execute([(int)($in['id'] ?? 0), $empresa]);
@@ -672,6 +694,20 @@ portal_header('Exportar para o Omie', $u);
 <td><button type="button" class="cf-x exp-desfazer-linha" title="exclui este título no Omie (se ainda não foi baixado) e devolve a linha para 'confirmado'">↩ excluir do Omie</button></td></tr>
 <?php endforeach; ?></tbody></table></div>
 <?php endif; ?>
+
+<details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600">Título excluído à mão no Omie? Forçar reenvio</summary>
+  <p class="cf-dica">Linhas que já foram ao Omie ficam marcadas como enviadas e não voltam para a fila (nem quando a capa ganha versão nova). Se alguém excluiu o título direto no Omie, informe o código para ele voltar para a fila e ser enviado de novo. O portal confere antes que o título não existe mais lá.</p>
+  <p><input id="exp-forcar-cod" placeholder="ex.: 933-R004" style="padding:7px 9px;border:2px solid var(--line);border-radius:6px;font:inherit"> <button type="button" class="btn cf-btn-sec" id="exp-forcar">forçar reenvio</button></p>
+</details>
+<script>
+document.getElementById('exp-forcar').onclick = async () => {
+  const codigo = document.getElementById('exp-forcar-cod').value.trim(); if (!codigo) return;
+  if (!confirm('Forçar o reenvio de ' + codigo + '? Ele volta para a fila e será enviado de novo ao Omie.')) return;
+  const r = await fetch(location.pathname, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acao:'forcar_reenvio', empresa: <?= json_encode($empresa) ?>, codigo, csrf: <?= json_encode(csrf_token()) ?>})});
+  let j = null; try { j = await r.json(); } catch (e) {}
+  alert(j && j.ok ? j.msg : 'Não foi: ' + (j && j.erro ? j.erro : r.status)); if (j && j.ok) location.reload();
+};
+</script>
 
 <h2 class="cf-h2">Exportações anteriores <small><?= h($emp['nome']) ?></small></h2>
 <?php if ($tipo === 'P' && $historico): ?>
