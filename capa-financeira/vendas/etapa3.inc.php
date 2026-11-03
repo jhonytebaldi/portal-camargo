@@ -182,7 +182,14 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     rows.map((tr, i) => [tr.querySelector('[data-f=data]').value || '9999-99-99', i, tr]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]).forEach(x => tb.appendChild(x[2]));
   }
   document.getElementById('cv-ord-data').onclick = () => { manual = false; ordenaPorData(); mostraOrdem(); mudou(); };
-  tb.addEventListener('change', ev => { if (ev.target.dataset.f === 'data' && !manual) ordenaPorData(); });
+  // reordena por data só quando a pessoa termina a linha (sai dela com data e valor preenchidos — e nome/CPF se for outro pagador),
+  // para a linha não "pular" de lugar no meio do preenchimento
+  const linhaCompleta = tr => tr.querySelector('[data-f=data]').value && num(tr.querySelector('[data-f=valor]').value) > 0
+    && (tr.querySelector('[data-f=pagador]').value !== 'outro' || (tr.querySelector('[data-f=outro_nome]').value.trim() && tr.querySelector('[data-f=outro_doc]').value.trim()));
+  tb.addEventListener('focusout', ev => {
+    const tr = ev.target.closest('tr'); if (!tr || manual) return;
+    setTimeout(() => { if (!tr.contains(document.activeElement) && linhaCompleta(tr)) ordenaPorData(); }, 0);
+  });
   // arrastar com ponteiro (mouse ou toque) pela alça ⋮⋮ — sem depender do drag-and-drop nativo
   let arrastando = null;
   tb.addEventListener('pointerdown', ev => {
