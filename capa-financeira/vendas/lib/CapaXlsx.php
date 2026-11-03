@@ -14,6 +14,7 @@
 declare(strict_types=1);
 require_once dirname(__DIR__, 2) . '/lib/XlsxWriter.php';
 require_once __DIR__ . '/Venda.php';
+require_once __DIR__ . '/Fluxo.php';
 
 final class CapaXlsx
 {
@@ -21,7 +22,8 @@ final class CapaXlsx
     private const LAB = ['bold' => true];
 
     /** @param array $venda cv_carregar() · $pessoas nomes para a aba PESSOAS · $empresaNome · $ultima "dd/mm/aaaa hh:mm por Fulano" */
-    public static function gerar(array $venda, array $pessoas, string $empresaNome, string $ultima, string $destino): void
+    /** @return array{receber: array<int,int>} linha da planilha → posição da parcela (ordem por data) */
+    public static function gerar(array $venda, array $pessoas, string $empresaNome, string $ultima, string $destino): array
     {
         $x = new XlsxWriter();
         $s = $x->planilha('MODELO');
@@ -107,7 +109,10 @@ final class CapaXlsx
         if (!empty($venda['e2']['linhas'])) {
             $r = self::blocoDistribuicao($x, $s, $r, $venda, $R, $calc, $empresaNome);
         }
-        foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'DISTRIBUIÇÃO DAS COMISSÕES (etapa 2)' : null, 3 => 'FLUXO DE PAGAMENTO DO CLIENTE E RECEBIDOS (etapa 3)', 4 => 'PAGAMENTO PARA CORRETORES (etapa 4)']) as $n => $rot) {
+        $temFluxo = !empty($venda['e3']['parcelas']);
+        if ($temFluxo) $r = self::blocoFluxo($x, $s, $r, $venda, $calc, $R);
+        // (rótulos dos marcadores não podem começar com "FLUXO DE PAGAMENTO"/"PAGAMENTO PARA CORRETORES": o leitor de capas procura esses blocos)
+        foreach (array_filter([2 => empty($venda['e2']['linhas']) ? 'ETAPA 2 — DISTRIBUIÇÃO DAS COMISSÕES' : null, 3 => $temFluxo ? null : 'ETAPA 3 — FLUXO DO CLIENTE E RECEBIDOS', 4 => 'ETAPA 4 — PAGAMENTOS AOS CORRETORES']) as $n => $rot) {
             $x->set($s, "A$r", $rot, ['bold' => true, 'fill' => 'E7E6E6']);
             $x->set($s, "B$r", 'ainda não preenchida no portal (' . ($st[$venda["e{$n}_status"]] ?? $venda["e{$n}_status"]) . ')', ['italic' => true, 'color' => '6B7770']);
             $x->mesclar($s, "B$r:G$r");
@@ -118,7 +123,101 @@ final class CapaXlsx
         $p = $x->planilha('PESSOAS');
         $x->largura($p, 'A', 40);
         foreach (array_values($pessoas) as $i => $nome) $x->set($p, 'A' . ($i + 1), $nome);
+        // ---- lançamentos (o que vai para o Omie) — mesmo layout que o leitor de capas lê ----
+        $mapa = ['receber' => []];
+        if ($temFluxo) {
+            $comp = $venda['compradores'];
+            $desc = Venda::descricao($venda, $comp);
+            $ordem = Fluxo::ordenadas($venda['e3']['parcelas']);
+            $x->set($s, "A$r", 'MODELO DE DESCRIÇÃO', ['bold' => true]);
+            $x->set($s, "B$r", Venda::descricaoPagar('NOME', 'CARGO', 'COMISSAO', $desc), ['italic' => true]);
+            $r++;
+            $hdr = $r + 1; $ini = $hdr + 1; $fim = $ini + count($ordem) - 1;
+            $tot = array_sum(array_map(fn($p) => (float)$p['valor'], $ordem));
+            $x->set($s, "E$r", ['f' => "SUM(E$ini:E$fim)", 'v' => $tot], ['fmt' => 'brl', 'bold' => true]);
+            $x->set($s, "F$r", 0.0, ['fmt' => 'brl', 'bold' => true]);
+            foreach (['A' => 'DATA', 'B' => 'CONTA', 'C' => 'Cliente e fornecedor', 'D' => 'histórico', 'E' => 'A RECEBER ', 'F' => 'A PAGAR '] as $c => $t) $x->set($s, "$c$hdr", $t, ['bold' => true, 'fill' => 'E7E6E6', 'border' => true]);
+            $r = $ini;
+            foreach ($ordem as $j => $p) {
+                $pg = Fluxo::pagador($p, $comp);
+                $x->set($s, "A$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data']);
+                $x->set($s, "B$r", $p['conta']);
+                $x->set($s, "C$r", $pg['nome']);
+                $x->set($s, "D$r", $desc);
+                $x->set($s, "E$r", round((float)$p['valor'], 2), ['fmt' => 'brl']);
+                $mapa['receber'][$r] = $j;
+                $r++;
+            }
+        }
         $x->salvar($destino);
+        return $mapa;
+    }
+
+    /** linhas 58–77 do modelo: fluxo de pagamento do cliente, recebidos e valor ainda devido (etapa 3) */
+    private static function blocoFluxo(XlsxWriter $x, string $s, int $r, array $venda, array $c1, array $R): int
+    {
+        require_once __DIR__ . '/Fluxo.php';
+        $d = $venda['e3'];
+        $comp = $venda['compradores'];
+        $ordem = Fluxo::ordenadas($d['parcelas']);
+        $calc = Fluxo::calc($d, $c1);
+        $brl = ['fmt' => 'brl']; $hd = ['bold' => true, 'fill' => 'E7E6E6', 'border' => true];
+        $x->set($s, "A$r", 'FLUXO DE PAGAMENTO DO CLIENTE', ['bold' => true]);
+        $x->mesclar($s, "A$r:E$r"); $r++;
+        foreach (['A' => 'DESCRIÇÃO', 'B' => 'VALOR', 'C' => '%', 'D' => '% ACUMULADO', 'E' => 'DATA', 'F' => 'PAGO PARA', 'G' => 'REFERÊNCIA'] as $c => $t) $x->set($s, "$c$r", $t, $hd);
+        $r++;
+        $ini = $r; $fim = $ini + count($ordem) - 1; $totRow = $fim + 1;
+        foreach ($ordem as $j => $p) {
+            $pg = Fluxo::pagador($p, $comp);
+            $l = $calc['linhas'][$j];
+            $x->set($s, "A$r", $pg['nome'], ['fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "B$r", round((float)$p['valor'], 2), $brl + ['fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "C$r", ['f' => "B$r/\$B\$$totRow", 'v' => $l['pct']], ['fmt' => 'pct']);
+            $x->set($s, "D$r", ['f' => $r === $ini ? "C$r" : "C$r+D" . ($r - 1), 'v' => $l['pct_acum']], ['fmt' => 'pct']);
+            $x->set($s, "E$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data', 'fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "F$r", $p['conta'], ['fill' => 'FFF8E1', 'border' => true]);
+            $x->set($s, "G$r", $p['ref'], ['fill' => 'FFF8E1', 'border' => true]);   // G = rótulo da parcela (vai para a observação no Omie)
+            $marca = array_filter([$p['recebido'] ? 'RECEBIDA' : '', $p['arras'] ? 'ARRAS' : '', $l['gatilhos'] ? 'atinge ' . implode(' / ', $l['gatilhos']) . ' da comissão' : '']);
+            if ($marca) $x->set($s, "H$r", implode(' · ', $marca), ['italic' => true, 'color' => '2F5D4F']);
+            $r++;
+        }
+        $x->set($s, "A$r", 'TOTAL', ['bold' => true]);
+        $x->set($s, "B$r", ['f' => "SUM(B$ini:B$fim)", 'v' => $calc['total_fluxo']], $brl + ['bold' => true]);
+        $x->set($s, "C$r", ['f' => "B$r/B{$R['cb']}", 'v' => $calc['total_esperado'] > 0 ? $calc['total_fluxo'] / $calc['total_esperado'] : 0], ['fmt' => 'pct']);
+        $x->set($s, "D$r", 'deve bater com COMISSÃO + BÔNUS', ['italic' => true, 'color' => '6B7770']);
+        $r += 2;
+        if ($d['travas']) {
+            $x->set($s, "A$r", 'TRAVAS', ['bold' => true, 'color' => 'B4512F']);
+            $x->set($s, "B$r", implode(' · ', array_map(fn($t) => Fluxo::TRAVAS[$t], $d['travas'])), ['color' => 'B4512F']);
+            $x->mesclar($s, "B$r:G$r"); $r += 2;
+        }
+        // recebidos
+        $x->set($s, "A$r", 'COMPROVANTES DE RECEBIMENTO DA IMOB CAMARGO', ['bold' => true]);
+        $x->mesclar($s, "A$r:E$r"); $r++;
+        foreach (['A' => 'DESCRIÇÃO', 'B' => 'VALOR', 'E' => 'DATA', 'G' => 'REFERÊNCIA'] as $c => $t) $x->set($s, "$c$r", $t, $hd);
+        $r++;
+        $iniR = $r;
+        foreach ($ordem as $p) if ($p['recebido']) {
+            $pg = Fluxo::pagador($p, $comp);
+            $x->set($s, "A$r", $pg['nome']);
+            $x->set($s, "B$r", round((float)$p['valor'], 2), $brl);
+            $x->set($s, "E$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data']);
+            $x->set($s, "G$r", $p['ref']);
+            if ($p['arras']) $x->set($s, "H$r", 'ARRAS', ['italic' => true, 'color' => '2F5D4F']);
+            $r++;
+        }
+        $x->set($s, "A$r", 'TOTAL', ['bold' => true]);
+        $x->set($s, "B$r", $r > $iniR ? ['f' => "SUM(B$iniR:B" . ($r - 1) . ')', 'v' => $calc['recebido']] : 0.0, $brl + ['bold' => true]);
+        $totRec = $r; $r += 2;
+        $x->set($s, "A$r", 'VALOR AINDA DEVIDO', ['bold' => true]);
+        $x->set($s, "B$r", ['f' => "B$totRow-B$totRec", 'v' => $calc['devido']], $brl + ['bold' => true, 'fill' => 'E3EDE8']);
+        $r += 2;
+        if (!empty($d['conferido'])) {
+            $x->set($s, "A$r", 'CONFERIDO COM CONTRATO E TERMO', ['bold' => true]);
+            $x->set($s, "B$r", trim(($d['conferido_por'] ?? '') . ' ' . ($d['conferido_em'] ?? '')));
+            $r += 2;
+        }
+        return $r;
     }
 
     /** linhas 29–56 do modelo: comissões, bônus, saldo e administrativos (etapa 2). Devolve a próxima linha livre. */

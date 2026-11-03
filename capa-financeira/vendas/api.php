@@ -80,6 +80,40 @@ try {
                'msg' => ($acao === 'salvar2' && !$concluida) ? 'Rascunho da distribuição salvo.' : ($concluida ? 'Alterações gravadas (etapa 2 continua concluída).' : 'Etapa 2 concluída.')]);
     }
 
+    /* ---------------- etapa 3: fluxo do cliente → contas a receber ---------------- */
+    if (in_array($acao, ['previa3', 'salvar3', 'concluir3'], true)) {
+        $venda = cv_carregar($id);
+        if (!$venda) $resp(['ok' => false, 'erros' => ['Salve a etapa 1 antes de preencher o fluxo.']]);
+        [$d, $fmt] = Fluxo::doFormulario((array)($in['e3'] ?? []));
+        $c1 = Venda::calc($venda);
+        $val = Fluxo::validar($d, $c1, $venda);
+        if ($venda['e1_status'] === 'rascunho') $val['erros'][] = 'Conclua a etapa 1 antes de concluir o fluxo (compradores e valores vêm dela).';
+        if ($acao === 'previa3') $resp(['ok' => true, 'calc' => Fluxo::calc($d, $c1), 'c1' => $c1, 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
+        if ($venda['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
+        if ($fmt) $resp(['ok' => false, 'erros' => $fmt]);
+        $concluida = $venda['e3_status'] !== 'rascunho';
+        if (($acao === 'concluir3' || $concluida) && $val['erros']) {
+            $resp(['ok' => false, 'erros' => $val['erros'], 'msg' => $concluida ? 'O fluxo já está concluído: as alterações só são gravadas se tudo continuar válido.' : 'Corrija antes de concluir:']);
+        }
+        $g = cv_gravar_e3($id, $rev, $d, $u);
+        $rev = $g['rev'];
+        if ($acao === 'salvar3' && !$concluida) $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'msg' => 'Rascunho do fluxo salvo.']);
+        // quem paga precisa existir no Omie da empresa da venda (é lá que as contas a receber são lançadas)
+        $venda = cv_carregar($id);
+        $om = cv_pagadores_omie($venda, $venda['e3'], array_map(fn($x) => Venda::docLimpo($x), (array)($in['confirmar_omie'] ?? [])), $u);
+        if ($om['falhas']) $resp(['ok' => false, 'id' => $id, 'rev' => $rev, 'erros' => $om['falhas'], 'msg' => 'Fluxo salvo, mas as contas a receber NÃO foram geradas — problema no Omie:']);
+        if ($om['pendentes']) $resp(['ok' => false, 'id' => $id, 'rev' => $rev, 'confirmar' => $om['pendentes'], 'empresa' => strtoupper((string)$venda['empresa'])]);
+        if (!$concluida) {
+            db()->prepare("UPDATE cv_vendas SET e3_status = 'concluida', e3_em = NOW(), e3_por = ?, rev = rev + 1 WHERE id = ?")->execute([(int)$u['id'], $id]);
+            cv_hist($id, 3, 'concluir', 'Etapa 3', 'rascunho', 'concluída', $u);
+        }
+        $capaId = null;
+        if (!$concluida || $g['mudou'] > 0 || !$venda['capa_id']) $capaId = cv_gerar_receber($id, $u);
+        $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'capa_id' => $capaId, 'avisos' => $val['avisos'],
+               'msg' => ($concluida ? 'Alterações gravadas.' : 'Etapa 3 concluída.') . ($capaId ? ' Contas a receber geradas na capa #' . $capaId . ' — revise e confirme na Capa Financeira para enviar ao Omie.' : ' Nada mudou nas parcelas: as contas a receber continuam as mesmas.')]);
+    }
+
     if ($acao === 'add_bairro') {
         $b = cv_add_bairro((string)($in['nome'] ?? ''), Venda::texto($in['regiao'] ?? '', false), Venda::texto($in['cidade'] ?? '', false));
         if ($id) cv_hist($id, 1, 'bairro_novo', 'Lista de bairros', null, 'cadastrou "' . $b['nome'] . '" (' . $b['regiao'] . ', ' . $b['cidade'] . ')', $u);
@@ -165,16 +199,41 @@ try {
                'msg' => $concluida ? 'Alterações gravadas (etapa 1 continua concluída).' : 'Etapa 1 concluída.']);
     }
 
+    if ($acao === 'cancelar_previa') {
+        $atual = cv_carregar($id);
+        if (!$atual) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']], 404);
+        $t = cv_titulos_para_cancelar($atual);
+        $resp(['ok' => true, 'titulos' => $t['titulos'], 'capas' => $t['capas']]);
+    }
+
     if ($acao === 'cancelar') {
         $atual = cv_carregar($id);
         if (!$atual) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']], 404);
-        // contas já geradas/enviadas ao Omie: o cancelamento com exclusão dos títulos entra junto com a etapa 3 (geração das contas)
-        if ($atual['capa_id']) $resp(['ok' => false, 'erros' => ['Esta venda já gerou contas na Capa Financeira — o cancelamento com exclusão dos títulos no Omie ainda não está disponível por aqui.']]);
+        if ($atual['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['A venda já está cancelada.']]);
         $motivo = Venda::texto($in['motivo'] ?? '', false);
         if ($motivo === '') $resp(['ok' => false, 'erros' => ['Informe o motivo do cancelamento.']]);
-        db()->prepare("UPDATE cv_vendas SET cancelada_de = status, status = 'cancelada', rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?")->execute([(int)$u['id'], $id]);
-        cv_hist($id, 0, 'cancelar', 'Venda', $atual['status'], 'cancelada — ' . $motivo, $u);
-        $resp(['ok' => true]);
+        $t = cv_titulos_para_cancelar($atual);
+        $temOmie = array_filter($t['titulos'], fn($x) => $x['acao'] !== 'nada');
+        if ($temOmie && empty($in['confirmado'])) $resp(['ok' => false, 'precisa_confirmar' => true, 'titulos' => $t['titulos']]);
+        $res = []; $ficaram = 0;
+        $pdo = db();
+        foreach ($t['titulos'] as $x) {
+            if ($x['acao'] === 'bloqueado') { $ficaram++; $res[] = $x['codigo'] . ': NÃO excluído — já tem baixa no Omie (' . $x['status_omie'] . ')'; continue; }
+            if ($x['acao'] !== 'excluir') continue;
+            try { $r = (defined('CV_OMIE_FAKE') && CV_OMIE_FAKE) ? ['ok' => true, 'msg' => 'excluído (simulação local)'] : OmieEnvio::excluir($t['empresa'], $x['tipo'], $x['codigo']); }
+            catch (Throwable $e) { $r = ['ok' => false, 'msg' => 'erro ao excluir no Omie: ' . $e->getMessage()]; }
+            if (!$r['ok']) $ficaram++;
+            $res[] = $x['codigo'] . ': ' . $r['msg'];
+            if ($r['ok']) $pdo->prepare("UPDATE cf_lancamentos SET status = 'removido', exportacao_id = NULL, omie_id = NULL WHERE codigo_integracao = ? AND capa_id IN (" . implode(',', array_map('intval', $t['capas'])) . ')')->execute([$x['codigo']]);
+        }
+        // capas desta venda: sem nada que tenha ficado no Omie → descartadas; a etapa 3 volta a rascunho (descancelar = gerar de novo)
+        if ($t['capas'] && !$ficaram) {
+            $pdo->exec("UPDATE cf_capas SET status = 'descartada' WHERE id IN (" . implode(',', array_map('intval', $t['capas'])) . ") AND status IN ('revisao','confirmada')");
+            $pdo->prepare("UPDATE cv_vendas SET capa_id = NULL, e3_status = 'rascunho' WHERE id = ?")->execute([$id]);
+        }
+        $pdo->prepare("UPDATE cv_vendas SET cancelada_de = status, status = 'cancelada', rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?")->execute([(int)$u['id'], $id]);
+        cv_hist($id, 0, 'cancelar', 'Venda', $atual['status'], 'cancelada — ' . $motivo . ($res ? ' · Omie: ' . implode('; ', $res) : '') . ($t['capas'] && !$ficaram ? ' · capas #' . implode(', #', $t['capas']) . ' descartadas' : ''), $u);
+        $resp(['ok' => true, 'resultado' => $res, 'ficaram' => $ficaram]);
     }
 
     $resp(['ok' => false, 'erros' => ['ação desconhecida']], 400);

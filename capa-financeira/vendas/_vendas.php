@@ -9,6 +9,7 @@ require_once dirname(__DIR__) . '/_comum.php';
 require_once __DIR__ . '/lib/Venda.php';
 require_once __DIR__ . '/lib/OmieCompradores.php';
 require_once __DIR__ . '/lib/Distribuicao.php';
+require_once __DIR__ . '/lib/Fluxo.php';
 
 /** venda + compradores; null se não existe */
 function cv_carregar(int $id): ?array
@@ -24,6 +25,7 @@ function cv_carregar(int $id): ?array
     $st = db()->prepare('SELECT * FROM cv_compradores WHERE venda_id = ? ORDER BY ordem, id');
     $st->execute([$id]);
     $v['e2'] = $v['e2_dados'] ? (json_decode((string)$v['e2_dados'], true) ?: null) : null;
+    $v['e3'] = !empty($v['e3_dados']) ? (json_decode((string)$v['e3_dados'], true) ?: null) : null;
     $v['compradores'] = array_map(function ($c) {
         $c['omie_codigo'] = $c['omie_codigo'] !== null ? (int)$c['omie_codigo'] : null;
         return $c;
@@ -274,4 +276,156 @@ function cv_ultimos_pct(int $vendaAtual): array
         }
     }
     return $out;
+}
+
+/** contas correntes da empresa no Omie (nomes; do catálogo em cache — sem chamar a API) e a padrão (Sicoob) */
+function cv_contas(string $empresa): array
+{
+    $cat = cf_config('omie_catalogo_' . $empresa, null);
+    $nomes = [];
+    foreach ((array)($cat['contas_info'] ?? []) as $c) $nomes[] = Venda::texto((string)$c['nome']);
+    if (!$nomes) $nomes = Fluxo::CONTAS_PADRAO;
+    $nomes = array_values(array_unique($nomes));
+    $padrao = null;
+    foreach ($nomes as $n) if (str_contains(Venda::chave($n), 'SICOOB')) { $padrao = $n; break; }
+    return ['lista' => $nomes, 'padrao' => $padrao ?? $nomes[0]];
+}
+
+/** grava a etapa 3 (fluxo) com histórico e trava otimista */
+function cv_gravar_e3(int $id, int $rev, array $d, array $u): array
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $st = $pdo->prepare('SELECT rev, e3_dados FROM cv_vendas WHERE id = ? FOR UPDATE');
+        $st->execute([$id]);
+        $row = $st->fetch();
+        if (!$row) throw new RuntimeException('Venda não encontrada.');
+        if ((int)$row['rev'] !== $rev) throw new RuntimeException('Esta venda foi alterada por outra pessoa enquanto você editava. Recarregue a página (suas mudanças não foram gravadas).');
+        $antes = $row['e3_dados'] ? json_decode((string)$row['e3_dados'], true) : null;
+        foreach ($d['parcelas'] as &$p) unset($p['k']);
+        unset($p);
+        if ($d['conferido'] && !($antes['conferido'] ?? false)) { $d['conferido_por'] = (string)$u['nome']; $d['conferido_em'] = date('Y-m-d H:i'); }
+        elseif ($d['conferido']) { $d['conferido_por'] = $antes['conferido_por'] ?? (string)$u['nome']; $d['conferido_em'] = $antes['conferido_em'] ?? date('Y-m-d H:i'); }
+        $pdo->prepare('UPDATE cv_vendas SET e3_dados = ?, rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?')
+            ->execute([json_encode($d, JSON_UNESCAPED_UNICODE), (int)$u['id'], $id]);
+        $comp = cv_carregar($id)['compradores'] ?? [];
+        $dif = Fluxo::diferencas($antes, $d, $comp);
+        foreach ($dif as [$campo, $a, $dd]) cv_hist($id, 3, $antes ? 'alterar' : 'preencher', $campo, $a, $dd, $u);
+        $novo = (int)$pdo->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
+        $pdo->commit();
+        return ['rev' => $novo, 'mudou' => count($dif)];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/**
+ * Pagadores do fluxo no Omie da EMPRESA DA VENDA (é lá que ficam as contas a receber).
+ * @return array{ok: array, pendentes: array, falhas: string[]} por documento
+ */
+function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u): array
+{
+    $emp = (string)$venda['empresa'];
+    $vistos = []; $pend = []; $falhas = []; $ok = [];
+    foreach ($d['parcelas'] as $p) {
+        $pg = Fluxo::pagador($p, $venda['compradores']);
+        $doc = $pg['documento'];
+        if ($doc === '' || isset($vistos[$doc])) continue;
+        $vistos[$doc] = true;
+        // comprador já ligado na Vertical e a venda é da Vertical: não precisa consultar de novo
+        if ($pg['comprador'] !== null && $emp === OmieCompradores::EMPRESA && !empty($venda['compradores'][$pg['comprador']]['omie_codigo'])) { $ok[$doc] = (int)$venda['compradores'][$pg['comprador']]['omie_codigo']; continue; }
+        $l = OmieCompradores::localizar($doc, $pg['nome'], $emp);
+        if ($l['status'] === 'erro') { $falhas[] = $pg['nome'] . ': ' . $l['msg']; continue; }
+        if ($l['status'] === 'ok') { $ok[$doc] = $l['codigo']; continue; }
+        if (!in_array($doc, $confirmados, true)) {
+            $pend[] = ['documento' => $doc, 'doc_fmt' => Venda::docFormatado($doc), 'nome' => $pg['nome'], 'email' => $pg['email'], 'status' => $l['status'],
+                       'msg' => $l['status'] === 'so_nome' ? 'Existe no Omie da ' . strtoupper($emp) . ' um cadastro com esse nome e OUTRO documento (' . ($l['nome'] ?? '') . '). Se for a mesma pessoa, corrija no Omie.'
+                                                         : 'Não encontrado no Omie da ' . strtoupper($emp) . ' — será cadastrado (é lá que ficam as contas a receber).'];
+            continue;
+        }
+        $r = OmieCompradores::cadastrar(['nome' => $pg['nome'], 'documento' => $doc, 'email' => $pg['email']], $emp);
+        if (!$r['ok']) { $falhas[] = $pg['nome'] . ': ' . $r['msg']; continue; }
+        $ok[$doc] = $r['codigo'];
+        cv_hist((int)$venda['id'], 3, 'omie_cadastro', $pg['nome'], null, 'Cadastrado no Omie ' . strtoupper($emp) . ' — cód. ' . $r['codigo'], $u);
+    }
+    return ['ok' => $ok, 'pendentes' => $pend, 'falhas' => $falhas];
+}
+
+/**
+ * Gera (ou atualiza) as contas a receber: monta a planilha da capa com o fluxo, importa pelo MESMO caminho do
+ * upload manual (cf_importar_capa → revisão na Capa Financeira) como nova versão da capa desta venda e
+ * preenche cliente (CPF/CNPJ de quem paga) e conta corrente de cada linha.
+ * @return int id da capa em revisão
+ */
+function cv_gerar_receber(int $id, array $u): int
+{
+    require_once __DIR__ . '/lib/CapaXlsx.php';
+    require_once dirname(__DIR__) . '/_importar.php';
+    $v = cv_carregar($id);
+    $empNome = '';
+    foreach (cf_config('empresas', []) as $e) if (($e['id'] ?? '') === $v['empresa']) $empNome = (string)$e['nome'];
+    $dir = cf_data_dir() . '/capas/' . date('Y/m');
+    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    $nome = Venda::nomeArquivo($v, $v['compradores'], date('Y-m-d H:i:s'));
+    $destino = $dir . '/' . date('Ymd-His') . '-venda' . $id . '-' . $nome;
+    $mapa = CapaXlsx::gerar($v, array_column(cf_pessoas(true), 'nome'), $empNome, date('d/m/Y H:i') . ' por ' . $u['nome'], $destino);
+    $capaId = cf_importar_capa($destino, (string)$v['empresa'], $nome, $u, $v['capa_id'] ? (int)$v['capa_id'] : null, false);
+    $upd = db()->prepare("UPDATE cf_lancamentos SET cliente_omie = ?, conta_corrente = ? WHERE capa_id = ? AND linha_xlsx = ? AND tipo = 'R'");
+    $ordem = Fluxo::ordenadas($v['e3']['parcelas']);
+    foreach ($mapa['receber'] as $linha => $j) {
+        $p = $ordem[$j];
+        $pg = Fluxo::pagador($p, $v['compradores']);
+        $upd->execute([$pg['documento'] !== '' ? Venda::docFormatado($pg['documento']) : null, $p['conta'] ?: null, $capaId, $linha]);
+    }
+    db()->prepare('UPDATE cv_vendas SET capa_id = ?, rev = rev + 1 WHERE id = ?')->execute([$capaId, $id]);
+    cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (em revisão na Capa Financeira)', $u);
+    return $capaId;
+}
+
+/** capas da venda (a atual e as versões anteriores) */
+function cv_capas_da_venda(?int $capaId): array
+{
+    $ids = [];
+    while ($capaId && !in_array($capaId, $ids, true)) {
+        $ids[] = $capaId;
+        $st = db()->prepare('SELECT capa_anterior_id FROM cf_capas WHERE id = ?');
+        $st->execute([$capaId]);
+        $capaId = (int)$st->fetchColumn() ?: null;
+    }
+    return $ids;
+}
+
+/**
+ * O que acontece com os títulos se a venda for cancelada: os que foram ao Omie e não têm baixa são excluídos;
+ * os que já foram pagos/recebidos ficam lá (não podem ser excluídos — tratar manualmente).
+ * Situação lida da lista de títulos do Omie (em cache); na hora de excluir, OmieEnvio::excluir confere de novo.
+ * @return array{titulos: array, capas: array, empresa: string}
+ */
+function cv_titulos_para_cancelar(array $venda): array
+{
+    $capas = cv_capas_da_venda($venda['capa_id'] ? (int)$venda['capa_id'] : null);
+    if (!$capas) return ['titulos' => [], 'capas' => [], 'empresa' => (string)$venda['empresa']];
+    $in = implode(',', array_map('intval', $capas));
+    $emp = (string)db()->query('SELECT empresa FROM cf_capas WHERE id = ' . (int)$capas[0])->fetchColumn();
+    $linhas = db()->query("SELECT * FROM cf_lancamentos WHERE capa_id IN ($in) AND codigo_integracao IS NOT NULL
+                           AND (exportacao_id IS NOT NULL OR omie_id IS NOT NULL OR status = 'exportado') ORDER BY tipo DESC, data_prevista, id")->fetchAll();
+    $out = []; $lista = [];
+    foreach ($linhas as $l) {
+        if (isset($out[$l['codigo_integracao']])) continue;
+        $tipo = $l['tipo'] === 'R' ? 'R' : 'P';
+        if (!isset($lista[$tipo])) {
+            $fake = (defined('CF_DATA_DIR') ? CF_DATA_DIR : '') . "/omie-fake-titulos-$tipo.json";   // desenvolvimento local
+            try { $lista[$tipo] = (defined('CV_OMIE_FAKE') && CV_OMIE_FAKE) ? (is_file($fake) ? json_decode((string)file_get_contents($fake), true) : ['por_codigo' => []]) : OmieEnvio::titulos($emp, $tipo); }
+            catch (Throwable $e) { $lista[$tipo] = ['erro' => $e->getMessage()]; }
+        }
+        $t = $lista[$tipo]['por_codigo'][$l['codigo_integracao']] ?? null;
+        $st = (string)($t['status'] ?? ''); $pago = (float)($t['pago'] ?? 0);
+        $baixado = $t && ($pago > 0 || preg_match('/PAG|RECEB|LIQ/i', $st));
+        $out[$l['codigo_integracao']] = ['codigo' => $l['codigo_integracao'], 'tipo' => $tipo, 'valor' => (float)$l['valor'], 'vencimento' => $l['data_prevista'],
+            'quem' => (string)$l['cf_raw'], 'status_omie' => $t ? $st : (isset($lista[$tipo]['erro']) ? 'não consegui consultar' : 'não encontrado no Omie'),
+            'pago' => $pago, 'acao' => $baixado ? 'bloqueado' : ($t ? 'excluir' : 'nada'), 'linha_id' => (int)$l['id']];
+    }
+    return ['titulos' => array_values($out), 'capas' => $capas, 'empresa' => $emp];
 }

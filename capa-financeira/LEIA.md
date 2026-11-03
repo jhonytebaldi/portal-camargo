@@ -40,3 +40,10 @@ Em vez de enviar a planilha pronta, a equipe preenche a capa no portal, por etap
   administrativos pós-processo, nomes só do cadastro de Pessoas, bônus fechando 100% e "Conclusão do processo"
   (quem concluiu recebe; o valor é descontado de linhas de comissão). Etapa 1 ganhou CEP (ViaCEP no navegador) e
   lista de bairros validada (`cf_config` 'bairros', bairro novo só com confirmação). Venda cancelada pode ser descancelada.
+- Fase 3 (pronta): etapa 3 — fluxo do cliente (`vendas/lib/Fluxo.php`, `cv_vendas.e3_dados`): parcelas com quem paga
+  (comprador ou terceiro), conta corrente (Sicoob por padrão), referência, recebida/arras, travas e "conferi com o contrato".
+  Ao concluir, gera a planilha da capa e importa pelo MESMO caminho do upload (`_importar.php` → `cf_importar_capa`), como
+  nova versão da capa da venda (em revisão); depois grava cliente (CPF/CNPJ de quem paga) e conta em cada linha.
+  Quem paga é conferido/cadastrado no Omie da EMPRESA DA VENDA (é lá que ficam as contas a receber).
+  Cancelar venda com títulos no Omie: lista os títulos, exclui os sem baixa (OmieEnvio::excluir confere de novo) e mantém os
+  pagos/recebidos; sem nada restante no Omie, descarta as capas e a etapa 3 volta a rascunho.

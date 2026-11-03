@@ -97,6 +97,7 @@ function cv_migrar(PDO $pdo): array
     };
     if (!$col('cv_vendas', 'cep')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cep VARCHAR(9) NOT NULL DEFAULT '' AFTER bairro"); $feitos[] = 'cv_vendas.cep'; }
     if (!$col('cv_vendas', 'e2_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e2_dados JSON NULL AFTER obs'); $feitos[] = 'cv_vendas.e2_dados (distribuição)'; }
+    if (!$col('cv_vendas', 'e3_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e3_dados JSON NULL AFTER e2_dados'); $feitos[] = 'cv_vendas.e3_dados (fluxo do cliente)'; }
     if (!$col('cv_vendas', 'cancelada_de')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cancelada_de VARCHAR(20) NULL AFTER status"); $feitos[] = 'cv_vendas.cancelada_de'; }
 
     // lista de bairros (validação da etapa 1) — lista do Jhony (03/11/2026) + os que a Busca já reconhece

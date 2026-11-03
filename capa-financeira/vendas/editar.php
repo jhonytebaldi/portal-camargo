@@ -13,11 +13,11 @@ $u = require_tool('capa-financeira');
 $id = (int)($_GET['id'] ?? 0);
 $venda = $id ? cv_carregar($id) : null;
 if ($id && !$venda) { http_response_code(404); portal_header('Venda', $u); echo '<p class="aviso">Venda não encontrada.</p>'; portal_footer(); exit; }
-$etapa = $venda ? max(1, min(2, (int)($_GET['etapa'] ?? 1))) : 1;
+$etapa = $venda ? max(1, min(3, (int)($_GET['etapa'] ?? 1))) : 1;
 
 $v = $venda ?? (['id' => 0, 'empresa' => '', 'construtora' => '', 'endereco' => '', 'bairro' => '', 'cep' => '', 'unidade' => '', 'cod_imovel' => '', 'status_imovel' => null, 'data_venda' => null,
                  'valor_contrato' => null, 'valor_bonus' => null, 'documentacao' => null, 'descontos' => null, 'obs' => null, 'e1_status' => 'rascunho',
-                 'e2_status' => 'rascunho', 'e3_status' => 'rascunho', 'e4_status' => 'rascunho', 'status' => 'andamento', 'rev' => 0, 'compradores' => [], 'e2' => null] + Venda::PADROES);
+                 'e2_status' => 'rascunho', 'e3_status' => 'rascunho', 'e4_status' => 'rascunho', 'status' => 'andamento', 'rev' => 0, 'compradores' => [], 'e2' => null, 'e3' => null, 'capa_id' => null] + Venda::PADROES);
 $cancelada = $v['status'] === 'cancelada';
 $hist = $venda ? cv_historico($id, 400) : [];
 
@@ -44,6 +44,7 @@ function cv_aside_comum(?array $venda, array $hist, bool $cancelada): void
             'descancelar' => '<b>descancelou a venda</b> (voltou a ' . h((string)$hh['depois']) . ')',
             'omie_cadastro', 'omie_vinculo', 'bairro_novo' => h((string)$hh['campo']) . ': ' . h((string)$hh['depois']),
             'xlsx' => 'baixou a planilha',
+            'contas_receber' => '<b>' . h((string)$hh['depois']) . '</b>',
             default => h((string)$hh['campo']) . ': ' . ((string)$hh['antes'] !== '' ? '<s>' . h((string)$hh['antes']) . '</s> → ' : '') . ((string)$hh['depois'] !== '' ? h((string)$hh['depois']) : '<i>(vazio)</i>'),
         };
         echo '<li>' . $q . $t . '</li>';
@@ -108,7 +109,7 @@ details.cv-par summary{cursor:pointer;font-size:13px;font-weight:600;color:var(-
   <?php
   $steps = [1 => 'Dados da venda', 2 => 'Distribuição das comissões', 3 => 'Fluxo do cliente e recebidos', 4 => 'Pagamentos aos corretores'];
   foreach ($steps as $n => $t) {
-      $pronta = $n <= 2;
+      $pronta = $n <= 3;
       $cls = 'cv-step' . ($n === $etapa ? ' on' : '') . (!$pronta ? ' off' : '');
       $badge = $pronta ? cv_etapa_badge($v["e{$n}_status"]) : 'em construção';
       if ($pronta && $venda && $n !== $etapa) echo '<a class="' . $cls . '" href="/capa-financeira/vendas/editar.php?id=' . $id . '&etapa=' . $n . '"><b>' . $n . ' · ' . $t . '</b>' . $badge . '</a>';
@@ -141,10 +142,41 @@ window.CV = {
 window.addEventListener('beforeunload', e => { if (CV.sujo) { e.preventDefault(); e.returnValue = ''; } });
 document.addEventListener('click', async ev => {
   if (ev.target.id === 'cv-cancelar') {
-    const motivo = prompt('Cancelar esta venda? Ela sai da lista (o histórico fica guardado e dá para descancelar depois). Informe o motivo:');
-    if (!motivo) return;
-    const j = await CV.api({acao:'cancelar', motivo});
-    if (j.ok) { CV.sujo = false; location.href = '/capa-financeira/vendas/'; } else CV.msg('erro', CV.lista(j.erros || []));
+    const p = await CV.api({acao:'cancelar_previa'});
+    if (!p.ok) { CV.msg('erro', CV.lista(p.erros || [])); return; }
+    const enviados = p.titulos.filter(t => t.acao !== 'nada');
+    if (!enviados.length) {
+      const motivo = prompt('Cancelar esta venda? Ela sai da lista (o histórico fica guardado e dá para descancelar depois).'
+        + (p.capas.length ? '\n\nAs contas geradas na Capa Financeira (ainda não enviadas ao Omie) serão descartadas — ao descancelar, conclua a etapa 3 de novo.' : '') + '\n\nInforme o motivo:');
+      if (!motivo) return;
+      const j = await CV.api({acao:'cancelar', motivo});
+      if (j.ok) { CV.sujo = false; location.href = '/capa-financeira/vendas/'; } else CV.msg('erro', CV.lista(j.erros || []));
+      return;
+    }
+    const bloq = enviados.filter(t => t.acao === 'bloqueado');
+    const m = document.createElement('div'); m.className = 'cv-modal';
+    m.innerHTML = '<div><h2 style="margin-top:0">Cancelar a venda — títulos no Omie</h2>'
+      + '<p>Esta venda já tem ' + enviados.length + ' título(s) enviado(s) ao Omie. Ao cancelar:</p>'
+      + '<table class="cv-tab"><thead><tr><th>Título</th><th>Quem</th><th>Vencimento</th><th class="n">Valor</th><th>No Omie</th><th>O que acontece</th></tr></thead><tbody>'
+      + enviados.map(t => '<tr><td>' + CV.esc(t.codigo) + ' (' + (t.tipo === 'R' ? 'receber' : 'pagar') + ')</td><td>' + CV.esc(t.quem) + '</td><td>' + CV.esc((t.vencimento || '').split('-').reverse().join('/')) + '</td><td class="n">' + CV.brl(t.valor) + '</td><td>' + CV.esc(t.status_omie) + '</td><td>'
+          + (t.acao === 'bloqueado' ? '<b style="color:var(--clay)">NÃO pode ser excluído — já tem baixa (pago/recebido). Fica no Omie; trate manualmente.</b>' : 'será <b>excluído</b> do Omie') + '</td></tr>').join('')
+      + '</tbody></table>'
+      + (bloq.length ? '<p class="cv-msg erro">' + bloq.length + ' título(s) já tiveram baixa e continuarão no Omie. A capa desta venda não será descartada.</p>' : '<p class="cf-dica">As capas desta venda serão descartadas; ao descancelar, conclua a etapa 3 de novo para gerar as contas.</p>')
+      + '<label class="cv-f" style="display:block;margin-top:10px">Motivo do cancelamento<textarea data-motivo rows="2"></textarea></label>'
+      + '<label style="display:flex;gap:6px;margin-top:8px;font-size:13px"><input type="checkbox" data-entendi> Entendi — excluir no Omie os títulos sem baixa e cancelar a venda</label>'
+      + '<div class="cv-botoes" style="margin-top:12px"><button type="button" class="btn cf-btn-sec cf-btn-perigo" data-ok>Cancelar venda</button><button type="button" class="btn cf-btn-sec" data-x>Voltar</button></div></div>';
+    document.body.appendChild(m);
+    m.querySelector('[data-x]').onclick = () => m.remove();
+    m.querySelector('[data-ok]').onclick = async () => {
+      const motivo = m.querySelector('[data-motivo]').value.trim();
+      if (!motivo) { alert('Informe o motivo.'); return; }
+      if (!m.querySelector('[data-entendi]').checked) { alert('Marque que entendeu o que vai acontecer no Omie.'); return; }
+      m.querySelectorAll('button').forEach(b => b.disabled = true);
+      const j = await CV.api({acao:'cancelar', motivo, confirmado: true});
+      m.remove();
+      if (j.ok) { CV.sujo = false; alert('Venda cancelada.' + (j.resultado && j.resultado.length ? '\n\nOmie:\n' + j.resultado.join('\n') : '')); location.href = '/capa-financeira/vendas/'; }
+      else CV.msg('erro', CV.lista(j.erros || []));
+    };
   }
   if (ev.target.id === 'cv-descancelar') {
     if (!confirm('Descancelar esta venda? Ela volta ao estado em que estava antes do cancelamento.')) return;
@@ -154,5 +186,5 @@ document.addEventListener('click', async ev => {
 });
 </script>
 
-<?php require __DIR__ . ($etapa === 2 ? '/etapa2.inc.php' : '/etapa1.inc.php'); ?>
+<?php require __DIR__ . ['', '/etapa1.inc.php', '/etapa2.inc.php', '/etapa3.inc.php'][$etapa]; ?>
 <?php portal_footer();

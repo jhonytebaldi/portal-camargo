@@ -28,24 +28,24 @@ final class OmieCompradores
     private static function fakeArq(): string { return (defined('CF_DATA_DIR') ? CF_DATA_DIR : sys_get_temp_dir()) . '/omie-fake-clientes.json'; }
     private static function fakeLer(): array { $f = self::fakeArq(); return is_file($f) ? (json_decode((string)file_get_contents($f), true) ?: []) : []; }
 
-    public static function disponivel(): bool
+    public static function disponivel(string $empresa = self::EMPRESA): bool
     {
-        return self::fake() || isset(OmieApi::contas()[self::EMPRESA]);
+        return self::fake() || isset(OmieApi::contas()[$empresa]);
     }
 
     /**
      * @return array{status: 'ok'|'so_nome'|'varios'|'nao'|'erro', codigo: ?int, nome: ?string, doc_omie: ?string, msg: string}
      */
-    public static function localizar(string $doc, string $nome): array
+    public static function localizar(string $doc, string $nome, string $empresa = self::EMPRESA): array
     {
-        if (!self::disponivel()) return ['status' => 'erro', 'codigo' => null, 'nome' => null, 'doc_omie' => null, 'msg' => 'Omie da Vertical não configurado no portal (OMIE_CONTAS) — não dá para conferir o comprador.'];
+        if (!self::disponivel($empresa)) return ['status' => 'erro', 'codigo' => null, 'nome' => null, 'doc_omie' => null, 'msg' => 'Omie da ' . strtoupper($empresa) . ' não configurado no portal (OMIE_CONTAS) — não dá para conferir.'];
         if (self::fake()) {
             foreach (self::fakeLer() as $c) if ($c['doc'] === $doc) return ['status' => 'ok', 'codigo' => (int)$c['codigo'], 'nome' => $c['nome'], 'doc_omie' => $c['doc'], 'msg' => 'cadastrado no Omie: ' . $c['nome'] . ' (cód. ' . $c['codigo'] . ')'];
             foreach (self::fakeLer() as $c) if (Venda::chave($c['nome']) === Venda::chave($nome)) return ['status' => 'so_nome', 'codigo' => (int)$c['codigo'], 'nome' => $c['nome'], 'doc_omie' => $c['doc'], 'msg' => 'existe cadastro com esse nome e outro documento'];
             return ['status' => 'nao', 'codigo' => null, 'nome' => null, 'doc_omie' => null, 'msg' => 'NÃO encontrado no Omie'];
         }
         try {
-            $r = OmieEnvio::localizarCadastro(self::EMPRESA, Venda::docFormatado($doc), $nome);
+            $r = OmieEnvio::localizarCadastro($empresa, Venda::docFormatado($doc), $nome);
         } catch (Throwable $e) {
             return ['status' => 'erro', 'codigo' => null, 'nome' => null, 'doc_omie' => null, 'msg' => 'Não consegui consultar o Omie agora: ' . $e->getMessage()];
         }
@@ -70,7 +70,7 @@ final class OmieCompradores
     }
 
     /** @return array{ok: bool, codigo: ?int, msg: string} */
-    public static function cadastrar(array $c): array
+    public static function cadastrar(array $c, string $empresa = self::EMPRESA): array
     {
         $p = self::pedido($c);
         if (self::fake()) {
@@ -80,15 +80,15 @@ final class OmieCompradores
             return ['ok' => true, 'codigo' => $cod, 'msg' => 'cadastrado (simulação local)'];
         }
         try {
-            $r = OmieApi::call(self::EMPRESA, 'geral/clientes/', 'IncluirCliente', $p);
+            $r = OmieApi::call($empresa, 'geral/clientes/', 'IncluirCliente', $p);
             $cod = (int)($r['codigo_cliente_omie'] ?? 0);
             if (!$cod) return ['ok' => false, 'codigo' => null, 'msg' => 'Omie não devolveu o código do cadastro: ' . json_encode($r, JSON_UNESCAPED_UNICODE)];
-            self::lembrar($cod, $p, $c['documento']);
-            return ['ok' => true, 'codigo' => $cod, 'msg' => 'cadastrado no Omie da Vertical (cód. ' . $cod . ')'];
+            self::lembrar($cod, $p, $c['documento'], $empresa);
+            return ['ok' => true, 'codigo' => $cod, 'msg' => 'cadastrado no Omie da ' . strtoupper($empresa) . ' (cód. ' . $cod . ')'];
         } catch (Throwable $e) {
             // já existe (ex.: cadastrado por outra pessoa entre a conferência e a conclusão) → localizar de novo
             if (preg_match('/j[áa] (est[áa] )?cadastrad|j[áa] existe|Client-102/iu', $e->getMessage())) {
-                $l = self::localizar($c['documento'], $c['nome']);
+                $l = self::localizar($c['documento'], $c['nome'], $empresa);
                 if ($l['status'] === 'ok') return ['ok' => true, 'codigo' => $l['codigo'], 'msg' => 'já estava cadastrado no Omie (cód. ' . $l['codigo'] . ')'];
             }
             return ['ok' => false, 'codigo' => null, 'msg' => 'Omie recusou o cadastro: ' . $e->getMessage()];
@@ -96,10 +96,10 @@ final class OmieCompradores
     }
 
     /** acrescenta o cadastro recém-criado na lista em cache da Capa Financeira (mesmo arquivo do OmieEnvio::cadastros) */
-    private static function lembrar(int $cod, array $p, string $doc): void
+    private static function lembrar(int $cod, array $p, string $doc, string $empresa = self::EMPRESA): void
     {
         $d = (defined('CF_DATA_DIR') ? CF_DATA_DIR : dirname(__DIR__, 4) . '/capa-dados') . '/omie-cache';
-        $f = $d . '/cadastros-' . self::EMPRESA . '.json';
+        $f = $d . '/cadastros-' . $empresa . '.json';
         if (!is_file($f)) return;
         $j = json_decode((string)file_get_contents($f), true);
         if (!is_array($j)) return;
