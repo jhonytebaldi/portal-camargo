@@ -273,6 +273,7 @@ case 'confirmar':
         $upd = $pdo->prepare("UPDATE cf_lancamentos SET status = ?, codigo_integracao = ?, alteracao_pos_exportacao = ? WHERE id = ?");
         $ant = $pdo->prepare('SELECT * FROM cf_lancamentos WHERE id = ?');
         $subst = $pdo->prepare("UPDATE cf_lancamentos SET status = 'substituido' WHERE id = ? AND status = 'confirmado'");
+        $herda = $pdo->prepare('UPDATE cf_lancamentos SET exportacao_id = ?, omie_id = ?, snapshot_exp = ?, recibo_id = ? WHERE id = ?');
         foreach ($linhas as $l) {
             $codigo = null; $posExp = (int)$l['alteracao_pos_exportacao']; $novoStatus = 'confirmado';
             if ($l['codigo_integracao']) {
@@ -286,8 +287,17 @@ case 'confirmar':
                 $ant->execute([$l['dup_de']]); $a = $ant->fetch();
                 if ($a && $a['codigo_integracao']) {
                     $codigo = $a['codigo_integracao'];
-                    if ($a['status'] === 'exportado' && $l['dup_tipo'] === 'ALTERADA') $posExp = 1;
-                    $subst->execute([$a['id']]);
+                    if ($a['status'] === 'exportado' || $a['exportacao_id'] || $a['omie_id']) {
+                        // já está no Omie: a linha da versão nova HERDA o envio (não volta para a fila de exportação nem gera
+                        // recibo de novo). Se mudou algo relevante desde o envio, fica marcada como "alterada depois de exportar".
+                        $novoStatus = 'exportado';
+                        $snap = json_decode((string)$a['snapshot_exp'], true);
+                        $posExp = $snap ? (cf_diferencas_exp($snap, $l) ? 1 : (int)$a['alteracao_pos_exportacao']) : ($l['dup_tipo'] === 'ALTERADA' ? 1 : (int)$a['alteracao_pos_exportacao']);
+                        $herda->execute([$a['exportacao_id'], $a['omie_id'], $a['snapshot_exp'], $a['recibo_id'] ?? null, $l['id']]);
+                        $pdo->prepare("UPDATE cf_lancamentos SET status = 'substituido' WHERE id = ?")->execute([$a['id']]);
+                    } else {
+                        $subst->execute([$a['id']]);
+                    }
                 }
             }
             if ($codigo === null) {
