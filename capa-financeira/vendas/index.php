@@ -50,7 +50,7 @@ portal_header('Vendas — capa em etapas', $u);
     </select>
     <button class="btn" type="submit">Buscar</button>
   </form>
-  <div class="cf-acoes"><a class="btn" href="/capa-financeira/vendas/editar.php">+ Nova venda</a></div>
+  <div class="cf-acoes"><a class="btn cf-btn-sec" href="/capa-financeira/vendas/retencoes.php">Retenções</a><a class="btn" href="/capa-financeira/vendas/editar.php">+ Nova venda</a></div>
 </div>
 
 <?php if (!$vendas): ?>
