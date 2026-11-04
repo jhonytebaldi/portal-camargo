@@ -68,14 +68,14 @@ final class CapaXlsx
         };
         $num = fn($v) => $v === null ? 0.0 : (float)$v;
         $put('contrato', 'VALOR CONTRATO', $num($venda['valor_contrato']), self::ENT + $brl);
-        $put('bonus_in', 'BÔNUS', $num($venda['valor_bonus']), self::ENT + $brl, null, [], 'venda maior — sai do contrato e vira o bônus');
+        $put('bonus_in', 'BÔNUS', $num($venda['valor_bonus']), self::ENT + $brl);
         $put('doc', 'DOCUMENTAÇÃO', $num($venda['documentacao']), self::ENT + $brl);
         $put('desc', 'DESCONTOS ADICIONAIS', $num($venda['descontos']), self::ENT + $brl);
         $b = function (string $k) use (&$R): string { return 'B' . $R[$k]; };    // por referência: $R cresce a cada linha
         $cc = function (string $k) use (&$R): string { return 'C' . $R[$k]; };
         $put('vgv', 'VALOR PARA CALCULO DA COMISSÃO DA IMOB e VGV', ['f' => "{$b('contrato')}-{$b('bonus_in')}-{$b('doc')}-{$b('desc')}", 'v' => $calc['valor_calculo']], $brl + ['bold' => true]);
         $R['base'] = $r;
-        $put('base', 'COMISSÃO BASE CORRETORES', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['comissao_base']], $brl, (float)$venda['pct_corretores'], self::ENT + ['fmt' => 'pct'], 'TUDO CONFORME ENTRAR');
+        $put('base', 'COMISSÃO BASE CORRETORES', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['comissao_base']], $brl, (float)$venda['pct_corretores'], self::ENT + ['fmt' => 'pct']);
         $R['fundo'] = $r;
         $put('fundo', 'COMISSÃO IMOB FUNDO DE MKT', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['fundo']], $brl, (float)$venda['pct_fundo'], self::ENT + ['fmt' => 'pct']);
         $R['total'] = $r;
