@@ -71,10 +71,16 @@ function cv_barra_acoes(int $etapa, ?array $venda, bool $concluida, bool $cancel
     echo '</div></div>';
 }
 
-portal_header($venda ? 'Venda #' . $id : 'Nova venda', $u);
+// título: compradores × construtora (o número da venda vai pequeno ao lado)
+$nomesC = array_values(array_filter(array_map(fn($c) => trim((string)($c['nome'] ?? '')), $v['compradores'])));
+$eC = $nomesC && mb_strtoupper(implode('', $nomesC)) === implode('', $nomesC) ? ' E ' : ' e ';   // nomes em maiúsculas → "E"
+$compTxt = count($nomesC) <= 2 ? implode($eC, $nomesC) : implode(', ', array_slice($nomesC, 0, -1)) . $eC . end($nomesC);
+$tituloVenda = trim($compTxt . ($compTxt !== '' && trim((string)$v['construtora']) !== '' ? ' × ' : '') . trim((string)$v['construtora']));
+portal_header($venda ? ($tituloVenda !== '' ? $tituloVenda . ' · #' . $id : 'Venda #' . $id) : 'Nova venda', $u);
 ?>
 <style>
 main.wrap{max-width:1400px}
+.cv-num-venda{font-size:14px;font-weight:500;color:var(--mute);margin-left:8px;white-space:nowrap}
 .cv-steps{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px}
 .cv-step{flex:1;min-width:200px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--mute);text-decoration:none}
 .cv-step b{display:block;color:var(--ink);font-size:14px}.cv-step.on{border:2px solid var(--moss);background:#fff}.cv-step.off{opacity:.55}
@@ -121,7 +127,7 @@ details.cv-par summary{cursor:pointer;font-size:13px;font-weight:600;color:var(-
 .cv-bloco-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}.cv-bloco-h small{color:var(--mute);font-weight:500}
 .cv-desc-linha{display:block;font-size:11.5px;color:var(--clay)}
 </style>
-<?php cf_cabecalho($venda ? 'Venda #' . $id . ($cancelada ? ' <span class="cf-status cf-st-descartada">cancelada</span>' : '') : 'Nova venda',
+<?php cf_cabecalho($venda ? ($tituloVenda !== '' ? h($tituloVenda) . ' <small class="cv-num-venda">venda #' . $id . '</small>' : 'Venda #' . $id) . ($cancelada ? ' <span class="cf-status cf-st-descartada">cancelada</span>' : '') : 'Nova venda',
     'Preencha por partes: dá pra salvar rascunho a qualquer momento e continuar depois. Cada alteração fica registrada no histórico com o seu nome.',
     [['Capa Financeira', '/capa-financeira/'], ['Vendas', '/capa-financeira/vendas/'], [$venda ? '#' . $id : 'Nova', null]], 'vendas'); ?>
 
