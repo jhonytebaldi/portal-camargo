@@ -157,12 +157,18 @@ try {
         }
         if ($acao === 'liberar4') {
             if ($base || $calc['erros']) $resp(['ok' => false, 'erros' => array_merge($base, $calc['erros']), 'msg' => 'Corrija antes de liberar:']);
-            $err = [];
+            $err = []; $faltaE = [];
             foreach ($chaves as $k) {
                 $p = $porChave[$k] ?? null;
                 if (!$p) { $err[] = 'Um dos pagamentos marcados não existe mais no cálculo (recarregue a página).'; continue; }
-                if (!$p['data']) $err[] = $rotP($p) . ': sem data de pagamento — informe a data da etapa ou da linha.';
+                $etP = array_column($calc['etapas'], null, 'chave')[$p['etapa']] ?? [];
+                if (!$p['data']) $faltaE[$p['etapa']]['data'][] = $p['nome'];
+                if (!empty($etP['exige_condicao']) && trim((string)$p['condicao']) === '') $faltaE[$p['etapa']]['condição'][] = $p['nome'];
                 if ($p['valor'] <= 0) $err[] = $rotP($p) . ': valor zerado.';
+            }
+            foreach ($faltaE as $etK => $f) {   // agrupado por etapa (lista curta)
+                $et = array_column($calc['etapas'], null, 'chave')[$etK] ?? ['rotulo' => $etK, 'travado' => false];
+                $err[] = 'Etapa ' . $et['rotulo'] . (!empty($et['travado']) ? ' (travada)' : '') . ': informe ' . implode(' e ', array_map(fn($c, $ns) => 'a ' . $c . ' (' . count($ns) . ' pagamento' . (count($ns) > 1 ? 's' : '') . ')', array_keys($f), $f)) . ' — na etapa ou linha a linha.';
             }
             if ($err) $resp(['ok' => false, 'erros' => $err, 'msg' => 'Não liberei nada:']);
             $sts = cv_status_pagamentos($venda);

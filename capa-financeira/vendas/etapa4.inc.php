@@ -115,13 +115,14 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
     else box.innerHTML = c.etapas.map(e => {
       const ps = c.pagamentos.filter(p => p.etapa === e.chave), k = esc(e.chave), cf = cfg[e.chave] || {};
       const marcaveis = ps.filter(podeMarcar);
-      const semData = ps.filter(p => !p.data).length;
+      const semData = ps.filter(p => !p.data || (e.exige_condicao && !p.condicao)).length;
       return '<section class="cv-et ' + (semData ? 'manual' : 'ok') + '">'
-        + '<div class="cv-et-h"><h3>' + esc(e.rotulo) + '</h3><small>' + (e.bonus ? 'bônus · na última parcela do cliente' : 'cliente atinge ' + CV.pc(e.pct_preenchido) + ' da comissão base') + ' · líquido da etapa ' + brl(e.liquido) + '</small></div>'
+        + '<div class="cv-et-h"><h3>' + esc(e.rotulo) + '</h3><small>' + (e.bonus ? (e.bonus_travado ? 'metade do bônus · travada (pré-reserva)' : 'bônus · na última parcela do cliente') : e.limitado ? 'paga até exatamente ' + CV.pc(e.pct_preenchido) + ' (trava) · na parcela o cliente atingiu ' + CV.pc(e.pct_cliente) : 'cliente atinge ' + CV.pc(e.pct_preenchido) + ' da comissão base') + (e.travado ? ' · <b style="color:var(--clay)">travada</b>' : '') + ' · líquido da etapa ' + brl(e.liquido) + '</small></div>'
         + '<div class="cv-et-dt">'
         + '<div><label>Cliente paga em</label><div class="v">' + esc(dbr(e.data_cliente)) + '</div></div>'
         + '<div><label>Data sugerida</label><div class="v">' + (e.exige_manual ? '<s style="color:var(--mute)">' + esc(dbr(e.data_sugerida)) + '</s>' : esc(dbr(e.data_sugerida))) + '</div></div>'
-        + '<label>Condição da etapa <small>(todas as linhas)</small><input list="cv-conds" data-cond="' + k + '" value="' + esc(cf.condicao || '') + '" placeholder="ex.: SE ASSINAR CONTRATO"></label>'
+        + '<label>Condição da etapa' + (e.exige_condicao ? ' <b style="color:var(--clay)">obrigatória</b>' : ' <small>(todas as linhas)</small>') + '<input list="cv-conds" data-cond="' + k + '" value="' + esc(cf.condicao || '') + '" placeholder="ex.: SE ASSINAR CONTRATO"'
+        + (e.exige_condicao && !e.condicao && ps.some(p => !p.condicao) ? ' class="cv-erro"' : '') + '></label>'
         + '<label>Data de todas as linhas' + (e.exige_manual ? ' <b style="color:var(--clay)">obrigatória</b>' : ' <small>(opcional)</small>') + '<input type="date" data-dm="' + k + '" value="' + esc(cf.data_manual || '') + '"'
         + (e.exige_manual && !e.data_manual ? ' class="cv-erro"' : '') + '>' + (e.motivo_manual ? '<span class="cv-sug">' + esc(e.motivo_manual) + '</span>' : '') + '</label>'
         + '</div>'
