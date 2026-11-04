@@ -89,6 +89,26 @@ final class Pagamentos
         if (!$parc || $B <= 0) return ['etapas' => [], 'erros' => ['Sem fluxo do cliente (etapa 3) ou sem comissão (etapa 1).']];
         $etapas = []; $coberto = 0.0; $acum = 0.0;
         $pend = self::GATILHOS;
+        // trava: comissão paga até EXATAMENTE o limite (o que a parcela passar escorre para a etapa seguinte)
+        [$cap, $capKey] = self::limiteTrava($venda['e3']['travas'] ?? []);
+        $mk = function (bool $arras, array $hs, string $data, float $frac, float $preen, bool $limitado = false): array {
+            $pcs = array_map(fn($x) => $x . '%', $hs);
+            return ['chave' => $arras ? 'arras' . ($hs ? '+' . implode('+', $hs) : '') : implode('+', $hs),
+                    'rotulo' => $arras ? 'Arras' . ($pcs ? ' + ' . implode(' + ', $pcs) : '') : implode(' + ', $pcs),
+                    'gatilhos' => $pcs, 'data_cliente' => $data, 'frac' => $frac, 'pct_preenchido' => $preen, 'limitado' => $limitado];
+        };
+        $push = function (bool $arras, array $hit, string $data, float $f) use (&$etapas, &$coberto, $cap, $capKey, $mk) {
+            if ($cap !== null && in_array($capKey, $hit, true) && $f > $cap + 1e-9) {
+                $ate = array_values(array_filter($hit, fn($k) => self::GATILHOS[$k] <= $cap + 1e-9));
+                $dep = array_values(array_filter($hit, fn($k) => self::GATILHOS[$k] > $cap + 1e-9));
+                $etapas[] = $mk($arras, $ate, $data, $cap - $coberto, $cap, true) + ['pct_cliente' => $f];
+                $coberto = $cap;
+                if ($dep) { $etapas[] = $mk(false, $dep, $data, $f - $cap, $f); $coberto = $f; }
+                return;
+            }
+            $etapas[] = $mk($arras, $hit, $data, $f - $coberto, $f);
+            $coberto = $f;
+        };
         // arras
         $arras = array_values(array_filter($parc, fn($p) => !empty($p['arras'])));
         if ($arras) {
@@ -96,10 +116,9 @@ final class Pagamentos
             $dataA = max(array_map(fn($p) => (string)$p['data'], $arras));
             $f = min(1, $A / $B);
             $junto = [];
-            foreach ($pend as $k => $g) if ($f + 1e-9 >= $g) { $junto[] = $k . '%'; unset($pend[$k]); }
-            $etapas[] = ['chave' => 'arras' . ($junto ? '+' . implode('+', array_map(fn($x) => rtrim($x, '%'), $junto)) : ''), 'rotulo' => 'Arras' . ($junto ? ' + ' . implode(' + ', $junto) : ''),
-                         'gatilhos' => $junto, 'data_cliente' => $dataA, 'frac' => $f, 'pct_preenchido' => $f];
-            $coberto = $f; $acum = $A;
+            foreach ($pend as $k => $g) if ($f + 1e-9 >= $g) { $junto[] = (string)$k; unset($pend[$k]); }
+            $push(true, $junto, $dataA, $f);
+            $acum = $A;
         }
         foreach ($parc as $p) {
             if (!$pend) break;
@@ -107,12 +126,8 @@ final class Pagamentos
             $acum += (float)$p['valor'];
             $f = min(1, $acum / $B);
             $hit = [];
-            foreach ($pend as $k => $g) if ($f + 1e-9 >= $g) { $hit[] = $k; unset($pend[$k]); }
-            if ($hit) {
-                $etapas[] = ['chave' => implode('+', $hit), 'rotulo' => implode(' + ', array_map(fn($x) => $x . '%', $hit)), 'gatilhos' => array_map(fn($x) => $x . '%', $hit),
-                             'data_cliente' => (string)$p['data'], 'frac' => $f - $coberto, 'pct_preenchido' => $f];
-                $coberto = $f;
-            }
+            foreach ($pend as $k => $g) if ($f + 1e-9 >= $g) { $hit[] = (string)$k; unset($pend[$k]); }
+            if ($hit) $push(false, $hit, (string)$p['data'], $f);
         }
         if ($pend) $erros[] = 'O fluxo do cliente não chega a 100% da comissão base dos corretores — confira a etapa 3.';
         $nf = (float)$venda['pct_nf'];
@@ -127,10 +142,24 @@ final class Pagamentos
         unset($e);
         if ($c1['bonus'] > 0) {
             $quit = max(array_map(fn($p) => (string)$p['data'], $parc));
-            $etapas[] = ['chave' => 'bonus', 'rotulo' => 'Bônus (quitação)', 'gatilhos' => [], 'data_cliente' => $quit, 'frac' => 0, 'pct_preenchido' => 1,
-                         'bruto' => (float)$c1['bonus'], 'liquido' => (float)$c1['bonus_distribuicao'], 'ultima_comissao' => false, 'bonus' => true, 'tem50' => false];
+            $base = ['gatilhos' => [], 'data_cliente' => $quit, 'frac' => 0, 'pct_preenchido' => 1, 'ultima_comissao' => false, 'bonus' => true, 'tem50' => false, 'limitado' => false];
+            if (in_array('PRE_RESERVA', $venda['e3']['travas'] ?? [], true)) {
+                // pré-reserva: bônus em 2 — metade na quitação, metade travada (data e condição manuais)
+                $etapas[] = $base + ['chave' => 'bonus', 'rotulo' => 'Bônus — 1ª metade (quitação)', 'parte' => 0.5, 'bruto' => (float)$c1['bonus'] / 2, 'liquido' => (float)$c1['bonus_distribuicao'] / 2, 'bonus_travado' => false];
+                $etapas[] = $base + ['chave' => 'bonus2', 'rotulo' => 'Bônus — 2ª metade', 'parte' => 0.5, 'bruto' => (float)$c1['bonus'] / 2, 'liquido' => (float)$c1['bonus_distribuicao'] / 2, 'bonus_travado' => true];
+            } else {
+                $etapas[] = $base + ['chave' => 'bonus', 'rotulo' => 'Bônus (quitação)', 'parte' => 1.0, 'bruto' => (float)$c1['bonus'], 'liquido' => (float)$c1['bonus_distribuicao'], 'bonus_travado' => false];
+            }
         }
         return ['etapas' => $etapas, 'erros' => $erros];
+    }
+
+    /** limite da comissão com trava: Pré-Reserva → 50%; IR Futuro / abaixo de 70% → 75%; sem trava → [null, null] */
+    public static function limiteTrava(array $travas): array
+    {
+        if (in_array('PRE_RESERVA', $travas, true)) return [0.5, '50'];
+        if (array_intersect(['IR_FUTURO', 'ABAIXO_70'], $travas)) return [0.75, '75'];
+        return [null, null];
     }
 
     /* ---------------- pagamentos ---------------- */
@@ -156,15 +185,20 @@ final class Pagamentos
         $e4 = ($e4 ?? []) + ['etapas' => [], 'liberados' => [], 'linhas' => []];   // linhas = ajustes manuais por pagamento {chave: {data, valor, condicao, obs}}
         $idx50 = null;
         foreach ($etapas as $i => $e) if ($e['tem50']) { $idx50 = $i; break; }
+        [$cap, $capKey] = self::limiteTrava($travas);
+        $idxCap = null;   // etapa onde a comissão para (as seguintes ficam travadas)
+        if ($cap !== null) foreach ($etapas as $i => $e) if (!$e['bonus'] && in_array($capKey . '%', $e['gatilhos'], true)) { $idxCap = $i; break; }
         // datas: sugerida, manual exigida?
         foreach ($etapas as $i => &$e) {
             $cfg = $e4['etapas'][$e['chave']] ?? [];
             $e['condicao'] = (string)($cfg['condicao'] ?? '');
             $e['data_manual'] = $cfg['data_manual'] ?? null;
             $e['data_sugerida'] = $e['data_cliente'] ? self::dataPagamento($e['data_cliente'], $feriados) : null;
-            $porTrava = $travas && !$e['bonus'] && $idx50 !== null && $i > $idx50;
+            $porTrava = $e['bonus'] ? !empty($e['bonus_travado']) : ($idxCap !== null && $i > $idxCap);
+            $e['travado'] = $porTrava;
             $e['exige_manual'] = $porTrava || $e['condicao'] !== '';
-            $e['motivo_manual'] = $porTrava ? 'trava: ' . implode(', ', array_map(fn($t) => Fluxo::TRAVAS[$t], $travas)) : ($e['condicao'] !== '' ? 'condição: ' . $e['condicao'] : '');
+            $e['exige_condicao'] = $porTrava;
+            $e['motivo_manual'] = $porTrava ? 'trava: ' . implode(', ', array_map(fn($t) => Fluxo::TRAVAS[$t], $travas)) . ' — data e condição obrigatórias' : ($e['condicao'] !== '' ? 'condição: ' . $e['condicao'] : '');
             $e['data'] = $e['data_manual'] ?: ($e['exige_manual'] ? null : $e['data_sugerida']);
         }
         unset($e);
@@ -190,7 +224,7 @@ final class Pagamentos
                     foreach ($com as $et) $add($et, 'COMISSAO', $l, $p * $et['liquido']);
                 }
             } elseif ($l['bloco'] === 'bonus') {
-                foreach ($etapas as $et) if ($et['bonus']) $add($et, 'BONUS', $l, (float)$l['pct'] * (float)$c1['bonus_distribuicao']);
+                foreach ($etapas as $et) if ($et['bonus']) $add($et, 'BONUS', $l, (float)$l['pct'] * (float)$c1['bonus_distribuicao'] * (float)($et['parte'] ?? 1));
             }
         }
         // conclusão do processo: desconto no 1º pagamento da linha (se cobrir) senão no 2º; quem concluiu recebe na mesma etapa
@@ -249,6 +283,10 @@ final class Pagamentos
         $total = array_sum(array_column($pags, 'valor'));
         if ($total - $previsto > 0.01) $erros[] = 'Os pagamentos somam ' . Distribuicao::brl($total) . ', MAIS que a distribuição da etapa 2 (' . Distribuicao::brl($previsto) . ')' . (array_filter($pags, fn($p) => in_array('valor', $p['editado'], true)) ? ' — algum valor ajustado à mão passou do calculado: tire a diferença de outra linha ou corrija a distribuição na etapa 2.' : '.');
         elseif ($previsto - $total > 0.05 * max(1, count($pags))) $avisos[] = 'Os pagamentos somam ' . Distribuicao::brl($total) . ' e a distribuição da etapa 2 ' . Distribuicao::brl($previsto) . ' — diferença maior que os centavos de arredondamento.';
+        foreach ($etapas as $e) if (!empty($e['exige_condicao'])) {
+            $semC = count(array_filter($pags, fn($p) => $p['etapa'] === $e['chave'] && trim((string)$p['condicao']) === ''));
+            if ($semC) $avisos[] = 'Etapa ' . $e['rotulo'] . ' (travada): informe a condição — ' . $semC . ' pagamento(s) sem condição.';
+        }
         foreach ($etapas as $e) {
             $sem = count(array_filter($pags, fn($p) => $p['etapa'] === $e['chave'] && !$p['data']));
             if ($sem) $avisos[] = 'Etapa ' . $e['rotulo'] . ': informe a data de pagamento' . ($e['motivo_manual'] ? ' (' . $e['motivo_manual'] . ')' : '') . ' — ' . $sem . ' pagamento(s) sem data.';

@@ -19,7 +19,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   <?php if ($v['e1_status'] === 'rascunho'): ?><div class="aviso" style="margin-bottom:10px">A etapa 1 ainda não foi concluída — dá para preencher o fluxo, mas só dá para concluir depois dela.</div><?php endif; ?>
   <section class="card">
     <h2>Travas de pagamento</h2>
-    <p class="cf-dica" style="margin-top:0">Com qualquer trava, a etapa 4 só sugere datas de pagamento aos corretores até o gatilho de 50% — os demais pedem data manual.</p>
+    <p class="cf-dica" style="margin-top:0"><b>Pré-Reserva</b>: comissão paga só até exatamente 50% (75% e 100% travados) e o bônus em 2 — metade na quitação, metade travada. <b>IR Futuro / abaixo de 70%</b>: comissão paga até exatamente 75% (100% travado); bônus normal. Pagamento travado = data e condição obrigatórias na etapa 4.</p>
     <div class="cv-radio" style="flex-wrap:wrap">
       <?php foreach (Fluxo::TRAVAS as $k => $t): ?><label><input type="checkbox" name="trava" value="<?= $k ?>"<?= in_array($k, $e3['travas'], true) ? ' checked' : '' ?>> <?= h($t) ?></label><?php endforeach; ?>
     </div>
