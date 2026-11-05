@@ -35,7 +35,7 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
   <?php if ($faltam): ?><div class="aviso" style="margin-bottom:10px">Falta concluir <?= h(implode(' e ', $faltam)) ?> — dá para ver o cálculo e ajustar datas, mas só dá para liberar pagamentos depois.</div><?php endif; ?>
   <section class="card">
     <div class="cv-bloco-h"><h2>Pagamentos aos corretores</h2><small><?= $podeLiberar ? 'você pode liberar pagamentos' : 'só o financeiro libera — aqui você ajusta datas e condições' ?></small></div>
-    <p class="cf-dica" style="margin-top:0">Cada etapa paga quando o cliente atinge Arras / 50% / 75% / 100% da comissão base. Data sugerida: cliente pagou até segunda → quinta da mesma semana; de terça a domingo → quinta da semana seguinte (quinta feriado → quarta).
+    <p class="cf-dica" style="margin-top:0"><b>Método: <?= h(Pagamentos::METODOS[Pagamentos::metodo($v)]) ?></b> · Cada etapa paga quando o cliente atinge <?= Pagamentos::metodo($v) === 'antigo' ? 'Sinal / 50% / 80% / 100%' : 'Arras / 50% / 75% / 100%' ?> da comissão base. Data sugerida: cliente pagou até segunda → quinta da mesma semana; de terça a domingo → quinta da semana seguinte (quinta feriado → quarta).
       Travas e condições pedem data manual. Para mudar uma linha só, clique no ✎ (ou dê dois cliques na linha). “Liberar todos” coloca todas as contas a pagar na capa da venda (em revisão na Capa Financeira), de onde vão ao Omie — igual às contas a receber.</p>
     <div class="cv-res" id="cv-res"></div>
   </section>
@@ -121,7 +121,7 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
         + '<div class="cv-et-dt">'
         + '<div><label>Cliente paga em</label><div class="v">' + esc(dbr(e.data_cliente)) + '</div></div>'
         + '<div><label>Data sugerida</label><div class="v">' + (e.exige_manual ? '<s style="color:var(--mute)">' + esc(dbr(e.data_sugerida)) + '</s>' : esc(dbr(e.data_sugerida))) + '</div></div>'
-        + '<label>Condição da etapa' + (e.exige_condicao ? ' <b style="color:var(--clay)">obrigatória</b>' : ' <small>(todas as linhas)</small>') + '<input list="cv-conds" data-cond="' + k + '" value="' + esc(cf.condicao || '') + '" placeholder="ex.: SE ASSINAR CONTRATO"'
+        + '<label>Condição da etapa' + (e.exige_condicao ? ' <b style="color:var(--clay)">obrigatória</b>' : ' <small>(todas as linhas)</small>') + '<input list="cv-conds" data-cond="' + k + '" value="' + esc(cf.condicao || e.condicao_padrao || '') + '" placeholder="ex.: SE ASSINAR CONTRATO"'
         + (e.exige_condicao && !e.condicao && ps.some(p => !p.condicao) ? ' class="cv-erro"' : '') + '></label>'
         + '<label>Data de todas as linhas' + (e.exige_manual ? ' <b style="color:var(--clay)">obrigatória</b>' : ' <small>(opcional)</small>') + '<input type="date" data-dm="' + k + '" value="' + esc(cf.data_manual || '') + '"'
         + (e.exige_manual && !e.data_manual ? ' class="cv-erro"' : '') + '>' + (e.motivo_manual ? '<span class="cv-sug">' + esc(e.motivo_manual) + '</span>' : '') + '</label>'

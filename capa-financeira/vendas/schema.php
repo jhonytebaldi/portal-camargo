@@ -98,6 +98,7 @@ function cv_migrar(PDO $pdo): array
     if (!$col('cv_vendas', 'cep')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN cep VARCHAR(9) NOT NULL DEFAULT '' AFTER bairro"); $feitos[] = 'cv_vendas.cep'; }
     if (!$col('cv_vendas', 'e2_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e2_dados JSON NULL AFTER obs'); $feitos[] = 'cv_vendas.e2_dados (distribuição)'; }
     if (!$col('cv_vendas', 'e3_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e3_dados JSON NULL AFTER e2_dados'); $feitos[] = 'cv_vendas.e3_dados (fluxo do cliente)'; }
+    if (!$col('cv_vendas', 'metodo')) { $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN metodo VARCHAR(10) NOT NULL DEFAULT 'atual' AFTER empresa"); $feitos[] = 'cv_vendas.metodo (método de cálculo dos pagamentos)'; }
     if (!$col('cv_vendas', 'e4_dados')) { $pdo->exec('ALTER TABLE cv_vendas ADD COLUMN e4_dados JSON NULL AFTER e3_dados'); $feitos[] = 'cv_vendas.e4_dados (pagamentos)'; }
     // feriados (data de pagamento: quinta feriado → quarta) e quem pode liberar pagamentos (além dos admins)
     if (!(int)$pdo->query("SELECT COUNT(*) FROM cf_config WHERE chave = 'feriados'")->fetchColumn()) {

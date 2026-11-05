@@ -220,7 +220,7 @@ try {
         $c1 = Venda::calc($venda);
         $val = Fluxo::validar($d, $c1, $venda);
         if ($venda['e1_status'] === 'rascunho') $val['erros'][] = 'Conclua a etapa 1 antes de concluir o fluxo (compradores e valores vêm dela).';
-        if ($acao === 'previa3') $resp(['ok' => true, 'calc' => Fluxo::calc($d, $c1), 'c1' => $c1, 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
+        if ($acao === 'previa3') $resp(['ok' => true, 'calc' => Fluxo::calc($d, $c1, array_values(Pagamentos::gatilhos($venda))), 'c1' => $c1, 'erros' => array_merge($fmt, $val['erros']), 'avisos' => $val['avisos']]);
         if ($venda['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
         if ($fmt) $resp(['ok' => false, 'erros' => $fmt]);
         $concluida = $venda['e3_status'] !== 'rascunho';
@@ -276,6 +276,7 @@ try {
         if ($id && !$atual) $resp(['ok' => false, 'erros' => ['Venda não encontrada.']], 404);
         if ($atual && $atual['status'] === 'cancelada') $resp(['ok' => false, 'erros' => ['Venda cancelada — não pode ser editada.']]);
         $concluida = $atual && $atual['e1_status'] !== 'rascunho';
+        if ($atual && !empty($atual['e4']['liberados'])) $v['metodo'] = Pagamentos::metodo($atual);   // método travado depois de liberar pagamentos
         $val = Venda::validarE1($v, $comp, cv_contexto($v, $id));
         if (($acao === 'concluir' || $concluida) && $val['erros']) {
             $resp(['ok' => false, 'erros' => $val['erros'], 'msg' => $concluida ? 'A etapa 1 já está concluída: as alterações só são gravadas se tudo continuar válido.' : 'Corrija antes de concluir:']);
