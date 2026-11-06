@@ -471,7 +471,7 @@ final class CapaParser
             }
             if ($repasse) { $nf = 'REPASSE'; $cond = $colG && self::key($colG) !== 'REPASSE' ? $colG : null; }
             elseif ($tipoCol === 'PAGAR') [$nf, $cond] = $this->buildNf($h['natureza'], $colG, $h['prefixo'], $flags);
-            else { $nf = null; $cond = $colG; }
+            else [$nf, $cond] = $this->buildNf(null, $colG, null, $flags);   // a receber: Nota Fiscal pela coluna G (mesmo dicionário); sem G fica vazia
             $linhas[] = [
                 'linha_xlsx' => $r, 'tipo' => $tipoCol, 'data' => $data, 'data_raw' => $dataRaw,
                 'cf' => $cf, 'valor' => $valor, 'col_g' => $colG, 'prefixo' => $h['prefixo'],
