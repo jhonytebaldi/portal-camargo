@@ -100,6 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $_POST['csrf'] = $in['csrf'] ?? ''; csrf_check();
     $falha = function (string $m, int $c = 400): never { http_response_code($c); exit(json_encode(['ok' => false, 'erro' => $m], JSON_UNESCAPED_UNICODE)); };
     $acao = (string)($in['acao'] ?? '');
+    @set_time_limit(110);
+    // orçamento de tempo por requisição: a Hostinger corta requisições longas, então cada bloco processa o que couber em ~20 s
+    // e devolve os ids que sobraram em "restantes" (o navegador manda de novo). Assim o tamanho do bloco deixa de importar.
+    $t0 = microtime(true); $orcamento = fn(float $seg = 20.0) => (microtime(true) - $t0) > $seg;
+    OmieEnvio::$prazo = $t0 + 20.0;   // listas grandes do Omie também param no orçamento e continuam na requisição seguinte
     try {
         if ($acao === 'editar') {
             $id = (int)($in['id'] ?? 0); $campo = (string)($in['campo'] ?? ''); $valor = trim((string)($in['valor'] ?? ''));
@@ -152,6 +157,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try { OmieEnvio::cadastros($empresa, true); } catch (Throwable $e) {}   // clientes/fornecedores recém-cadastrados no Omie
             exit(json_encode(['ok' => true, 'contas' => count($cat['contas']), 'categorias' => count($cat['categorias']), 'departamentos' => count($cat['departamentos']), 'projetos' => count($cat['projetos'])]));
         }
+        if ($acao === 'preparar_api') {
+            // aquece as listas (categorias/contas, cadastros, títulos) numa requisição só, antes de conferir/enviar — assim os blocos não param para recarregá-las
+            $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
+            if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos — recarregue a página e tente de novo');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('A API do Omie está bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
+            $feito = [];
+            try { OmieEnvio::catalogo($empresa); $feito[] = 'catálogo'; OmieEnvio::atualizarCadastros($empresa); $feito[] = 'cadastros'; OmieEnvio::atualizarTitulos($empresa, $tipo); $feito[] = 'títulos'; }
+            catch (OmieContinuar $e) { exit(json_encode(['ok' => true, 'continuar' => true, 'etapa' => $e->getMessage(), 'seg' => round(microtime(true) - $t0, 1)], JSON_UNESCAPED_UNICODE)); }
+            catch (Throwable $e) { $falha('Não consegui ler os cadastros do Omie (' . implode(', ', $feito) . ' ok): ' . $e->getMessage() . '. Se for indisponibilidade do Omie, tente em alguns minutos.'); }
+            exit(json_encode(['ok' => true, 'continuar' => false, 'seg' => round(microtime(true) - $t0, 1)]));
+        }
         if ($acao === 'conferir_api' || $acao === 'enviar_api') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = (string)($in['tipo'] ?? 'P');
             if (!isset($empresas[$empresa]) || !in_array($tipo, ['P', 'R'], true)) $falha('empresa/tipo inválidos — recarregue a página e tente de novo');
@@ -167,14 +184,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($acao === 'enviar_api' && count($linhas) !== count($ids)) $falha('alguma linha selecionada já foi exportada ou não está confirmada — recarregue a página');
             $porQuem = (string)($u['nome'] ?? $u['login'] ?? 'portal');
             if ($acao === 'conferir_api') {
-                $res = [];
+                $res = []; $restantes = [];
                 foreach ($linhas as $l) {
-                    $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem);
+                    if ($orcamento()) { $restantes[] = (int)$l['id']; continue; }
+                    try { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); }
+                    catch (OmieContinuar $e) { $restantes[] = (int)$l['id']; continue; }   // lista grande no meio do caminho: esta e as próximas voltam no próximo bloco
                     $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente'])];
                     // conferiu sem erro: o erro do último envio (ex. "cliente não encontrado") já não vale — limpa para não ficar aparecendo
                     if (!$r['erros'] && !empty($l['omie_erro'])) $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = NULL WHERE id = ?')->execute([(int)$l['id']]);
                 }
-                exit(json_encode(['ok' => true, 'linhas' => $res], JSON_UNESCAPED_UNICODE));
+                exit(json_encode(['ok' => true, 'linhas' => $res, 'restantes' => $restantes], JSON_UNESCAPED_UNICODE));
             }
             // enviar: linha a linha; cada uma independente (o Omie não tem transação entre títulos)
             // o navegador envia em blocos de 5 (evita o 504 da Hostinger); os blocos seguintes reaproveitam o mesmo registro de envio
@@ -185,11 +204,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$tipo, $empresa, $reg, $u['id']]);
                 $expId = (int)$pdo->lastInsertId();
             }
-            $enviadas = []; $falhas = []; $avisos = []; $total = 0.0; $parou = null;
+            $enviadas = []; $falhas = []; $avisos = []; $total = 0.0; $parou = null; $restantes = [];
             foreach ($linhas as $l) {
                 $cod = (string)$l['codigo_integracao'];
+                if (!$parou && $orcamento()) { $restantes[] = (int)$l['id']; continue; }   // sobra para o próximo bloco (não é falha)
                 if ($parou) { $falhas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'msg' => 'não tentado: ' . $parou]; continue; }
                 try { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); }
+                catch (OmieContinuar $e) { $restantes[] = (int)$l['id']; continue; }   // lista grande no meio do caminho: volta no próximo bloco
                 catch (Throwable $e) {
                     // erro de comunicação/anti-abuso na conferência: para o lote (insistir só piora o bloqueio)
                     $parou = 'API do Omie indisponível — ' . $e->getMessage();
@@ -197,7 +218,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 foreach ($r['avisos'] as $a) $avisos[] = "$cod: $a";
                 if (!$r['erros'] && !empty($r['existente'])) {
-                    // já estava no Omie com nosso código (envio anterior que falhou na resposta): vincula em vez de reenviar
+                    // já estava no Omie com nosso código (envio anterior que falhou na resposta): vincula em vez de reenviar —
+                    // antes confirma que ainda existe (a lista pode ter dias; se foi excluído à mão no Omie, segue para incluir)
+                    $omieId = (int)$r['existente']['codigo_lancamento_omie'];
+                    try { $ainda = OmieEnvio::consultarPorOmieId($empresa, $tipo, $omieId); } catch (Throwable $e) { $ainda = $r['existente']; }
+                    if (!$ainda) { OmieEnvio::lembrarTitulo($empresa, $tipo, $cod, null); $r['existente'] = null; }
+                }
+                if (!$r['erros'] && !empty($r['existente'])) {
                     $omieId = (int)$r['existente']['codigo_lancamento_omie'];
                     $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
                     cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $r['existente'], 'já existia no Omie com este código — vinculado sem reenviar', (int)$u['id'], true);
@@ -213,9 +240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $resp = OmieEnvio::incluir($empresa, $tipo, $r['pedido']);
                     $omieId = (int)($resp['codigo_lancamento_omie'] ?? 0);
                     if (($resp['codigo_status'] ?? '0') !== '0' || !$omieId) throw new RuntimeException('Omie respondeu: ' . ($resp['descricao_status'] ?? json_encode($resp)));
-                    // confere de volta (pelo código Omie — chamada diferente da pré-checagem); se a conferência falhar por motivo temporário, o título já está lá: não é erro
-                    try { $ver = OmieEnvio::consultarPorOmieId($empresa, $tipo, $omieId); } catch (Throwable $e) { $ver = null; }
-                    $okVer = $ver && abs((float)($ver['valor_documento'] ?? 0) - (float)$l['valor']) < 0.005;
+                    // a resposta do Incluir já traz codigo_status "0" + o código Omie: é a confirmação (a consulta extra por título foi retirada — dobrava o tempo do envio)
+                    $okVer = true;
                     $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
                     cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $resp, $okVer ? null : 'incluído, mas a consulta de conferência não bateu', (int)$u['id'], $okVer);
                     if (!$okVer) $avisos[] = "$cod: incluído (cód. $omieId), mas a consulta de conferência não bateu — confira no Omie";
@@ -255,7 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nTot = (int)$acum['n_linhas'] + count($enviadas); $vTot = (float)$acum['total'] + $total;
             if ($nTot > 0) $pdo->prepare('UPDATE cf_exportacoes SET n_linhas = ?, total = ?, avisos = ? WHERE id = ?')->execute([$nTot, $vTot, json_encode(array_merge($avAnt, $resumo), JSON_UNESCAPED_UNICODE), $expId]);
             elseif (!empty($in['ultimo'])) { $pdo->prepare('DELETE FROM cf_exportacoes WHERE id = ?')->execute([$expId]); $expId = 0; }
-            exit(json_encode(['ok' => true, 'exportacao_id' => $expId ?: null, 'enviadas' => $enviadas, 'falhas' => $falhas, 'avisos' => $avisos, 'total' => $total, 'parou' => $parou], JSON_UNESCAPED_UNICODE));
+            exit(json_encode(['ok' => true, 'exportacao_id' => $expId ?: null, 'enviadas' => $enviadas, 'falhas' => $falhas, 'avisos' => $avisos, 'total' => $total, 'parou' => $parou, 'restantes' => $restantes], JSON_UNESCAPED_UNICODE));
         }
         if ($acao === 'conferir_exportacao') {
             // planilha importada: confere título a título no Omie pelo código de integração
@@ -1010,19 +1036,33 @@ document.getElementById('exp-forcar').onclick = async () => {
     });
     soma(); return {nOk, nErr};
   }
+  // aquece as listas do Omie antes de conferir/enviar; uma lista grande (1ª leitura completa) vem em várias requisições ("continuar")
+  async function preparar(prog){
+    for (let n = 0; n < 12; n++) {
+      const p = await post({acao:'preparar_api'}); if (!p) return false;
+      if (!p.continuar) return true;
+      if (prog) prog.texto('lendo as listas do Omie — ' + p.etapa + '…');
+    }
+    return true;
+  }
   const bca = document.getElementById('btn-conferir-api');
   if (bca) bca.addEventListener('click', async () => {
     bca.disabled = true; bca.textContent = 'Conferindo no Omie…';
     const ids = [...document.querySelectorAll('.exp-sel:checked')].map(c => +c.closest('tr').dataset.id);
-    const linhas = {}; const BL = 8;
+    const linhas = {}; const BL = 12;   // o servidor processa o que couber em ~20 s e devolve o resto em "restantes"
     const prog = window.CFModal ? CFModal.progresso({titulo: 'Conferindo ' + ids.length + ' título(s) no Omie'}) : null;
-    for (let i = 0; i < ids.length; i += BL) {
-      const ate = Math.min(i + BL, ids.length);
-      bca.textContent = 'Conferindo no Omie… ' + ate + '/' + ids.length;
-      if (prog) prog.pct(i / ids.length * 100).faixa(i / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo ' + (i + 1) + '–' + ate + ' de ' + ids.length + ' (cadastros, categorias, contas)…');
-      const j = await post({acao:'conferir_api', ids: ids.slice(i, i + BL), data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+    if (prog) prog.faixa(0, 8, 'lendo cadastros, categorias e títulos do Omie…');
+    if (!await preparar(prog)) { if (prog) prog.fechar(); bca.disabled = false; bca.textContent = 'Conferir para envio'; return; }
+    let fila = ids.slice(), feitos = 0;
+    while (fila.length) {
+      const lote = fila.slice(0, BL);
+      bca.textContent = 'Conferindo no Omie… ' + feitos + '/' + ids.length;
+      if (prog) prog.pct(feitos / ids.length * 100).faixa(feitos / ids.length * 100, Math.min(feitos + lote.length, ids.length) / ids.length * 100 - 1, 'conferindo ' + (feitos + 1) + '–' + Math.min(feitos + lote.length, ids.length) + ' de ' + ids.length + '…');
+      const j = await post({acao:'conferir_api', ids: lote, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
       if (!j) { if (prog) prog.fechar(); bca.disabled = false; bca.textContent = 'Conferir para envio'; return; }
       Object.assign(linhas, j.linhas);
+      const rest = j.restantes || []; feitos += lote.length - rest.length;
+      fila = rest.concat(fila.slice(BL));
     }
     if (prog) await prog.fim();
     bca.disabled = false; bca.textContent = 'Conferir para envio';
@@ -1045,7 +1085,7 @@ document.getElementById('exp-forcar').onclick = async () => {
     if (!ids.length) return;
     if (!await pergunta('Enviar ' + ids.length + ' título(s) para o Omie pela API? Cada linha é conferida antes; as que passarem são incluídas no Omie na hora (dá pra desfazer enquanto não forem baixadas).', 'Enviar para o Omie?', 'Sim, enviar')) return;
     be.disabled = true;
-    const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 3;   // blocos pequenos: a Hostinger corta requisições longas
+    const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 12;   // o servidor envia o que couber em ~20 s e devolve o resto em "restantes"
     // envio de um bloco com nova tentativa quando a Hostinger corta (502/503/504/429 ou conexão caída). Reenviar é seguro: o servidor
     // vincula o que já entrou no Omie (pela lista e pelo "já cadastrado") em vez de duplicar.
     async function postEnvio(body, info){
@@ -1063,14 +1103,19 @@ document.getElementById('exp-forcar').onclick = async () => {
       return null;
     }
     const prog = window.CFModal ? CFModal.progresso({titulo: 'Enviando ' + ids.length + ' título(s) para o Omie', tau: 6}) : null;
-    for (let i = 0; i < ids.length; i += BL) {
-      const ate = Math.min(i + BL, ids.length);
-      be.textContent = 'Enviando… ' + ate + '/' + ids.length;
-      if (prog) prog.pct(i / ids.length * 100).faixa(i / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo e enviando ' + (i + 1) + '–' + ate + ' de ' + ids.length + (j.enviadas.length ? ' · ' + j.enviadas.length + ' já no Omie' : '') + '…');
-      const r = await postEnvio({acao:'enviar_api', ids: ids.slice(i, i + BL), exportacao_id: j.exportacao_id, ultimo: i + BL >= ids.length ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value}, t => { if (prog) prog.texto(t); be.textContent = t; });
+    if (prog) prog.faixa(0, 6, 'lendo cadastros, categorias e títulos do Omie…');
+    if (!await preparar(prog)) { if (prog) prog.fechar(); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; return; }
+    let fila = ids.slice(), feitos = 0;
+    while (fila.length) {
+      const lote = fila.slice(0, BL); const ate = Math.min(feitos + lote.length, ids.length);
+      be.textContent = 'Enviando… ' + feitos + '/' + ids.length;
+      if (prog) prog.pct(feitos / ids.length * 100).faixa(feitos / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo e enviando ' + (feitos + 1) + '–' + ate + ' de ' + ids.length + (j.enviadas.length ? ' · ' + j.enviadas.length + ' já no Omie' : '') + '…');
+      const r = await postEnvio({acao:'enviar_api', ids: lote, exportacao_id: j.exportacao_id, ultimo: fila.length <= BL ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value}, t => { if (prog) prog.texto(t); be.textContent = t; });
       if (!r) { if (prog) prog.fechar(); if (j.enviadas.length) await aviso('parcial', 'O envio parou no meio', 'Já enviados: ' + j.enviadas.map(e => e.codigo).join(', ') + '. Os enviados aparecem em "Enviados pela API" e os demais continuam pendentes.'); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; if (j.enviadas.length) location.reload(); return; }
       j.enviadas.push(...r.enviadas); j.falhas.push(...r.falhas); j.avisos.push(...r.avisos); j.total += r.total; if (r.exportacao_id) j.exportacao_id = r.exportacao_id;
-      if (r.parou) { ids.slice(i + BL).forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
+      const rest = r.restantes || []; feitos += lote.length - rest.length;
+      fila = rest.concat(fila.slice(BL));
+      if (r.parou) { fila.forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
     }
     let det = '';
     if (j.enviadas.length) det += 'Enviados (' + j.enviadas.length + '):\n' + j.enviadas.map(e => '  ' + e.codigo + ' → cód. Omie ' + e.omie_id + (e.vinculado ? ' (já existia — vinculado)' : '')).join('\n');
