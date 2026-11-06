@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $r = Recibo::gerar($g, $p, $emp, $data, $cidade, $logo);
                 $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
                 $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
-                file_put_contents($path, $r['pdf']);
+                if (@file_put_contents($path, $r['pdf']) === false || !is_file($path)) { $pdo->rollBack(); $falha('não consegui gravar o PDF do recibo ' . $r['numero'] . ' no servidor (' . (error_get_last()['message'] ?? 'sem detalhe') . '). Nada foi gravado — confira o espaço/permissões da pasta de dados e tente de novo.'); }
                 $lids = array_map(fn($l) => (int)$l['id'], $g);
                 foreach ($g as $l) if ($l['rec_id']) $pdo->prepare("UPDATE cf_recibos SET status = 'substituido' WHERE id = ?")->execute([$l['rec_id']]);
                 $pdo->prepare('INSERT INTO cf_recibos (numero, pessoa_id, empresa, lancamento_ids, valor, bruto, descricao_nf, data_recibo, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
