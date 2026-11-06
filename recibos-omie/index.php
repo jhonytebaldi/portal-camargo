@@ -342,7 +342,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   <td><small><?= h(mb_substr((string)($o['cliente'] ?? ''), 0, 45)) ?><br><span class="cf-raw"><?= h(mb_substr((string)($o['imovel'] ?? ''), 0, 45)) ?></span><?= $o['padrao'] === 'vazio' ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '' ?></small></td>
   <td><?= h((string)($o['cod'] ?? '—')) ?><?= $o['venda'] ? '<br><small class="cf-raw">' . h($o['venda']) . '</small>' : '' ?></td>
   <td class="cf-num"><?= cf_brl($t['valor']) ?></td>
-  <td><?php if ($ja): ?><a href="?baixar=<?= (int)$ja['id'] ?>&ver=1" target="_blank">📄 <?= h($ja['numero']) ?></a><?php elseif (!empty($o['recibo'])): ?><?= h($o['recibo']) ?><?php else: ?><span class="cf-raw">novo</span><?php endif; ?></td>
+  <td><?php if ($ja): $jc = array_values(array_filter(array_map('trim', explode(' / ', (string)$ja['numero'])))); ?><a href="?baixar=<?= (int)$ja['id'] ?>&ver=1" target="_blank" title="<?= h($ja['numero']) ?>">📄 <?= h(implode(' / ', array_slice($jc, 0, 2))) ?><?= count($jc) > 2 ? ' +' . (count($jc) - 2) : '' ?></a><br><small class="cf-raw">já tem recibo (<?= cf_data_br((string)$ja['data_recibo']) ?>)</small><?php elseif (!empty($o['recibo'])): ?><?= h($o['recibo']) ?><?php else: ?><span class="cf-raw">novo</span><?php endif; ?></td>
   <td class="<?= $naoAchou ? 'ro-val-nao' : 'ro-val-ok' ?>"><small><?= h((string)($t['validado'] ?? '')) ?></small></td>
 </tr>
 <?php endforeach; ?>
@@ -366,7 +366,8 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
 <thead><tr><th><input type="checkbox" id="h-todos"></th><th>Nº</th><th>Data</th><th>Recebedor</th><th>Empresa</th><th>Valor</th><th>Títulos</th><th>Omie</th><th>Gerado</th><th></th></tr></thead>
 <tbody><?php foreach ($historico as $r): $its = json_decode((string)$r['itens'], true) ?: [];
   $quando = $r['encerrado_em'] ? ' em ' . cf_data_br(substr((string)$r['encerrado_em'], 0, 10)) : ''; $quem = $r['encerrado_nome'] ? ' por ' . h((string)$r['encerrado_nome']) : '';
-  $sit = $r['status'] === 'substituido' ? '<br><span class="cf-tag">substituído' . ($r['subst_numero'] ? ' pelo ' . h($r['subst_numero']) : '') . $quando . $quem . '</span>'
+  $sn = array_values(array_filter(array_map('trim', explode(' / ', (string)($r['subst_numero'] ?? ''))))); $snTxt = implode(' / ', array_slice($sn, 0, 2)) . (count($sn) > 2 ? ' +' . (count($sn) - 2) : '');
+  $sit = $r['status'] === 'substituido' ? '<br><span class="cf-tag" title="' . h((string)$r['subst_numero']) . '">substituído' . ($snTxt !== '' ? ' pelo ' . h($snTxt) : '') . $quando . $quem . '</span>'
        : ($r['status'] === 'cancelado' ? '<br><span class="cf-tag cf-grave">cancelado' . $quando . $quem . '</span>' . ($r['motivo'] ? '<br><small class="cf-raw">' . h((string)$r['motivo']) . '</small>' : '') : ''); ?>
 <?php $cods = array_values(array_filter(array_map('trim', explode(' / ', (string)$r['numero'])))); $nCods = count($cods); ?>
 <tr data-id="<?= (int)$r['id'] ?>" class="<?= $r['status'] !== 'atual' ? 'ro-encerrado' : '' ?>"><td><input type="checkbox" class="h-sel"></td><td><?php if ($nCods > 3): ?><b class="ro-col" title="clique para ver todos os códigos"><?= h(implode(' / ', array_slice($cods, 0, 3))) ?><span class="ro-resto"> / <?= h(implode(' / ', array_slice($cods, 3))) ?></span></b> <span class="ro-mais">+<?= $nCods - 3 ?> ▾</span><?php else: ?><b><?= h($r['numero']) ?></b><?php endif; ?><?= $sit ?></td><td><?= cf_data_br($r['data_recibo']) ?></td><td><?= h($r['fornecedor_nome']) ?><br><small class="cf-raw"><?= h($r['fornecedor_doc']) ?></small></td>
