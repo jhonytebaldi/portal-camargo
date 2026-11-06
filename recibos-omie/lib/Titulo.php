@@ -123,8 +123,11 @@ final class Titulo
         $rot = ['NATUREZA' => 'natureza_rot', 'RECIBO' => 'recibo', 'FAVORECIDO' => 'favorecido', 'FUNCAO' => 'funcao', 'FUNÇÃO' => 'funcao', 'CLIENTE' => 'cliente', 'CONSTRUTORA' => 'construtora', 'IMOVEL' => 'imovel', 'IMÓVEL' => 'imovel', 'ENDERECO' => 'imovel', 'ENDEREÇO' => 'imovel',
                 'STATUS' => 'status', 'VENDA' => 'venda', 'DATA DA VENDA' => 'venda', 'COD' => 'cod', 'CÓD' => 'cod', 'CODIGO' => 'cod', 'CÓDIGO' => 'cod', 'COND' => 'cond', 'CONDICAO' => 'cond', 'CONDIÇÃO' => 'cond', 'PARCELA' => 'parcela', 'FLUXO' => 'parcela'];
         $soltas = [];
+        // rótulos que existem na observação mas NÃO são dados do recibo (nunca viram imóvel/condição pela regra das linhas soltas)
+        $ignorar = ['OBS CAPA', 'PIX', 'ENVIADO POR'];
         foreach ($partes as $p) {
             $p = trim($p); if ($p === '') continue;
+            if (preg_match('/^([A-ZÀ-Ú ]{3,15}):/u', $p, $mi) && in_array(mb_strtoupper(trim($mi[1])), $ignorar, true)) continue;
             if (preg_match('/^([A-ZÀ-Ú ]{3,15}):\s*(.*)$/u', $p, $m) && isset($rot[mb_strtoupper(trim($m[1]))])) {
                 $k = $rot[mb_strtoupper(trim($m[1]))]; $v = trim($m[2]);
                 if ($k === 'funcao') { if (preg_match('/\(?\s*B[ÔO]NUS\s*\)?/iu', $v)) { $o['natureza'] = 'BONUS'; $v = trim(preg_replace('/\(?\s*B[ÔO]NUS\s*\)?/iu', '', $v)); } }
