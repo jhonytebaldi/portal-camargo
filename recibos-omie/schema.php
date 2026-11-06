@@ -66,6 +66,9 @@ function ro_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE ro_recibos ADD COLUMN bruto DECIMAL(14,2) NULL AFTER valor, ADD COLUMN descricao_nf TEXT NULL AFTER bruto");
         $feitos[] = 'ro_recibos.bruto/descricao_nf';
     }
+    // nº do recibo com muitos códigos (24 títulos num só) não cabe em 120 caracteres: vira TEXT
+    if ($tem('ro_recibos')) { $tp = $pdo->query("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ro_recibos' AND COLUMN_NAME = 'numero'")->fetchColumn();
+        if ($tp && strtolower((string)$tp) !== 'text') { $pdo->exec("ALTER TABLE ro_recibos MODIFY numero TEXT NOT NULL"); $feitos[] = 'ro_recibos.numero TEXT'; } }
     if (!(int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='recibos-omie'")->fetchColumn()) {
         $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem) VALUES ('recibos-omie','Recibos do Omie','Recibos de comissão a partir das contas a pagar do Omie (relatório ou API)','🧾','/recibos-omie/',1,31)")->execute();
         $feitos[] = 'tool:recibos-omie';

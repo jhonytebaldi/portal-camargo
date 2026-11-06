@@ -90,7 +90,8 @@ if (isset($_GET['zip'])) {
 /** nº do recibo: RECIBO da observação → já emitido para o mesmo título → sequência do COD (cf_sequencias) → REC-<ano>-n */
 function ro_numero(PDO $pdo, array $t): string
 {
-    if (!empty($t['obs']['recibo'])) return (string)$t['obs']['recibo'];
+    // nº vindo da observação só vale se tiver cara de código nosso (1234-P001 / REC2026-P001); "9" ou lixo é ignorado
+    if (!empty($t['obs']['recibo']) && preg_match('/^(\d{1,6}-[PR]\d{3}|REC\d{4}-P\d{3})$/i', trim((string)$t['obs']['recibo']))) return strtoupper(trim((string)$t['obs']['recibo']));
     if (!empty($t['cod_int'])) return (string)$t['cod_int'];
     $st = $pdo->prepare("SELECT r.numero, r.itens FROM ro_recibo_itens i JOIN ro_recibos r ON r.id = i.recibo_id WHERE i.fingerprint = ? ORDER BY r.id DESC LIMIT 1");
     $st->execute([$t['fingerprint']]);
