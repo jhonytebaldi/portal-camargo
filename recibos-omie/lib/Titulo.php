@@ -106,8 +106,13 @@ final class Titulo
     {
         $t['obs'] = self::interpretarObs($t['observacao'] ?? '');
         $t['doc_digitos'] = preg_replace('/\D+/', '', (string)$t['doc']) ?? '';
-        $t['fingerprint'] = $t['omie_id'] ? 'omie:' . $t['conta'] . ':' . $t['omie_id']
-            : 'fp:' . substr(sha1(implode('|', [$t['conta'] ?? '', $t['doc_digitos'], number_format((float)$t['valor'], 2, '.', ''), $t['vencimento'] ?? '', $t['categoria'] ?? '', $t['obs']['cod'] ?? '', $t['parcela'] ?? ''])), 0, 20);
+        // identidade do título: id do Omie › nosso código de integração (RECIBO: 1234-P001, único por título) › assinatura por valor+vencimento+categoria+COD.
+        // A assinatura (legado) colide quando dois títulos têm o mesmo valor/vencimento sem COD; por isso o código vem antes. A legada continua
+        // guardada para reconhecer recibos antigos.
+        $legado = 'fp:' . substr(sha1(implode('|', [$t['conta'] ?? '', $t['doc_digitos'], number_format((float)$t['valor'], 2, '.', ''), $t['vencimento'] ?? '', $t['categoria'] ?? '', $t['obs']['cod'] ?? '', $t['parcela'] ?? ''])), 0, 20);
+        $rec = (string)($t['obs']['recibo'] ?? '');
+        $t['fingerprint'] = $t['omie_id'] ? 'omie:' . $t['conta'] . ':' . $t['omie_id'] : ($rec !== '' ? 'rec:' . $t['conta'] . ':' . $t['doc_digitos'] . ':' . $rec : $legado);
+        $t['fingerprint_legado'] = $legado;
         return $t;
     }
 
@@ -134,12 +139,34 @@ final class Titulo
                 if ($k === 'natureza_rot') { if (str_contains(mb_strtoupper($v), 'REPASSE')) $o['natureza'] = 'REPASSE'; continue; }
                 if ($k === 'cod') $v = preg_replace('/\D+/', '', $v);
                 if ($k === 'venda' && preg_match('/(\d{2})\/(\d{2})\/(\d{4})/', $v, $d)) $v = "$d[1]/$d[2]/$d[3]";
-                $o[$k] = $v !== '' ? $v : null;
+                // nº do recibo só vale com cara de código nosso (1234-P001 / REC2026-P001) — o relatório .xlsx do Omie corta a observação
+                // em ~500 caracteres e pode deixar "RECIBO: 9" no fim de uma cópia duplicada
+                if ($k === 'recibo') { $v = strtoupper(trim($v)); if (!preg_match('/^(\d{1,6}-[PR]\d{3}|REC\d{4}-P\d{3})$/', $v)) $v = ''; }
+                // a PRIMEIRA ocorrência vale: observações duplicadas/cortadas (acréscimo da padronização) não sobrescrevem o dado original
+                if ($v !== '' && empty($o[$k])) $o[$k] = $v;
             } else $soltas[] = $p;
         }
         // linhas soltas do padrão antigo: "COMISSÃO CORRETOR", "BÔNUS CAPTADOR", condição ("ENTREGA DE CHAVES", "RESERVA 50%"), endereço sem rótulo
         foreach ($soltas as $s) {
             $u = mb_strtoupper(self::semAcento($s));
+            // histórico colado da capa sem rótulo: "RECIBO 1388-P004- GUILHERME ... - DIRETOR - COMISSAO - ..." → nº do recibo e função
+            if (preg_match('/^RECIBO\s*:?\s*(\d{1,6}-[PR]\d{3}|REC\d{4}-P\d{3})\s*-\s*(.+)$/iu', trim($s), $m)) {
+                $o['recibo'] = $o['recibo'] ?? strtoupper($m[1]);
+                $tk = array_map('trim', preg_split('/\s+-\s*|\s*-\s+/u', $m[2]) ?: []);
+                if (!$o['favorecido'] && isset($tk[0])) $o['favorecido'] = $tk[0];
+                if (!$o['funcao'] && isset($tk[1]) && preg_match('/^[A-Z][A-Z \-]{2,30}$/u', mb_strtoupper(self::semAcento($tk[1])))) $o['funcao'] = mb_strtoupper(self::semAcento($tk[1]));
+                if (isset($tk[2]) && stripos($tk[2], 'BONUS') !== false) $o['natureza'] = 'BONUS';
+                if (!$o['cliente'] && isset($tk[3])) $o['cliente'] = $tk[3];
+                if (!$o['construtora'] && isset($tk[4])) $o['construtora'] = $tk[4];
+                $im = [];
+                foreach (array_slice($tk, 5) as $x) { $xu = mb_strtoupper(self::semAcento($x));
+                    if (preg_match('/^COD\.?\s*(\d+)/', $xu, $c)) $o['cod'] = $o['cod'] ?? $c[1];
+                    elseif (preg_match('/^VENDA:?\s*(\d{2}\/\d{2}\/\d{4})/', $x, $c)) $o['venda'] = $o['venda'] ?? $c[1];
+                    elseif (in_array($xu, ['PLANTA', 'PRONTO', 'PRONTA', 'USADO'], true)) $o['status'] = $o['status'] ?? $xu;
+                    elseif ($x !== '') $im[] = $x; }
+                if ($im && !$o['imovel']) $o['imovel'] = implode(' - ', $im);
+                continue;
+            }
             if (preg_match('/^(COMISSAO|BONUS)\s+([A-Z][A-Z \-]{2,30})$/u', $u, $m)) {
                 if ($m[1] === 'BONUS') $o['natureza'] = 'BONUS';
                 $o['funcao'] = $o['funcao'] ?? (trim($m[2]) === 'GERENTE' ? 'COORDENADOR' : trim($m[2]));
