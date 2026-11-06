@@ -42,10 +42,38 @@ function ro_empresa(array $empresas, string $conta): array
     return $empresas[$conta] ?? ['id' => $conta, 'nome' => strtoupper($conta), 'razao' => strtoupper($conta), 'cnpj' => ''];
 }
 
+/** regera o PDF de um recibo cujo arquivo não está mais no servidor, a partir dos itens guardados (mesmo número e data). @return ?array linha atualizada */
+function ro_regerar(PDO $pdo, array $r, array $pessoas, array $empresas, string $cidade): ?array
+{
+    $itens = json_decode((string)($r['itens'] ?? ''), true);
+    if (!is_array($itens) || !$itens) return null;
+    $t0 = $itens[0];
+    $p = null; if (!empty($r['pessoa_id'])) foreach ($pessoas as $px) if ((int)$px['id'] === (int)$r['pessoa_id']) { $p = $px; break; }
+    $p = $p ?: (Titulo::pessoaPorDoc($pessoas, (string)($t0['doc'] ?? $r['fornecedor_doc'])) ?: Titulo::pessoaDoFornecedor($t0));
+    if (trim((string)($p['razao_social'] ?? '')) === '' && trim((string)($t0['razao'] ?? '')) !== '') $p['razao_social'] = trim((string)$t0['razao']);
+    $emp = ro_empresa($empresas, (string)$r['conta']);
+    $linhas = [];
+    foreach ($itens as $t) { $cod = preg_replace('/\D+/', '', (string)($t['obs']['cod'] ?? '')); $ln = Titulo::linhaRecibo($t, (string)($t['numero'] ?? ''), $p); if ($cod !== '') { $qb = $pdo->prepare("SELECT bairro FROM cf_capas WHERE cod = ? AND status = 'confirmada' ORDER BY id DESC LIMIT 1"); $qb->execute([$cod]); $ln['capa_bairro'] = (string)($qb->fetchColumn() ?: ''); } $linhas[] = $ln; }
+    $logo = !empty($emp['logo_propria']) && is_file(__DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg') ? __DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg' : null;
+    try { $g = Recibo::gerar($linhas, $p, $emp, (string)$r['data_recibo'], $cidade, $logo); } catch (Throwable $e) { return null; }
+    $dir = cf_data_dir() . '/recibos-omie/' . date('Y'); if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    $nome = Recibo::nomeArquivo((string)$r['numero'], (string)($p['nome'] ?? $r['fornecedor_nome']));
+    $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-regerado-' . $nome;
+    if (@file_put_contents($path, $g['pdf']) === false || !is_file($path)) return null;
+    $pdo->prepare('UPDATE ro_recibos SET arquivo_nome = ?, arquivo_path = ? WHERE id = ?')->execute([$nome, $path, (int)$r['id']]);
+    $r['arquivo_nome'] = $nome; $r['arquivo_path'] = $path;
+    return $r;
+}
+
 /* ---------- downloads ---------- */
 if (isset($_GET['baixar'])) {
     $st = $pdo->prepare('SELECT * FROM ro_recibos WHERE id = ?'); $st->execute([(int)$_GET['baixar']]); $r = $st->fetch();
-    if (!$r || !ro_pode($r, $gestor, $minhaPessoa) || !is_file($r['arquivo_path'])) { http_response_code(404); exit('recibo não encontrado'); }
+    if (!$r || !ro_pode($r, $gestor, $minhaPessoa)) { http_response_code(404); exit('recibo não encontrado'); }
+    if (!is_file($r['arquivo_path'])) {
+        // PDF sumiu (ex.: nome de arquivo longo demais na geração — bug corrigido em 06/11/2026): regera a partir dos itens guardados, mesmo número e data
+        $r = ro_regerar($pdo, $r, $pessoas, $empresas, $cidade);
+        if (!$r) { http_response_code(404); exit('recibo não encontrado: o PDF não está no servidor e não foi possível regerá-lo (sem os itens guardados) — cancele o recibo e gere de novo'); }
+    }
     header('Content-Type: application/pdf'); header('Content-Disposition: ' . (isset($_GET['ver']) ? 'inline' : 'attachment') . '; filename="' . $r['arquivo_nome'] . '"');
     header('Content-Length: ' . filesize($r['arquivo_path'])); readfile($r['arquivo_path']); exit;
 }
@@ -53,7 +81,7 @@ if (isset($_GET['zip'])) {
     $ids = array_filter(array_map('intval', explode(',', (string)$_GET['zip']))); if (!$ids) exit('nada');
     $st = $pdo->query('SELECT * FROM ro_recibos WHERE id IN (' . implode(',', $ids) . ')');
     $tmp = tempnam(sys_get_temp_dir(), 'ro'); $z = new ZipArchive(); $z->open($tmp, ZipArchive::OVERWRITE); $n = 0;
-    foreach ($st->fetchAll() as $r) if (ro_pode($r, $gestor, $minhaPessoa) && is_file($r['arquivo_path'])) { $z->addFile($r['arquivo_path'], $r['arquivo_nome']); $n++; }
+    foreach ($st->fetchAll() as $r) { if (!ro_pode($r, $gestor, $minhaPessoa)) continue; if (!is_file($r['arquivo_path'])) $r = ro_regerar($pdo, $r, $pessoas, $empresas, $cidade); if ($r && is_file($r['arquivo_path'])) { $z->addFile($r['arquivo_path'], $r['arquivo_nome']); $n++; } }
     $z->close(); if (!$n) { @unlink($tmp); exit('nada para baixar'); }
     header('Content-Type: application/zip'); header('Content-Disposition: attachment; filename="recibos_omie_' . date('Ymd-Hi') . '.zip"'); header('Content-Length: ' . filesize($tmp));
     readfile($tmp); @unlink($tmp); exit;
@@ -121,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $r = Recibo::gerar($linhas, $p, $emp, $data, $cidade, $logo);
             $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
             $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
-            file_put_contents($path, $r['pdf']);
+            if (@file_put_contents($path, $r['pdf']) === false || !is_file($path)) { $pdo->rollBack(); $falha('não consegui gravar o PDF do recibo ' . $r['numero'] . ' no servidor (' . (error_get_last()['message'] ?? 'sem detalhe') . '). Nada foi gravado — confira o espaço/permissões da pasta de dados e tente de novo.'); }
             $antigos = array_values(array_unique(array_filter(array_map(fn($t) => (int)($t['_antigo'] ?? 0), $g))));
             $pdo->prepare('INSERT INTO ro_recibos (conta, numero, fingerprints, omie_ids, fornecedor_doc, fornecedor_nome, pessoa_id, valor, bruto, descricao_nf, data_recibo, itens, origem, validado, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                 ->execute([$t0['conta'], $r['numero'], json_encode($fps), json_encode($ids), (string)$t0['doc'], $r['recebedor'], $p['id'] ?? null, $r['valor'], $r['bruto'], $r['descricao_nf'], $data, json_encode($itensGravar, JSON_UNESCAPED_UNICODE), $t0['origem'], (string)($t0['validado'] ?? ($t0['origem'] === 'api' ? $t0['situacao'] : '')), $nome, $path, $u['id']]);
