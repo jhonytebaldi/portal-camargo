@@ -228,14 +228,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $msg .= ' — isto é um defeito no envio da ferramenta (campo fora da estrutura da API), não um problema da capa; avise para corrigir';
                         $parou = 'o Omie recusou um campo do pedido (defeito da ferramenta, não da capa) — envio interrompido para não bloquear a API; avise para corrigir';
                     }
-                    // se o Omie chegou a criar, não deixar órfão: tenta localizar pelo código de integração
-                    try { $ex = $parou ? null : OmieEnvio::consultar($empresa, $tipo, $cod); } catch (Throwable $e2) { $ex = null; }
+                    // se o Omie chegou a criar, não deixar órfão: tenta localizar pelo código de integração.
+                    // "Lançamento já cadastrado" (Client-102) = entrou num envio anterior que a Hostinger cortou antes de gravar aqui → consulta DIRETA (a lista em cache não sabe dele)
+                    $jaCad = (bool)preg_match('/j[áa] cadastrado para o C[óo]digo de Integra|Client-102/iu', $e->getMessage());
+                    try { $ex = $parou ? null : ($jaCad ? OmieEnvio::consultarPorIntegracao($empresa, $tipo, $cod) : OmieEnvio::consultar($empresa, $tipo, $cod)); } catch (Throwable $e2) { $ex = null; }
+                    if ($ex && !empty($ex['codigo_lancamento_omie']) && abs((float)($ex['valor_documento'] ?? 0) - (float)$l['valor']) > 0.005) {
+                        $msg = 'já existe no Omie um título com o código ' . $cod . ' mas com valor diferente (cód. Omie ' . $ex['codigo_lancamento_omie'] . ', R$ ' . number_format((float)$ex['valor_documento'], 2, ',', '.') . ' × R$ ' . number_format((float)$l['valor'], 2, ',', '.') . ') — confira no Omie; se for outro título, exclua-o ou mude o código'; $ex = null;
+                    }
                     if ($ex && !empty($ex['codigo_lancamento_omie'])) {
                         $omieId = (int)$ex['codigo_lancamento_omie'];
                         $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', exportacao_id = ?, omie_id = ?, omie_erro = NULL WHERE id = ?")->execute([$expId, $omieId, (int)$l['id']]);
                         cf_exp_log_envio($pdo, $expId, $l, $empresa, $tipo, 'incluir', 'ok', $omieId, $r['pedido'], $ex, 'resposta com erro, mas o título existe no Omie: ' . $e->getMessage(), (int)$u['id'], true);
                         $enviadas[] = ['id' => (int)$l['id'], 'codigo' => $cod, 'omie_id' => $omieId]; $total += (float)$l['valor'];
-                        $avisos[] = "$cod: o Omie respondeu erro mas o título foi criado (cód. $omieId)"; continue;
+                        $avisos[] = $jaCad ? "$cod: já tinha entrado no Omie num envio anterior (cód. $omieId) — vinculado sem reenviar" : "$cod: o Omie respondeu erro mas o título foi criado (cód. $omieId)"; continue;
                     }
                     $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = ? WHERE id = ?')->execute([$msg, (int)$l['id']]);
                     cf_exp_log_envio($pdo, null, $l, $empresa, $tipo, 'incluir', 'erro', null, $r['pedido'], null, $msg, (int)$u['id']);
@@ -1040,13 +1045,29 @@ document.getElementById('exp-forcar').onclick = async () => {
     if (!ids.length) return;
     if (!await pergunta('Enviar ' + ids.length + ' título(s) para o Omie pela API? Cada linha é conferida antes; as que passarem são incluídas no Omie na hora (dá pra desfazer enquanto não forem baixadas).', 'Enviar para o Omie?', 'Sim, enviar')) return;
     be.disabled = true;
-    const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 5;
+    const j = {enviadas:[], falhas:[], avisos:[], total:0, exportacao_id:null}; const BL = 3;   // blocos pequenos: a Hostinger corta requisições longas
+    // envio de um bloco com nova tentativa quando a Hostinger corta (502/503/504/429 ou conexão caída). Reenviar é seguro: o servidor
+    // vincula o que já entrou no Omie (pela lista e pelo "já cadastrado") em vez de duplicar.
+    async function postEnvio(body, info){
+      for (let tent = 1; tent <= 3; tent++) {
+        body.csrf = csrf; body.empresa = empresa; body.tipo = tipo;
+        let r = null, jj = null;
+        try { r = await fetch('/capa-financeira/exportar.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); try { jj = await r.json(); } catch(e) {} } catch(e) { r = null; }
+        if (r && r.ok && jj && jj.ok) return jj;
+        const st = r ? r.status : 0;
+        if (r && jj && !jj.ok && jj.erro) { await aviso('erro', 'Não foi possível concluir', jj.erro); return null; }   // erro de negócio: não insiste
+        if (tent === 3 || ![0, 429, 502, 503, 504, 520, 521, 522, 524].includes(st)) { await aviso('erro', 'Não foi possível concluir', 'Erro ' + st + ': ' + (HTTP_EXPL[st] || 'resposta inesperada do servidor.')); return null; }
+        const esp = 20 * tent;
+        for (let s = esp; s > 0; s--) { if (info) info('o servidor cortou a requisição (erro ' + (st || 'de conexão') + ') — nova tentativa em ' + s + ' s (' + tent + '/2)…'); await new Promise(res => setTimeout(res, 1000)); }
+      }
+      return null;
+    }
     const prog = window.CFModal ? CFModal.progresso({titulo: 'Enviando ' + ids.length + ' título(s) para o Omie', tau: 6}) : null;
     for (let i = 0; i < ids.length; i += BL) {
       const ate = Math.min(i + BL, ids.length);
       be.textContent = 'Enviando… ' + ate + '/' + ids.length;
       if (prog) prog.pct(i / ids.length * 100).faixa(i / ids.length * 100, ate / ids.length * 100 - 1, 'conferindo e enviando ' + (i + 1) + '–' + ate + ' de ' + ids.length + (j.enviadas.length ? ' · ' + j.enviadas.length + ' já no Omie' : '') + '…');
-      const r = await post({acao:'enviar_api', ids: ids.slice(i, i + BL), exportacao_id: j.exportacao_id, ultimo: i + BL >= ids.length ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value});
+      const r = await postEnvio({acao:'enviar_api', ids: ids.slice(i, i + BL), exportacao_id: j.exportacao_id, ultimo: i + BL >= ids.length ? 1 : 0, data_registro: document.getElementById('exp-reg').value, emissao: document.getElementById('exp-emi').value}, t => { if (prog) prog.texto(t); be.textContent = t; });
       if (!r) { if (prog) prog.fechar(); if (j.enviadas.length) await aviso('parcial', 'O envio parou no meio', 'Já enviados: ' + j.enviadas.map(e => e.codigo).join(', ') + '. Os enviados aparecem em "Enviados pela API" e os demais continuam pendentes.'); be.disabled = false; be.textContent = 'Enviar pro Omie (API)'; if (j.enviadas.length) location.reload(); return; }
       j.enviadas.push(...r.enviadas); j.falhas.push(...r.falhas); j.avisos.push(...r.avisos); j.total += r.total; if (r.exportacao_id) j.exportacao_id = r.exportacao_id;
       if (r.parou) { ids.slice(i + BL).forEach(id => j.falhas.push({codigo: 'linha ' + id, msg: 'não tentado: ' + r.parou})); break; }
