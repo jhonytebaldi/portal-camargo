@@ -97,7 +97,8 @@ final class OmieEnvio
         static $mem = [];   // mesma requisição: não decodifica o JSON de novo a cada consulta
         $f = self::cacheArq($nome);
         if (!$forcar && isset($mem[$nome]) && is_file($f) && filemtime($f) === $mem[$nome][0]) return $mem[$nome][1];
-        if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j)) { $mem[$nome] = [filemtime($f), $j]; return $j; } }
+        // arquivo do formato antigo (sem _completa) conta como vencido: é lido por inteiro uma vez e daí em diante só incrementalmente
+        if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j) && isset($j['_completa']) && (time() - (int)$j['_completa']) < self::LISTA_CACHE_SEG) { $mem[$nome] = [filemtime($f), $j]; return $j; } }
         $lista = $carrega();
         $lista['_dia'] = date('d/m/Y'); $lista['_completa'] = time();
         @file_put_contents($f, json_encode($lista, JSON_UNESCAPED_UNICODE));
