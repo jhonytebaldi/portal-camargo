@@ -16,6 +16,9 @@
    ===================================================================== */
 declare(strict_types=1);
 
+/** o orçamento de tempo acabou no meio de uma lista grande; a próxima requisição continua de onde parou */
+class OmieContinuar extends RuntimeException {}
+
 final class OmieEnvio
 {
     public const CACHE_SEG = 6 * 3600;
@@ -51,17 +54,27 @@ final class OmieEnvio
         return $cat;
     }
 
-    private static function paginar(string $empresa, string $path, string $metodo, string $lista, int $porPagina = 200, bool $fresco = false): array
+    /** lançada quando o orçamento de tempo da requisição acabou no meio de uma lista grande: o progresso fica salvo e a próxima requisição continua */
+    public static ?float $prazo = null;   // microtime limite desta requisição (null = sem limite)
+    private static function paginar(string $empresa, string $path, string $metodo, string $lista, int $porPagina = 100, bool $fresco = false, array $filtro = [], ?string $parcial = null): array
     {
-        $out = []; $pag = 1;
+        // o Omie devolve no máximo 100 por página (pede 500, vêm 100): contas a pagar da Vertical = 24 páginas ≈ 35 s.
+        // Com $parcial, o progresso fica num arquivo e a leitura pode ser retomada na requisição seguinte (ver OmieContinuar).
+        $out = []; $pag = 1; $fp = $parcial ? self::cacheArq($parcial) : null;
+        if ($fp && is_file($fp) && (time() - filemtime($fp)) < 900) { $j = json_decode((string)file_get_contents($fp), true); if (is_array($j) && ($j['filtro'] ?? null) === $filtro) { $out = $j['out']; $pag = (int)$j['pag']; } }
         do {
-            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina], $fresco); }
+            try { $r = OmieApi::call($empresa, $path, $metodo, ['pagina' => $pag, 'registros_por_pagina' => $porPagina] + $filtro, $fresco); }
             // lista vazia vem como erro "Não existem registros" (5113). Já "Dados do WebService não foram encontrados" (1013) é o serviço
             // do Omie fora do ar (visto em 06/10/2026 no contapagar das 3 empresas ao mesmo tempo) — não é lista vazia, é indisponibilidade.
             catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113/iu', $e->getMessage())) break; throw $e; }
             foreach ($r[$lista] ?? [] as $x) $out[] = $x;
             $tot = (int)($r['total_de_paginas'] ?? 1); $pag++;
+            if ($pag <= $tot && $fp && self::$prazo !== null && microtime(true) > self::$prazo) {
+                @file_put_contents($fp, json_encode(['pag' => $pag, 'filtro' => $filtro, 'out' => $out], JSON_UNESCAPED_UNICODE));
+                throw new OmieContinuar("lista $metodo: página " . ($pag - 1) . " de $tot lida — continua na próxima requisição");
+            }
         } while ($pag <= $tot && $pag < 200);
+        if ($fp && is_file($fp)) @unlink($fp);
         return $out;
     }
 
@@ -69,7 +82,8 @@ final class OmieEnvio
        Regra do Omie: a 10ª requisição consecutiva com erro no mesmo IP+AppKey+Método bloqueia por 30 min — e "erro" inclui
        "Lançamento não cadastrado" / "Não existem registros". Por isso NÃO se consulta título a título nem cliente a cliente:
        carrega-se a lista inteira (sempre sucesso), guarda em cache curto e confere localmente. */
-    public const LISTA_CACHE_SEG = 600;
+    public const LISTA_CACHE_SEG = 7 * 86400;   // leitura COMPLETA só a cada 7 dias; no meio, atualização incremental (só o que entrou/mudou desde a última) — ver atualizar()
+    public const ATUALIZA_SEG = 60;            // não pede atualização incremental mais de uma vez por minuto (REDUNDANT)
 
     private static function cacheArq(string $nome): string
     {
@@ -85,6 +99,7 @@ final class OmieEnvio
         if (!$forcar && isset($mem[$nome]) && is_file($f) && filemtime($f) === $mem[$nome][0]) return $mem[$nome][1];
         if (!$forcar && is_file($f) && (time() - filemtime($f)) < self::LISTA_CACHE_SEG) { $j = json_decode((string)file_get_contents($f), true); if (is_array($j)) { $mem[$nome] = [filemtime($f), $j]; return $j; } }
         $lista = $carrega();
+        $lista['_dia'] = date('d/m/Y'); $lista['_completa'] = time();
         @file_put_contents($f, json_encode($lista, JSON_UNESCAPED_UNICODE));
         clearstatcache(true, $f);
         $mem[$nome] = [@filemtime($f), $lista];
@@ -93,32 +108,75 @@ final class OmieEnvio
     /** títulos da empresa/tipo indexados pelo código de integração (só os nossos: 1234-P001) */
     public static function titulos(string $empresa, string $tipo, bool $forcar = false): array
     {
-        return self::listaCache("titulos-$empresa-$tipo", function () use ($empresa, $tipo) {
-            $out = [];
-            foreach (self::paginar($empresa, self::path($tipo), 'Listar' . ($tipo === 'P' ? 'ContasPagar' : 'ContasReceber'), 'conta_' . ($tipo === 'P' ? 'pagar' : 'receber') . '_cadastro', 500) as $t) {
-                $ci = (string)($t['codigo_lancamento_integracao'] ?? '');
-                $reg = ['omie_id' => (int)($t['codigo_lancamento_omie'] ?? 0), 'forn' => (int)($t['codigo_cliente_fornecedor'] ?? 0), 'valor' => (float)($t['valor_documento'] ?? 0),
-                        'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => (float)($t['valor_pag'] ?? 0), 'doc' => (string)($t['numero_documento'] ?? '')];
-                if ($ci !== '') $out['por_codigo'][$ci] = $reg;
-                $out['por_forn'][$reg['forn']][] = $reg + ['codigo' => $ci];
-            }
-            return $out + ['por_codigo' => [], 'por_forn' => []];
+        $nome = "titulos-$empresa-$tipo";
+        if ($forcar && is_file(self::cacheArq($nome))) return self::atualizarTitulos($empresa, $tipo);   // "forçar" = incremental (a completa leva ~35 s)
+        return self::listaCache($nome, function () use ($empresa, $tipo) {
+            $out = ['por_codigo' => [], 'por_forn' => []];
+            foreach (self::paginar($empresa, self::path($tipo), 'Listar' . ($tipo === 'P' ? 'ContasPagar' : 'ContasReceber'), 'conta_' . ($tipo === 'P' ? 'pagar' : 'receber') . '_cadastro', 100, false, [], "parcial-titulos-$empresa-$tipo") as $t) self::indexarTitulo($out, $t);
+            return $out;
         }, $forcar);
+    }
+    private static function tituloReg(array $t): array
+    {
+        return ['omie_id' => (int)($t['codigo_lancamento_omie'] ?? 0), 'forn' => (int)($t['codigo_cliente_fornecedor'] ?? 0), 'valor' => (float)($t['valor_documento'] ?? 0),
+                'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => (float)($t['valor_pag'] ?? 0), 'doc' => (string)($t['numero_documento'] ?? '')];
+    }
+    private static function indexarTitulo(array &$out, array $t): void
+    {
+        $ci = (string)($t['codigo_lancamento_integracao'] ?? ''); $reg = self::tituloReg($t);
+        if ($ci !== '') $out['por_codigo'][$ci] = $reg;
+        // por fornecedor: substitui se o mesmo título já estava (atualização incremental)
+        $l = &$out['por_forn'][$reg['forn']]; $l = array_values(array_filter($l ?? [], fn($x) => (int)$x['omie_id'] !== $reg['omie_id'])); $l[] = $reg + ['codigo' => $ci]; unset($l);
+    }
+    /** atualização incremental da lista de títulos: só o que foi registrado desde a última leitura (com 3 dias de folga). Poucas páginas, segundos. */
+    public static function atualizarTitulos(string $empresa, string $tipo): array
+    {
+        $nome = "titulos-$empresa-$tipo"; $f = self::cacheArq($nome);
+        if (!is_file($f) || (time() - (int)(json_decode((string)file_get_contents($f), true)['_completa'] ?? 0)) > self::LISTA_CACHE_SEG) return self::titulos($empresa, $tipo);
+        $j = json_decode((string)file_get_contents($f), true); if (!is_array($j)) return self::titulos($empresa, $tipo);
+        if ((time() - filemtime($f)) < self::ATUALIZA_SEG) return $j;
+        $de = DateTimeImmutable::createFromFormat('d/m/Y', (string)($j['_dia'] ?? '')) ?: new DateTimeImmutable('-7 days');
+        $filtro = ['filtrar_por_data_de' => $de->modify('-3 days')->format('d/m/Y'), 'filtrar_por_data_ate' => (new DateTimeImmutable('+1 day'))->format('d/m/Y')];
+        foreach (self::paginar($empresa, self::path($tipo), 'Listar' . ($tipo === 'P' ? 'ContasPagar' : 'ContasReceber'), 'conta_' . ($tipo === 'P' ? 'pagar' : 'receber') . '_cadastro', 100, true, $filtro, "parcial-$nome") as $t) self::indexarTitulo($j, $t);
+        $j['_dia'] = date('d/m/Y');
+        @file_put_contents($f, json_encode($j, JSON_UNESCAPED_UNICODE)); clearstatcache(true, $f);
+        return $j;
     }
     /** cadastros de clientes/fornecedores da empresa: por documento (só dígitos) e por nome (key) */
     public static function cadastros(string $empresa, bool $forcar = false): array
     {
-        return self::listaCache("cadastros-$empresa", function () use ($empresa, $forcar) {
+        $nome = "cadastros-$empresa";
+        if ($forcar && is_file(self::cacheArq($nome))) return self::atualizarCadastros($empresa);   // "forçar" = incremental (a completa leva ~12 s)
+        return self::listaCache($nome, function () use ($empresa) {
             $out = ['por_doc' => [], 'por_nome' => []];
-            foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100, $forcar) as $c) {
-                $reg = ['codigo_cliente_omie' => (int)$c['codigo_cliente_omie'], 'razao_social' => (string)($c['razao_social'] ?? ''), 'nome_fantasia' => (string)($c['nome_fantasia'] ?? ''),
-                        'cnpj_cpf' => (string)($c['cnpj_cpf'] ?? ''), 'inativo' => (string)($c['inativo'] ?? 'N'), 'dadosBancarios' => ['cChavePix' => (string)($c['dadosBancarios']['cChavePix'] ?? '')]];
-                $dig = preg_replace('/\D+/', '', $reg['cnpj_cpf']);
-                if ($dig !== '') $out['por_doc'][$dig][] = $reg;
-                foreach (array_unique(array_filter([CapaParser::key($reg['razao_social']), CapaParser::key($reg['nome_fantasia'])])) as $k) $out['por_nome'][$k][] = $reg;
-            }
+            foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100, false, [], "parcial-cadastros-$empresa") as $c) self::indexarCadastro($out, $c);
             return $out;
         }, $forcar);
+    }
+    private static function indexarCadastro(array &$out, array $c): void
+    {
+        $reg = ['codigo_cliente_omie' => (int)$c['codigo_cliente_omie'], 'razao_social' => (string)($c['razao_social'] ?? ''), 'nome_fantasia' => (string)($c['nome_fantasia'] ?? ''),
+                'cnpj_cpf' => (string)($c['cnpj_cpf'] ?? ''), 'inativo' => (string)($c['inativo'] ?? 'N'), 'dadosBancarios' => ['cChavePix' => (string)($c['dadosBancarios']['cChavePix'] ?? '')]];
+        // atualização: tira a versão anterior do mesmo cadastro (nome/documento podem ter mudado)
+        $id = $reg['codigo_cliente_omie'];
+        foreach (['por_doc', 'por_nome'] as $ix) foreach ($out[$ix] as $k => $lst) { $n = array_values(array_filter($lst, fn($x) => (int)$x['codigo_cliente_omie'] !== $id)); if ($n) $out[$ix][$k] = $n; else unset($out[$ix][$k]); }
+        $dig = preg_replace('/\D+/', '', $reg['cnpj_cpf']);
+        if ($dig !== '') $out['por_doc'][$dig][] = $reg;
+        foreach (array_unique(array_filter([CapaParser::key($reg['razao_social']), CapaParser::key($reg['nome_fantasia'])])) as $k) $out['por_nome'][$k][] = $reg;
+    }
+    /** atualização incremental dos cadastros: só os incluídos/alterados desde a última leitura (com 3 dias de folga) */
+    public static function atualizarCadastros(string $empresa): array
+    {
+        $nome = "cadastros-$empresa"; $f = self::cacheArq($nome);
+        if (!is_file($f) || (time() - (int)(json_decode((string)file_get_contents($f), true)['_completa'] ?? 0)) > self::LISTA_CACHE_SEG) return self::cadastros($empresa);
+        $j = json_decode((string)file_get_contents($f), true); if (!is_array($j)) return self::cadastros($empresa);
+        if ((time() - filemtime($f)) < self::ATUALIZA_SEG) return $j;
+        $de = DateTimeImmutable::createFromFormat('d/m/Y', (string)($j['_dia'] ?? '')) ?: new DateTimeImmutable('-7 days');
+        $filtro = ['filtrar_por_data_de' => $de->modify('-3 days')->format('d/m/Y'), 'filtrar_por_data_ate' => (new DateTimeImmutable('+1 day'))->format('d/m/Y')];
+        foreach (self::paginar($empresa, 'geral/clientes/', 'ListarClientes', 'clientes_cadastro', 100, true, $filtro, "parcial-$nome") as $c) self::indexarCadastro($j, $c);
+        $j['_dia'] = date('d/m/Y');
+        @file_put_contents($f, json_encode($j, JSON_UNESCAPED_UNICODE)); clearstatcache(true, $f);
+        return $j;
     }
     /** depois de incluir/excluir um título: atualiza o cache local sem nova chamada */
     public static function lembrarTitulo(string $empresa, string $tipo, string $codigo, ?array $t): void
