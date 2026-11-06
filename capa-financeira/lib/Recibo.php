@@ -33,7 +33,14 @@ final class Recibo
         $logo = $logo ?: __DIR__ . '/../modelos/logo_camargo.jpg';
         if (is_file($logo)) $p->imagemJpeg($logo, 170, 'C');
         $p->espaco(6);
-        $p->linha('Recibo Nº: ' . $numero, 'Helvetica', 11, 'D');
+        // "Recibo Nº:" com muitos códigos: quebra em várias linhas (alinhadas à direita) em vez de escorrer para fora da página
+        $cods = array_map(fn($l) => (string)$l['codigo_integracao'], $linhas); $lin = 'Recibo Nº: '; $util = $p->larguraUtil();
+        foreach ($cods as $i => $c) {
+            $tent = $lin . ($i > 0 && rtrim($lin) !== 'Recibo Nº:' ? ' / ' : '') . $c;
+            if ($p->largura($tent, 'Helvetica', 11) > $util && rtrim($lin) !== 'Recibo Nº:') { $p->linha(rtrim($lin) . ' /', 'Helvetica', 11, 'D'); $lin = $c; }
+            else $lin = $tent;
+        }
+        $p->linha($lin, 'Helvetica', 11, 'D');
         $p->espaco(14);
         $p->linha('DECLARAÇÃO E RECIBO', 'Helvetica-Bold', 12, 'C');
         $p->espaco(14);
@@ -197,8 +204,13 @@ final class Recibo
     /** nome de arquivo: Recibo_1375-P006_Jhony_Tebaldi.pdf */
     public static function nomeArquivo(string $numero, string $nomePessoa): string
     {
+        // nome curto: o sistema de arquivos aceita até 255 bytes — com muitos recibos num só (ex.: 14 códigos) o nome estourava,
+        // o PDF não era gravado e o recibo ficava "não encontrado". Acima de 4 códigos: os 4 primeiros + "e-mais-N".
         $n = preg_replace('/[^A-Za-z0-9]+/', '_', (string)iconv('UTF-8', 'ASCII//TRANSLIT', $nomePessoa)) ?: 'recibo';
-        $num = preg_replace('/[^A-Za-z0-9-]+/', '_', str_replace(' / ', '+', $numero));
-        return 'Recibo_' . $num . '_' . trim($n, '_') . '.pdf';
+        $cods = array_values(array_filter(array_map('trim', explode(' / ', $numero)), fn($c) => $c !== ''));
+        if (count($cods) > 4) $cods = array_merge(array_slice($cods, 0, 4), ['e-mais-' . (count($cods) - 4)]);
+        $num = preg_replace('/[^A-Za-z0-9-]+/', '_', implode('+', $cods));
+        $nome = 'Recibo_' . $num . '_' . trim(mb_substr(trim($n, '_'), 0, 60), '_') . '.pdf';
+        return strlen($nome) > 180 ? substr($nome, 0, 176) . '.pdf' : $nome;
     }
 }
