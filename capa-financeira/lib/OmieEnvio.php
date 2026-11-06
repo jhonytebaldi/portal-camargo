@@ -377,6 +377,14 @@ final class OmieEnvio
         self::lembrarTitulo($empresa, $tipo, (string)($pedido['codigo_lancamento_integracao'] ?? ''), $pedido + ['codigo_lancamento_omie' => (int)($r['codigo_lancamento_omie'] ?? 0), 'status_titulo' => 'A VENCER']);
         return $r;
     }
+    /** consulta DIRETA no Omie pelo código de integração (sem a lista em cache) — para quando o Omie diz "já cadastrado" e a lista ainda não sabe */
+    public static function consultarPorIntegracao(string $empresa, string $tipo, string $codigo): ?array
+    {
+        try { $t = OmieApi::call($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_integracao' => $codigo], true); }
+        catch (RuntimeException $e) { if (preg_match('/n[ãa]o cadastrado|n[ãa]o (foi )?(encontrad|localizad)|Client-105|Client-103/iu', $e->getMessage())) return null; throw $e; }
+        if (!empty($t['codigo_lancamento_omie'])) self::lembrarTitulo($empresa, $tipo, $codigo, $t);
+        return $t ?: null;
+    }
     /** conferência depois de incluir: consulta pelo código Omie (chamada diferente da pré-checagem, não cai no "consumo redundante") */
     public static function consultarPorOmieId(string $empresa, string $tipo, int $omieId): ?array
     {
