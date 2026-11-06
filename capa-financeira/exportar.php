@@ -309,6 +309,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $q = $pdo->prepare("SELECT COUNT(*) FROM cf_lancamentos l WHERE l.exportacao_id = ? AND l.tipo = 'P' AND l.status = 'exportado' AND NOT EXISTS (SELECT 1 FROM cf_envios_omie e WHERE e.lancamento_id = l.id AND e.acao = 'alterar' AND e.status = 'ok')"); $q->execute([$id]);
             exit(json_encode(['ok' => true, 'linhas' => $res, 'restam' => (int)$q->fetchColumn()], JSON_UNESCAPED_UNICODE));
         }
+        if ($acao === 'puxar_nf') {
+            // linhas PENDENTES (confirmadas, não enviadas) sem Nota Fiscal: relê a capa guardada com o leitor atual e preenche a NF.
+            // Não toca em linha que já tem NF nem em título já enviado ao Omie.
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
+            $tp = ($in['tipo'] ?? 'R') === 'P' ? 'P' : 'R';
+            $q = $pdo->prepare("SELECT l.id, l.capa_id, l.codigo_integracao, l.chave_exata, l.linha_xlsx, c.arquivo_path, c.cod AS capa_cod FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id
+                                WHERE l.status = 'confirmado' AND c.status = 'confirmada' AND c.empresa = ? AND l.tipo = ? AND (l.nota_fiscal IS NULL OR l.nota_fiscal = '') ORDER BY l.codigo_integracao"); $q->execute([$empresa, $tp]);
+            $parser = cf_parser(); $capas = []; $feitas = []; $semNf = 0; $probs = [];
+            foreach ($q->fetchAll() as $l) {
+                $cid = (int)$l['capa_id'];
+                if (!isset($capas[$cid])) {
+                    try { $capas[$cid] = is_file((string)$l['arquivo_path']) ? $parser->parse((string)$l['arquivo_path']) : ['erro' => 'arquivo da capa não está mais no servidor']; }
+                    catch (Throwable $e) { $capas[$cid] = ['erro' => 'não consegui reler a capa: ' . $e->getMessage()]; }
+                }
+                $r = $capas[$cid];
+                if (isset($r['erro'])) { $probs[] = $l['codigo_integracao'] . ': ' . $r['erro']; continue; }
+                $tc = $tp === 'P' ? 'PAGAR' : 'RECEBER'; $ach = null;
+                foreach ($r['linhas'] as $x) if ($x['tipo'] === $tc && ($x['chave_exata'] ?? '') === $l['chave_exata']) { $ach = $x; break; }
+                if (!$ach) foreach ($r['linhas'] as $x) if ($x['tipo'] === $tc && (int)$x['linha_xlsx'] === (int)$l['linha_xlsx']) { $ach = $x; break; }
+                if (!$ach) { $probs[] = $l['codigo_integracao'] . ': linha não encontrada na capa guardada'; continue; }
+                $nf = (string)($ach['nota_fiscal'] ?? '');
+                if ($nf === '') { $semNf++; continue; }
+                $pdo->prepare('UPDATE cf_lancamentos SET nota_fiscal = ? WHERE id = ?')->execute([$nf, (int)$l['id']]);
+                $feitas[] = $l['codigo_integracao'] . ' → ' . $nf;
+            }
+            exit(json_encode(['ok' => true, 'feitas' => $feitas, 'sem_nf' => $semNf, 'problemas' => $probs], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'conferir_nf') {
             $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida');
             // reprocessa a capa guardada de cada exportação a pagar com o leitor atual e compara a Nota Fiscal com o que foi enviado (sem chamar o Omie)
@@ -627,6 +654,7 @@ portal_header('Exportar para o Omie', $u);
   </div>
   <div class="cf-acoes" style="flex-wrap:wrap;gap:8px">
     <?php if ($apiOk): ?>
+    <button type="button" class="btn cf-btn-sec" id="btn-puxar-nf" title="relê a capa de cada linha pendente que está sem Nota Fiscal e preenche a NF pela condição (coluna G / dicionário). Não mexe em linha que já tem NF nem em título já enviado.">🧾 puxar NF da capa</button>
     <button class="btn cf-btn-sec" id="btn-conferir-api" title="confere na API do Omie tudo o que a importação recusaria: fornecedor/cliente, categoria, conta corrente, departamento, projeto, datas, duplicidade">Conferir para envio</button>
     <button class="btn" id="btn-enviar" title="inclui os títulos direto no Omie pela API (linha a linha; dá pra desfazer)">Enviar pro Omie (API) (<span class="exp-n">0</span>)</button>
     <?php endif; ?>
@@ -906,6 +934,15 @@ document.getElementById('exp-forcar').onclick = async () => {
     const falt = todas.filter(l => !l.ok);
     toast(falt.length ? falt.length + ' título(s) faltando/divergente(s) no Omie' : 'Todos os ' + todas.length + ' títulos estão no Omie');
   }));
+  const bpx = document.getElementById('btn-puxar-nf');
+  if (bpx) bpx.addEventListener('click', async () => {
+    bpx.disabled = true; const pg = window.CFModal ? CFModal.progresso({titulo: 'Relendo as capas', atraso: 250}).faixa(0, 92) : null;
+    const j = await post({acao:'puxar_nf'}); bpx.disabled = false; if (!j) { if (pg) pg.fechar(); return; }
+    const n = j.feitas.length; const det = (n ? 'Preenchidas:\n' + j.feitas.join('\n') : '') + (j.problemas.length ? '\n\nNão conferidas:\n' + j.problemas.join('\n') : '');
+    const av = {tipo: n ? (j.problemas.length ? 'parcial' : 'ok') : 'info', titulo: n ? n + ' linha(s) com a Nota Fiscal preenchida' : 'Nada a preencher', texto: (n ? 'A página vai recarregar para mostrar.' : 'Nenhuma linha pendente sem NF que tenha condição na capa.') + (j.sem_nf ? ' ' + j.sem_nf + ' linha(s) continuam sem NF porque a capa não tem condição (coluna G) para elas.' : ''), detalhe: det.trim()};
+    if (pg) await pg.resultado(av); else await aviso(av.tipo, av.titulo, av.texto, av.detalhe);
+    if (n) location.reload();
+  });
   const bnf = document.getElementById('btn-conferir-nf');
   if (bnf) bnf.addEventListener('click', async () => {
     bnf.disabled = true; bnf.textContent = 'relendo as capas…';
