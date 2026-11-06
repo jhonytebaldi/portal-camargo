@@ -204,6 +204,8 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_recibos ADD COLUMN bruto DECIMAL(14,2) NULL AFTER valor, ADD COLUMN descricao_nf TEXT NULL AFTER bruto");
         $feitos[] = 'cf_recibos.bruto/descricao_nf';
     }
+    if ($tem('cf_recibos')) { $tp = $pdo->query("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cf_recibos' AND COLUMN_NAME = 'numero'")->fetchColumn();
+        if ($tp && strtolower((string)$tp) !== 'text') { $pdo->exec("ALTER TABLE cf_recibos MODIFY numero TEXT NOT NULL"); $feitos[] = 'cf_recibos.numero TEXT'; } }
     // bloco "OBSERVAÇÃO:" do fim da planilha (texto livre do financeiro) — mostrado em destaque na revisão
     // avisos graves da capa (não de linha) que o usuário confirmou — códigos; ex. COMPRADOR_COM_CNPJ
     if (!$colExiste('cf_capas', 'capa_flags_ok')) {
