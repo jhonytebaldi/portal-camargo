@@ -146,7 +146,18 @@ function cf_observacao(array $capa, array $l, ?string $favorecido = null): strin
     if (!empty($capa['cod'])) $p[] = 'COD: ' . $capa['cod'];
     if (!empty($l['condicao'])) $p[] = 'COND: ' . $l['condicao'];
     if (!empty($l['rotulo_fluxo'])) $p[] = 'FLUXO: ' . $l['rotulo_fluxo'];
+    // bloco "OBSERVAÇÃO" escrito no fim da capa: vai por último (antes só do PIX e do ENVIADO POR, que o OmieEnvio acrescenta).
+    // Numa linha só (quebras viram " / ", "|" vira "/") e limitado a 600 caracteres. A ferramenta de recibos ignora este rótulo.
+    if (!empty($capa['obs_final'])) $p[] = 'OBS CAPA: ' . cf_obs_capa_linha((string)$capa['obs_final']);
     return implode(' | ', $p);
+}
+
+/** observação da capa numa linha só, sem o separador "|" e limitada, para caber na observação do Omie */
+function cf_obs_capa_linha(string $txt, int $limite = 600): string
+{
+    $t = trim((string)preg_replace('/\s*[\r\n]+\s*/u', ' / ', trim(str_replace('|', '/', $txt))));
+    $t = (string)preg_replace('/\s{2,}/u', ' ', $t);
+    return mb_strlen($t, 'UTF-8') > $limite ? rtrim(mb_substr($t, 0, $limite - 1, 'UTF-8')) . '…' : $t;
 }
 
 /** campos que, alterados depois de exportar, precisam de ajuste manual no Omie (retrato gravado ao reabrir a capa) */

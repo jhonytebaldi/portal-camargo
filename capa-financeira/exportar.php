@@ -37,7 +37,7 @@ if (isset($_GET['baixar'])) {
 function cf_exp_candidatas(PDO $pdo, string $empresa, string $tipo, ?array $ids = null): array
 {
     $sql = "SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, c.construtora AS capa_construtora, c.bairro AS capa_bairro, c.unidade AS capa_unidade,
-                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, c.versao AS capa_versao, c.compradores AS capa_compradores
+                   c.data_venda AS capa_data_venda, c.empresa AS capa_empresa, c.versao AS capa_versao, c.compradores AS capa_compradores, c.obs_final AS capa_obs_final
             FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id
             WHERE l.status = 'confirmado' AND c.status = 'confirmada' AND c.empresa = ? AND l.tipo = ?";
     $args = [$empresa, $tipo];
@@ -49,7 +49,7 @@ function cf_exp_candidatas(PDO $pdo, string $empresa, string $tipo, ?array $ids 
 function cf_exp_capa(array $l): array
 {
     return ['cod' => $l['capa_cod'], 'cliente' => $l['capa_cliente'], 'construtora' => $l['capa_construtora'], 'bairro' => $l['capa_bairro'],
-            'unidade' => $l['capa_unidade'], 'data_venda' => $l['capa_data_venda'], 'compradores' => $l['capa_compradores'] ?? null];
+            'unidade' => $l['capa_unidade'], 'data_venda' => $l['capa_data_venda'], 'compradores' => $l['capa_compradores'] ?? null, 'obs_final' => $l['capa_obs_final'] ?? null];
 }
 
 /**
