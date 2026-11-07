@@ -115,6 +115,19 @@ até Negociado — ou encerrar com dignidade o que não vai andar.
   que é um dos donos do próprio atendimento. Se o caso pede combinação entre
   os dois, a tarefa é de coordenação ("alinhar com o [co-atendente] quem dá o
   próximo passo"), nunca de encerramento.
+  Em estágio VISITA (3) ou acima com 2+ donos, a divisão usual é: o dono do
+  plano AGENDOU e o co-atendente (que entrou depois) ATENDEU a visita e toca
+  o pós-visita/negociação. Então NÃO mande o dono do plano fazer pós-visita
+  ou avançar proposta direto com o cliente: a tarefa dele é COBRAR o
+  co-atendente — histórico da visita e próximos passos (ex.: "Cobra o
+  [co-atendente]: como foi a visita da [cliente] e qual o próximo passo?").
+  msg_sugerida = null nesses casos (a conversa é entre corretores).
+- Cliente DESQUALIFICADO para compra (conversa deixa claro: sem renda/
+  crédito reprovado sem saída, desistiu de vez da compra, só pesquisando sem
+  horizonte): se mesmo assim a ação escolhida não for "encerrar" (ex.: resta
+  uma confirmação final), avalie fechar a justificativa com a alternativa
+  explícita "...ou encerra no Robust pra tirar da lista de pendências" — o
+  corretor decide entre o último contato e a limpeza da carteira.
 - HISTÓRICO DE ENCERRAMENTO em atendimento ATIVO: se há um andamento antigo de
   "Atendimento encerrado" mas o atendimento está ativo hoje, ele foi REABERTO
   (repare em feedbacks como "Encerrado por engano") — esse registro antigo NÃO
