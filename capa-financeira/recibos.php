@@ -101,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $data = $dataFixa ?: (string)($g[0]['data_prevista'] ?: date('Y-m-d'));
                 $logo = !empty($emp['logo_propria']) && is_file(__DIR__ . '/modelos/logo_' . $emp['id'] . '.jpg') ? __DIR__ . '/modelos/logo_' . $emp['id'] . '.jpg' : null;
                 $r = Recibo::gerar($g, $p, $emp, $data, $cidade, $logo);
-                $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
+                $nome = Recibo::nomeArquivo($r['numero'], $p['nome'], $data);
                 $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
                 if (@file_put_contents($path, $r['pdf']) === false || !is_file($path)) { $pdo->rollBack(); $falha('não consegui gravar o PDF do recibo ' . $r['numero'] . ' no servidor (' . (error_get_last()['message'] ?? 'sem detalhe') . '). Nada foi gravado — confira o espaço/permissões da pasta de dados e tente de novo.'); }
                 $lids = array_map(fn($l) => (int)$l['id'], $g);
