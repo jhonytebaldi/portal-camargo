@@ -112,6 +112,35 @@ function ro_numero(PDO $pdo, array $t): string
     return $cod . '-P' . str_pad((string)(int)$q->fetchColumn(), 3, '0', STR_PAD_LEFT);
 }
 
+/** linha do título para o modal (dados já interpretados: pessoa, recibo existente, marcações) */
+function ro_linha(PDO $pdo, array $pessoas, array $t): array
+{
+    $p = Titulo::pessoaPorDoc($pessoas, $t['doc']); $o = $t['obs']; $ja = ro_recibo_do_titulo($pdo, $t);
+    $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO');
+    $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
+    // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
+    $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE';
+    $classe = $naoAchou ? 'nao' : ($pago ? 'pago' : ($repasse ? 'repasse' : ($ja ? 'ja' : 'novo')));
+    $jc = $ja ? array_values(array_filter(array_map('trim', explode(' / ', (string)$ja['numero'])))) : [];
+    return ['t' => $t, 'classe' => $classe, 'pessoa' => $p ? (string)$p['nome'] : '', 'ja' => $ja ? ['id' => (int)$ja['id'], 'numero' => (string)$ja['numero'], 'curto' => implode(' / ', array_slice($jc, 0, 2)) . (count($jc) > 2 ? ' +' . (count($jc) - 2) : ''), 'data' => (string)$ja['data_recibo']] : null,
+            'funcao' => (string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria'])), 'bonus' => ($o['natureza'] ?? '') === 'BONUS', 'repasse' => $repasse, 'sem_obs' => ($o['padrao'] ?? '') === 'vazio',
+            'cliente' => (string)($o['cliente'] ?? ''), 'imovel' => (string)($o['imovel'] ?? ''), 'cod' => (string)($o['cod'] ?? ''), 'venda' => (string)($o['venda'] ?? ''),
+            'final' => round((float)$t['valor'] - (float)($t['desconto'] ?? 0) - (float)($t['impostos'] ?? 0) + (float)($t['juros'] ?? 0), 2), 'grupo' => $t['conta'] . '|' . $t['doc_digitos'] . '|' . ($t['previsao'] ?: $t['vencimento']),
+            'numero_obs' => (string)($o['recibo'] ?? ''), 'validado' => (string)($t['validado'] ?? '')];
+}
+/** confere um título do .xlsx no Omie (CNPJ/CPF + vencimento + valor): preenche omie_id, cod_int, validado, obs_baixa */
+function ro_validar(string $conta, array &$t, array &$cache): void
+{
+    if ($t['doc'] === '' || !$t['vencimento']) { $t['validado'] = 'sem CNPJ/vencimento p/ conferir'; return; }
+    $k = $t['doc'] . '|' . $t['vencimento'];
+    try { $cache[$k] ??= OmieApi::procurarTitulo($conta, $t['doc'], $t['vencimento']); }
+    catch (Throwable $e) { $t['validado'] = 'erro ao consultar: ' . $e->getMessage(); return; }
+    $ach = null;
+    foreach ($cache[$k] as $c) if (abs((float)($c['cabecTitulo']['nValorTitulo'] ?? 0) - (float)$t['valor']) < 0.005) { $ach = $c; break; }
+    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . Titulo::situacaoCompleta($ach); $t['obs_baixa'] = Titulo::obsBaixa($ach); }
+    else $t['validado'] = 'NÃO ENCONTRADO no Omie';
+}
+
 /* ---------- gerar (JSON) ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['CONTENT_TYPE'] ?? ''), 'application/json')) {
     header('Content-Type: application/json; charset=utf-8');
@@ -128,6 +157,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             if ($r['status'] !== 'atual') $falha('o recibo ' . $r['numero'] . ' já está ' . $r['status'] . ' — nada a cancelar. Para emitir outro, busque o título de novo e marque "gerar de novo".');
             $pdo->prepare("UPDATE ro_recibos SET status = 'cancelado', motivo = ?, encerrado_por = ?, encerrado_em = NOW() WHERE id = ?")->execute([$motivo ?: null, $u['id'], $id]);
             exit(json_encode(['ok' => true, 'numero' => $r['numero']]));
+        }
+        if (($in['acao'] ?? '') === 'validar') {
+            // confere no Omie os títulos do relatório, em blocos com orçamento de tempo (~20 s): devolve as linhas conferidas e os índices que sobraram
+            $conta = (string)($in['conta'] ?? ''); if (!isset($contasApi[$conta])) $falha('API do Omie não configurada para esta empresa');
+            if (($resta = OmieApi::bloqueadoPor($conta)) > 0) $falha('A API do Omie está bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min; enquanto isso dá para gerar marcando "incluir títulos não encontrados".');
+            $t0 = microtime(true); $cache = []; $linhas = []; $restantes = [];
+            foreach ((array)($in['itens'] ?? []) as $i => $t) {
+                if ((microtime(true) - $t0) > 20) { $restantes[] = (int)($t['_i'] ?? $i); continue; }
+                $t = Titulo::normalizar($t); ro_validar($conta, $t, $cache);
+                $linhas[] = ro_linha($pdo, $pessoas, $t) + ['_i' => (int)($t['_i'] ?? $i)];
+            }
+            exit(json_encode(['ok' => true, 'linhas' => $linhas, 'restantes' => $restantes], JSON_UNESCAPED_UNICODE));
         }
         if (($in['acao'] ?? '') === 'restaurar') {
             // desfaz um cancelamento/substituição: o recibo volta a "atual" (se nenhum título dele estiver em outro recibo atual)
@@ -198,7 +239,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $pdo->prepare('INSERT INTO ro_recibos (conta, numero, fingerprints, omie_ids, fornecedor_doc, fornecedor_nome, pessoa_id, valor, bruto, descricao_nf, data_recibo, itens, origem, validado, arquivo_nome, arquivo_path, gerado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                 ->execute([$t0['conta'], $r['numero'], json_encode($fps), json_encode($ids), (string)$t0['doc'], $r['recebedor'], $p['id'] ?? null, $r['valor'], $r['bruto'], $r['descricao_nf'], $data, json_encode($itensGravar, JSON_UNESCAPED_UNICODE), $t0['origem'], (string)($t0['validado'] ?? ($t0['origem'] === 'api' ? $t0['situacao'] : '')), $nome, $path, $u['id']]);
             $rid = (int)$pdo->lastInsertId();
-            $resumo[] = ['id' => $rid, 'numero' => $r['numero'], 'recebedor' => $r['recebedor'], 'valor' => $r['valor'], 'bruto' => $r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'nf_encurtado' => $r['nf_encurtado'], 'link' => '?baixar=' . $rid . '&ver=1'];
+            $todasFps = []; foreach ($g as $t) foreach (ro_fps($t) as $fp) $todasFps[] = $fp;
+            $resumo[] = ['id' => $rid, 'numero' => $r['numero'], 'recebedor' => $r['recebedor'], 'valor' => $r['valor'], 'bruto' => $r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'nf_encurtado' => $r['nf_encurtado'], 'link' => '?baixar=' . $rid . '&ver=1', 'fingerprints' => array_values(array_unique($todasFps))];
             foreach ($antigos as $aid) $pdo->prepare("UPDATE ro_recibos SET status = 'substituido', substituido_por = ?, encerrado_por = ?, encerrado_em = NOW() WHERE id = ? AND status = 'atual'")->execute([$rid, $u['id'], $aid]);
             $ins = $pdo->prepare('INSERT IGNORE INTO ro_recibo_itens (recibo_id, fingerprint) VALUES (?, ?)');
             foreach ($g as $t) foreach (ro_fps($t) as $fp) $ins->execute([$rid, $fp]);
@@ -238,28 +280,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $gestor) {
             $rel = Titulo::doRelatorio($f['tmp_name']);
             $contaSel = $rel['conta'] ?: $contaSel; $origem = 'xlsx';
             $titulos = $rel['titulos'];
-            // validação no Omie (se a API estiver configurada): mesmo CNPJ/CPF + vencimento + valor
-            if (isset($contasApi[$contaSel])) {
-                $cache = [];
-                foreach ($titulos as &$t) {
-                    if ($t['doc'] === '' || !$t['vencimento']) { $t['validado'] = 'sem CNPJ/vencimento p/ conferir'; continue; }
-                    $k = $t['doc'] . '|' . $t['vencimento'];
-                    try { $cache[$k] ??= OmieApi::procurarTitulo($contaSel, $t['doc'], $t['vencimento']); }
-                    catch (Throwable $e) { $t['validado'] = 'erro ao consultar: ' . $e->getMessage(); continue; }
-                    $ach = null;
-                    foreach ($cache[$k] as $c) if (abs((float)($c['cabecTitulo']['nValorTitulo'] ?? 0) - (float)$t['valor']) < 0.005) { $ach = $c; break; }
-                    if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . Titulo::situacaoCompleta($ach); $t['obs_baixa'] = Titulo::obsBaixa($ach); $t = Titulo::normalizar($t); }
-                    else $t['validado'] = 'NÃO ENCONTRADO no Omie';
-                }
-                unset($t);
-            } else foreach ($titulos as &$t) { $t['validado'] = 'API não configurada — sem conferência'; } unset($t);
+            if (!$contaSel) throw new RuntimeException('não reconheci a empresa no cabeçalho do relatório (esperava VERTICAL, CAMARGO ou MZ7): ' . $rel['empresa_txt']);
+            // a conferência no Omie (CNPJ + vencimento + valor) é feita depois, pelo modal, em blocos (ação "validar") — não trava a leitura
+            foreach ($titulos as &$t) { $t['validado'] = isset($contasApi[$contaSel]) ? 'conferindo…' : 'API não configurada — sem conferência'; } unset($t);
         }
     } catch (Throwable $e) { $erroBusca = $e->getMessage(); }
+    // resposta para o modal (os formulários enviam por fetch)
+    if (!empty($_POST['ajax'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        if ($erroBusca) { http_response_code(400); exit(json_encode(['ok' => false, 'erro' => $erroBusca], JSON_UNESCAPED_UNICODE)); }
+        $linhas = []; foreach ($titulos as $i => $t) $linhas[] = ro_linha($pdo, $pessoas, $t) + ['_i' => $i];
+        exit(json_encode(['ok' => true, 'origem' => $origem, 'conta' => $contaSel, 'empresa' => ro_empresa($empresas, $contaSel)['nome'], 'periodo' => $origem === 'api' ? cf_data_br($de) . ' a ' . cf_data_br($ate) : '', 'validar' => $origem === 'xlsx' && isset($contasApi[$contaSel]), 'linhas' => $linhas], JSON_UNESCAPED_UNICODE));
+    }
 }
 
 /* ---------- histórico ---------- */
 $f = ['busca' => trim((string)($_GET['busca'] ?? '')), 'de' => (string)($_GET['hde'] ?? ''), 'ate' => (string)($_GET['hate'] ?? ''), 'conta' => (string)($_GET['hconta'] ?? ''),
-      'origem' => in_array($_GET['horigem'] ?? '', ['api', 'xlsx'], true) ? (string)$_GET['horigem'] : '', 'status' => in_array($_GET['hstatus'] ?? '', ['atual', 'substituido', 'cancelado', 'todos'], true) ? (string)$_GET['hstatus'] : 'atual'];
+      'origem' => in_array($_GET['horigem'] ?? '', ['api', 'xlsx'], true) ? (string)$_GET['horigem'] : '', 'status' => in_array($_GET['hstatus'] ?? '', ['atual', 'substituido', 'cancelado', 'todos'], true) ? (string)$_GET['hstatus'] : 'todos'];
 $sql = "SELECT r.*, u.nome AS por, e.nome AS encerrado_nome, s.numero AS subst_numero FROM ro_recibos r LEFT JOIN users u ON u.id = r.gerado_por LEFT JOIN users e ON e.id = r.encerrado_por LEFT JOIN ro_recibos s ON s.id = r.substituido_por WHERE 1"; $a = [];
 if ($f['status'] !== 'todos') { $sql .= ' AND r.status = ?'; $a[] = $f['status']; }
 if ($f['origem'] !== '') { $sql .= ' AND r.origem = ?'; $a[] = $f['origem']; }
@@ -276,6 +313,7 @@ portal_header('Recibos do Omie', $u);
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
 <style>main.wrap{max-width:1600px}.ro-filtros{display:grid;grid-template-columns:minmax(220px,2fr) repeat(5,minmax(130px,1fr)) auto;gap:10px;align-items:end;margin-bottom:10px}.ro-filtros label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;min-width:0}.ro-filtros .cf-in{width:100%;min-width:0;padding:7px 9px;font:inherit;font-size:14px;border:2px solid var(--line);border-radius:6px;background:#fff;box-sizing:border-box}.ro-filtros .btn{height:38px}@media(max-width:1100px){.ro-filtros{grid-template-columns:repeat(3,1fr)}}@media(max-width:640px){.ro-filtros{grid-template-columns:1fr 1fr}}.ro-encerrado td{opacity:.72}#tbl-hist .cf-tag{white-space:normal;display:inline-block;line-height:1.3;margin-top:3px}.ro-val-ok{color:#2e6b3a;font-weight:600}.ro-val-nao{color:#b4512f;font-weight:700}.ro-per button{font:inherit;font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-per button.on{background:var(--moss);color:#fff;border-color:var(--moss)}
 .ro-filtros label.on{color:#1f6b3a}.ro-filtros label.on .cf-in{border-color:#2f7a4b;background:#f1f8f3}.ro-filtros .ro-limpar{font-size:13px;align-self:end;padding-bottom:10px;white-space:nowrap}
+.ro-abas button{font:inherit;font-size:13px;padding:5px 11px;border-radius:14px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-abas button.on{background:var(--moss);color:#fff;border-color:var(--moss)}
 .ro-mais{display:inline-block;margin-top:3px;font-size:12px;color:#2f6b4f;cursor:pointer;text-decoration:underline dotted;white-space:nowrap}.ro-col{cursor:pointer}.ro-col .ro-resto{display:none}.ro-col.aberto .ro-resto{display:inline}
 #tbl-hist td:nth-child(2){max-width:260px}#tbl-hist td:nth-child(7){max-width:320px}
 details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;font-size:16px;list-style:none;display:flex;align-items:center;gap:8px}details.ro-api summary::before{content:"▸";font-size:13px}details.ro-api[open] summary::before{content:"▾"}details.ro-api summary small{font-weight:400;color:#667;font-size:13px}
@@ -309,46 +347,31 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   </form>
   </details>
 </div>
-<?php if ($erroBusca): ?><div class="erro" data-cf-modal="erro" data-cf-titulo="Não consegui ler"><?= h($erroBusca) ?></div><?php endif; ?>
-<?php if ($origem && !$erroBusca): ?><div style="display:none" data-cf-modal="<?= $titulos ? 'ok' : 'info' ?>" data-cf-titulo="<?= $origem === 'api' ? 'Busca concluída' : 'Relatório lido' ?>"><?= count($titulos) ?> título(s) <?= $origem === 'api' ? 'encontrado(s) no Omie' : 'no relatório' ?><?= $titulos ? ' — os que ainda não têm recibo já vêm marcados. Confira a tabela e clique em Gerar.' : '.' ?></div><?php endif; ?>
-
-<?php if ($origem): $emp = ro_empresa($empresas, $contaSel); ?>
-<h2 class="cf-h2">Títulos <small><?= $origem === 'api' ? 'API · ' . h($contasApi[$contaSel]['nome'] ?? $contaSel) . ' · vencimento ' . cf_data_br($de) . ' a ' . cf_data_br($ate) : 'relatório · ' . h($emp['nome']) ?> · <?= count($titulos) ?> título(s)</small></h2>
-<?php if (!$titulos): ?><p class="home-sub">Nenhum título.</p><?php else: ?>
-<div class="cf-barra">
-  <div class="cf-pend ok" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-    <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-agrupar"> agrupar num só recibo os títulos do mesmo fornecedor e mesma <b>previsão de pagamento</b></label>
-    <label>Data do recibo <input type="date" id="ro-data" class="cf-in" title="vazio = previsão de pagamento de cada título (se não houver previsão, o vencimento)"></label>
-    <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo</label>
-    <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-forcar"> incluir títulos não encontrados no Omie</label>
+<!-- títulos lidos do relatório / API: ficam SÓ neste modal até virarem recibo (nada fica tabelado na página) -->
+<div id="ro-modal" class="cfm-fundo" style="display:none;z-index:900;align-items:flex-start;padding:24px 12px;overflow:auto">
+  <div class="cfm-caixa" style="width:min(1500px,97vw);max-height:none;padding:16px 20px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 class="cfm-tit" style="text-align:left;margin:0">Títulos lidos <small id="rom-sub" style="font-weight:400;color:#667;font-size:13px"></small></h2>
+      <button type="button" class="cf-x" id="rom-fechar">✖ encerrar</button>
+    </div>
+    <div id="rom-valid" class="cf-raw" style="margin:6px 0 0;display:none"><span id="rom-valid-txt"></span><div style="height:6px;border-radius:4px;background:#e8ebe6;margin-top:4px;overflow:hidden"><i id="rom-valid-bar" style="display:block;height:100%;width:0;background:#3f8a5f;transition:width .3s"></i></div></div>
+    <div class="ro-abas" id="rom-abas" style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px"></div>
+    <div class="cf-barra" style="margin:0 0 8px">
+      <div class="cf-pend ok" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-agrupar"> agrupar num só recibo os títulos do mesmo fornecedor e mesma <b>previsão de pagamento</b></label>
+        <label>Data do recibo <input type="date" id="ro-data" class="cf-in" title="vazio = previsão de pagamento de cada título (se não houver previsão, o vencimento)"></label>
+        <label class="cf-mini" style="margin:0" title="um título que já está num recibo atual: o recibo antigo é regerado por inteiro"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo</label>
+        <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-forcar"> incluir títulos não encontrados no Omie</label>
+      </div>
+      <div class="cf-acoes"><div style="text-align:right"><button class="btn" id="btn-gerar">Gerar <span id="ro-rot">recibos</span> (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button><div class="cf-raw" id="ro-resumo" style="margin-top:4px"></div></div></div>
+    </div>
+    <div class="cf-tbl-wrap" style="max-height:58vh;overflow:auto"><table class="grid cf-tbl" id="tbl-ro">
+    <thead><tr><th><input type="checkbox" id="ro-todos"></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
+    <tbody></tbody></table></div>
+    <p class="cf-dica" style="margin:8px 0 0">Vêm marcados os títulos <b>novos</b> (sem recibo, não pagos, encontrados no Omie). "Já com recibo": marcar + "gerar de novo" regera o recibo antigo por inteiro. Pagos/cancelados, repasses e não encontrados ficam desmarcados. O que não for gerado permanece aqui até você encerrar.</p>
   </div>
-  <div class="cf-acoes"><div style="text-align:right"><button class="btn" id="btn-gerar">Gerar <span id="ro-rot">recibos</span> (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button><div class="cf-raw" id="ro-resumo" style="margin-top:4px"></div></div></div>
 </div>
-<div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-ro">
-<thead><tr><th><input type="checkbox" id="ro-todos" checked></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
-<tbody>
-<?php foreach ($titulos as $t): $p = Titulo::pessoaPorDoc($pessoas, $t['doc']); $o = $t['obs'];
-  $ja = ro_recibo_do_titulo($pdo, $t);
-  $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO'); $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
-  // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
-  $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE'; ?>
-<tr class="cf-row <?= $naoAchou ? 'cf-tem-grave' : '' ?>" data-t="<?= h(json_encode($t, JSON_UNESCAPED_UNICODE)) ?>" data-valor="<?= (float)$t['valor'] ?>" data-final="<?= round((float)$t['valor'] - (float)($t['desconto'] ?? 0) - (float)($t['impostos'] ?? 0) + (float)($t['juros'] ?? 0), 2) ?>" data-grupo="<?= h($t['conta'] . '|' . $t['doc_digitos'] . '|' . ($t['previsao'] ?: $t['vencimento'])) ?>" data-nao="<?= $naoAchou ? 1 : 0 ?>" data-ja="<?= $ja ? 1 : 0 ?>">
-  <td><input type="checkbox" class="ro-sel" <?= $naoAchou || $pago || $ja || $repasse ? '' : 'checked' ?>></td>
-  <td><?= h($t['situacao']) ?><?= $t['nota_fiscal'] ? '<br><small class="cf-raw">NF: ' . h($t['nota_fiscal']) . '</small>' : '' ?></td>
-  <td><b><?= cf_data_br($t['previsao'] ?: $t['vencimento']) ?></b><?= $t['previsao'] && $t['previsao'] !== $t['vencimento'] ? '<br><small class="cf-raw" title="vencimento original do título">venc. ' . cf_data_br($t['vencimento']) . '</small>' : '' ?></td>
-  <td><?= h($t['razao']) ?><br><small class="cf-raw"><?= h($t['doc']) ?></small></td>
-  <td><?= $p ? h($p['nome']) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>' ?></td>
-  <td><?= h((string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria']))) ?><?= $o['natureza'] === 'BONUS' ? ' <span class="cf-tag">BONUS</span>' : '' ?><?= $repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '' ?><br><small class="cf-raw"><?= h((string)$t['categoria']) ?></small></td>
-  <td><small><?= h(mb_substr((string)($o['cliente'] ?? ''), 0, 45)) ?><br><span class="cf-raw"><?= h(mb_substr((string)($o['imovel'] ?? ''), 0, 45)) ?></span><?= $o['padrao'] === 'vazio' ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '' ?></small></td>
-  <td><?= h((string)($o['cod'] ?? '—')) ?><?= $o['venda'] ? '<br><small class="cf-raw">' . h($o['venda']) . '</small>' : '' ?></td>
-  <td class="cf-num"><?= cf_brl($t['valor']) ?></td>
-  <td><?php if ($ja): $jc = array_values(array_filter(array_map('trim', explode(' / ', (string)$ja['numero'])))); ?><a href="?baixar=<?= (int)$ja['id'] ?>&ver=1" target="_blank" title="<?= h($ja['numero']) ?>">📄 <?= h(implode(' / ', array_slice($jc, 0, 2))) ?><?= count($jc) > 2 ? ' +' . (count($jc) - 2) : '' ?></a><br><small class="cf-raw">já tem recibo (<?= cf_data_br((string)$ja['data_recibo']) ?>)</small><?php elseif (!empty($o['recibo'])): ?><?= h($o['recibo']) ?><?php else: ?><span class="cf-raw">novo</span><?php endif; ?></td>
-  <td class="<?= $naoAchou ? 'ro-val-nao' : 'ro-val-ok' ?>"><small><?= h((string)($t['validado'] ?? '')) ?></small></td>
-</tr>
-<?php endforeach; ?>
-</tbody></table></div>
-<p class="cf-dica">Títulos "NÃO ENCONTRADO no Omie" ficam desmarcados: cadastre no Omie antes (ou marque "incluir" para gerar mesmo assim). Já pagos/cancelados e os que já têm recibo também vêm desmarcados.</p>
-<?php endif; endif; endif; ?>
+<?php endif; ?>
 
 <h2 class="cf-h2">Recibos gerados</h2>
 <form method="get" class="ro-filtros">
@@ -357,7 +380,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   <label>Até<input type="date" name="hate" class="cf-in" value="<?= h($f['ate']) ?>"></label>
   <?php if ($gestor): ?><label>Empresa<select name="hconta" class="cf-in"><option value="">todas</option><?php foreach ($empresas as $id => $e): ?><option value="<?= h($id) ?>" <?= $f['conta'] === $id ? 'selected' : '' ?>><?= h($e['nome']) ?></option><?php endforeach; ?></select></label><?php endif; ?>
   <label>Origem<select name="horigem" class="cf-in"><option value="">todas</option><option value="api" <?= $f['origem'] === 'api' ? 'selected' : '' ?>>buscados pela API</option><option value="xlsx" <?= $f['origem'] === 'xlsx' ? 'selected' : '' ?>>importados do .xlsx</option></select></label>
-  <label>Situação<select name="hstatus" class="cf-in"><?php foreach (['atual' => 'atuais', 'substituido' => 'substituídos', 'cancelado' => 'cancelados', 'todos' => 'todos'] as $k => $n): ?><option value="<?= $k ?>" <?= $f['status'] === $k ? 'selected' : '' ?>><?= $n ?></option><?php endforeach; ?></select></label>
+  <label>Situação<select name="hstatus" class="cf-in"><?php foreach (['todos' => 'todos', 'atual' => 'atuais', 'substituido' => 'substituídos', 'cancelado' => 'cancelados'] as $k => $n): ?><option value="<?= $k ?>" <?= $f['status'] === $k ? 'selected' : '' ?>><?= $n ?></option><?php endforeach; ?></select></label>
   <button class="btn" type="submit">Filtrar</button>
   <a href="/recibos-omie/" class="ro-limpar" id="ro-limpar" style="display:none">✖ limpar filtros</a>
 </form>
@@ -384,51 +407,9 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   const csrf = document.querySelector('meta[name=csrf]').content;
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   document.querySelectorAll('.ro-per button').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('.ro-per button').forEach(x => x.classList.remove('on')); b.classList.add('on'); document.getElementById('ro-periodo').value = b.dataset.p; document.getElementById('ro-custom').style.display = b.dataset.p === 'custom' ? '' : 'none'; }));
-  // contador do botão: nº de recibos que vão sair de fato (agrupado = um por fornecedor+previsão) e o valor final (já com descontos/impostos/juros)
-  function soma(){
-    const sel = [...document.querySelectorAll('.ro-sel:checked')]; const n = document.getElementById('ro-n'); if (!n) return;
-    const agrupar = document.getElementById('ro-agrupar').checked, dataFixa = document.getElementById('ro-data').value;
-    let bruto = 0, fin = 0; const grupos = new Set();
-    sel.forEach(c => { const tr = c.closest('tr'); bruto += parseFloat(tr.dataset.valor) || 0; fin += parseFloat(tr.dataset.final) || 0;
-      const g = tr.dataset.grupo.split('|'); grupos.add(agrupar ? g[0] + '|' + g[1] + '|' + (dataFixa || g[2]) : tr.dataset.t); });
-    const nRec = agrupar ? grupos.size : sel.length;
-    n.textContent = nRec; document.getElementById('ro-rot').textContent = nRec === 1 ? 'recibo' : 'recibos';
-    document.getElementById('ro-total').textContent = brl(fin);
-    document.getElementById('ro-resumo').textContent = sel.length ? sel.length + ' título(s)' + (Math.abs(bruto - fin) > 0.005 ? ' · bruto ' + brl(bruto) + ' · descontos ' + brl(bruto - fin) : '') : '';
-    document.getElementById('btn-gerar').disabled = !sel.length;
-  }
-  ['ro-agrupar', 'ro-data'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('change', soma); });
-  document.querySelectorAll('.ro-sel').forEach(c => c.addEventListener('change', soma)); soma();
-  const todos = document.getElementById('ro-todos'); if (todos) todos.addEventListener('change', () => { document.querySelectorAll('.ro-sel').forEach(c => c.checked = todos.checked); soma(); });
-  const bg = document.getElementById('btn-gerar');
-  if (bg) bg.addEventListener('click', async () => {
-    const forcar = document.getElementById('ro-forcar').checked;
-    const trs = [...document.querySelectorAll('.ro-sel:checked')].map(c => c.closest('tr'));
-    const bloq = trs.filter(tr => tr.dataset.nao === '1' && !forcar);
-    if (bloq.length) { await CFModal.aviso({tipo:'parcial', titulo:'Títulos não encontrados no Omie', texto: bloq.length + ' título(s) selecionado(s) não foram encontrados no Omie. Cadastre lá primeiro ou marque "incluir títulos não encontrados".'}); return; }
-    const itens = trs.map(tr => JSON.parse(tr.dataset.t)); if (!itens.length) return;
-    const corpo = {csrf, itens, agrupar: document.getElementById('ro-agrupar').checked ? 1 : 0, data: document.getElementById('ro-data').value, substituir: document.getElementById('ro-subst').checked ? 1 : 0};
-    bg.disabled = true;
-    // 1) prévia: quantos recibos saem e quais recibos antigos seriam substituídos (por inteiro)
-    let pv = await post({...corpo, acao:'prever'}); if (!pv) { bg.disabled = false; return; }
-    const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
-    let html = '<p style="margin:0 0 6px">Vão sair <b>' + pv.recibos + ' recibo(s)</b> com <b>' + pv.titulos + ' título(s)</b>' + (corpo.agrupar ? ' (agrupados por fornecedor e previsão de pagamento)' : '') + '.</p>';
-    if (pv.substituir.length) {
-      html += '<p style="margin:8px 0 4px"><b>Recibos que serão substituídos</b> — cada um é regerado <u>por inteiro</u>, com todos os títulos dele (os que você não selecionou entram com os dados guardados), para nenhum título ficar sem recibo:</p><ul style="margin:0 0 0 18px">';
-      pv.substituir.forEach(a => { html += '<li><b>' + esc(a.numero.split(' / ').slice(0, 3).join(' / ')) + (a.total > 3 ? ' …' : '') + '</b> de ' + a.data.split('-').reverse().join('/') + ' — ' + a.total + ' título(s): ' + a.selecionados + ' selecionado(s)' + (a.completados ? ' + ' + a.completados + ' que entram automaticamente' : '') + '</li>'; });
-      html += '</ul><p class="cf-dica" style="margin:8px 0 0">Para gerar só os títulos novos e manter os recibos antigos como estão, cancele e desmarque os títulos que já têm recibo.</p>';
-    }
-    if (!await CFModal.pergunta({titulo: pv.substituir.length ? 'Gerar e substituir?' : 'Gerar recibos?', html, ok: 'Sim, gerar', tipo: pv.substituir.length ? 'parcial' : 'info'})) { bg.disabled = false; return; }
-    // 2) gera, com progresso
-    const pg = CFModal.progresso({titulo: 'Gerando ' + pv.recibos + ' recibo(s)', etapas: ['numerando os títulos', 'montando os PDFs', 'gravando'], tau: 4}).faixa(0, 92);
-    const j = await post({...corpo, acao:'gerar'}, pg);
-    if (!j) { bg.disabled = false; return; }
-    const subst = pv.substituir.length ? '<p style="margin:6px 0 0">' + pv.substituir.length + ' recibo(s) antigo(s) substituído(s) — continuam no histórico com a situação "substituído".</p>' : '';
-    await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + (j.recibos || []).map(r => esc(r.numero.split(' / ').slice(0, 3).join(' / ')) + (r.numero.split(' / ').length > 3 ? ' …' : '') + ' — ' + esc(r.recebedor) + ' — ' + brl(+r.valor)).join('<br>') + '</p>' + subst + '<p class="cf-dica" style="margin:8px 0 0">O PDF abre ao fechar; o valor bruto e a descrição para a NF ficam no painel.</p>'});
-    if (j.ids.length === 1) window.open('?baixar=' + j.ids[0] + '&ver=1', '_blank'); else location.href = '?zip=' + j.ids.join(',');
-    // bruto, líquido e descrição para NF de cada recibo gerado (copiar e colar) — a lista só atualiza quando o usuário clicar em "Continuar"
-    cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
-  });
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const dBr = d => d ? String(d).split('-').reverse().join('/') : '';
+  const curto = n => { const c = String(n || '').split(' / '); return c.slice(0, 3).join(' / ') + (c.length > 3 ? ' …' : ''); };
   // POST JSON com erro em modal (e fecha o progresso, se houver)
   async function post(body, pg){
     let r = null, j = null;
@@ -437,17 +418,139 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     if (!r.ok || !j || !j.ok) { if (pg) pg.fechar(); await CFModal.aviso({tipo:'erro', titulo:'Não foi possível concluir', texto: j && j.erro ? j.erro : ('Erro ' + r.status + (r.status === 403 || r.status === 401 ? ': a página expirou — atualize e tente de novo' : r.status >= 500 ? ': o servidor não respondeu direito — tente de novo em instantes' : ''))}); return null; }
     return j;
   }
-  // feedback ao ler o relatório / buscar na API: modal de progresso até a página recarregar
-  document.querySelectorAll('form.ro-form-xlsx, form.ro-form-api').forEach(f => f.addEventListener('submit', () => {
+
+  /* ===== modal dos títulos lidos ===== */
+  const M = {el: document.getElementById('ro-modal'), linhas: [], conta: '', origem: '', aba: 'todos', gerados: 0};
+  const ROT = {novo: 'Novos', ja: 'Já com recibo', pago: 'Pagos / cancelados', repasse: 'Repasses', nao: 'Não encontrados no Omie', gerado: 'Gerados agora'};
+  function abrirModal(){ M.el.style.display = 'flex'; requestAnimationFrame(() => M.el.classList.add('on')); }
+  function fecharModal(){ M.el.classList.remove('on'); setTimeout(() => { M.el.style.display = 'none'; }, 180); }
+  function linhaHtml(l){
+    const t = l.t; const sit = l.classe;
+    const marc = sit === 'novo';
+    const num = l.classe === 'gerado' ? '<a href="?baixar=' + l.gerado.id + '&ver=1" target="_blank">📄 ' + esc(curto(l.gerado.numero)) + '</a><br><small class="cf-raw">gerado agora</small>'
+      : (l.ja ? '<a href="?baixar=' + l.ja.id + '&ver=1" target="_blank" title="' + esc(l.ja.numero) + '">📄 ' + esc(l.ja.curto) + '</a><br><small class="cf-raw">já tem recibo (' + dBr(l.ja.data) + ')</small>' : (l.numero_obs ? esc(l.numero_obs) : '<span class="cf-raw">novo</span>'));
+    const val = l.validado || ''; const valCls = /^NÃO/.test(val) ? 'ro-val-nao' : (/conferindo/.test(val) ? 'cf-raw' : 'ro-val-ok');
+    return '<tr class="cf-row ro-' + sit + (sit === 'nao' ? ' cf-tem-grave' : '') + '" data-i="' + l._i + '">'
+      + '<td>' + (sit === 'gerado' ? '✔' : '<input type="checkbox" class="ro-sel"' + (marc ? ' checked' : '') + '>') + '</td>'
+      + '<td>' + esc(t.situacao) + (t.nota_fiscal ? '<br><small class="cf-raw">NF: ' + esc(t.nota_fiscal) + '</small>' : '') + '<br><span class="cf-tag' + (sit === 'nao' ? ' cf-grave' : '') + '">' + ROT[sit] + '</span></td>'
+      + '<td><b>' + dBr(t.previsao || t.vencimento) + '</b>' + (t.previsao && t.previsao !== t.vencimento ? '<br><small class="cf-raw" title="vencimento original do título">venc. ' + dBr(t.vencimento) + '</small>' : '') + '</td>'
+      + '<td>' + esc(t.razao) + '<br><small class="cf-raw">' + esc(t.doc) + '</small></td>'
+      + '<td>' + (l.pessoa ? esc(l.pessoa) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>') + '</td>'
+      + '<td>' + esc(l.funcao) + (l.bonus ? ' <span class="cf-tag">BONUS</span>' : '') + (l.repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '') + '</td>'
+      + '<td><small>' + esc(l.cliente.slice(0, 45)) + '<br><span class="cf-raw">' + esc(l.imovel.slice(0, 45)) + '</span>' + (l.sem_obs ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '') + '</small></td>'
+      + '<td>' + esc(l.cod || '—') + (l.venda ? '<br><small class="cf-raw">' + esc(l.venda) + '</small>' : '') + '</td>'
+      + '<td class="cf-num">' + brl(+t.valor) + '</td><td>' + num + '</td>'
+      + '<td class="' + valCls + '"><small>' + esc(val) + '</small></td></tr>';
+  }
+  function render(){
+    const tb = document.querySelector('#tbl-ro tbody'); const cont = {};
+    M.linhas.forEach(l => cont[l.classe] = (cont[l.classe] || 0) + 1);
+    const vis = M.linhas.filter(l => M.aba === 'todos' || l.classe === M.aba);
+    tb.innerHTML = vis.map(linhaHtml).join('');
+    const ab = document.getElementById('rom-abas'); let h = '<button type="button" class="' + (M.aba === 'todos' ? 'on' : '') + '" data-aba="todos">Todos (' + M.linhas.length + ')</button>';
+    ['novo', 'ja', 'pago', 'repasse', 'nao', 'gerado'].forEach(k => { if (cont[k]) h += '<button type="button" class="' + (M.aba === k ? 'on' : '') + '" data-aba="' + k + '">' + ROT[k] + ' (' + cont[k] + ')</button>'; });
+    ab.innerHTML = h; ab.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { M.aba = b.dataset.aba; render(); }));
+    tb.querySelectorAll('.ro-sel').forEach(c => c.addEventListener('change', soma)); soma();
+  }
+  function selecionadas(){ return [...document.querySelectorAll('#tbl-ro .ro-sel:checked')].map(c => M.linhas.find(l => l._i === +c.closest('tr').dataset.i)); }
+  // contador do botão: nº de recibos que vão sair de fato (agrupado = um por fornecedor+previsão) e o valor final (já com descontos/impostos/juros)
+  function soma(){
+    const sel = selecionadas(); const n = document.getElementById('ro-n');
+    const agrupar = document.getElementById('ro-agrupar').checked, dataFixa = document.getElementById('ro-data').value;
+    let bruto = 0, fin = 0; const grupos = new Set();
+    sel.forEach(l => { bruto += +l.t.valor || 0; fin += +l.final || 0; const g = l.grupo.split('|'); grupos.add(agrupar ? g[0] + '|' + g[1] + '|' + (dataFixa || g[2]) : l.t.fingerprint); });
+    const nRec = agrupar ? grupos.size : sel.length;
+    n.textContent = nRec; document.getElementById('ro-rot').textContent = nRec === 1 ? 'recibo' : 'recibos';
+    document.getElementById('ro-total').textContent = brl(fin);
+    document.getElementById('ro-resumo').textContent = sel.length ? sel.length + ' título(s)' + (Math.abs(bruto - fin) > 0.005 ? ' · bruto ' + brl(bruto) + ' · descontos ' + brl(bruto - fin) : '') : '';
+    document.getElementById('btn-gerar').disabled = !sel.length;
+  }
+  ['ro-agrupar', 'ro-data'].forEach(id => document.getElementById(id).addEventListener('change', soma));
+  document.getElementById('ro-todos').addEventListener('change', e => { document.querySelectorAll('#tbl-ro .ro-sel').forEach(c => c.checked = e.target.checked); soma(); });
+  try { document.getElementById('ro-agrupar').checked = localStorage.getItem('ro-agrupar') === '1'; } catch(e) {}
+  document.getElementById('ro-agrupar').addEventListener('change', e => { try { localStorage.setItem('ro-agrupar', e.target.checked ? '1' : '0'); } catch(err) {} });
+
+  // conferência no Omie em blocos (o relatório já abriu; cada bloco atualiza as linhas)
+  async function validar(){
+    const box = document.getElementById('rom-valid'), txt = document.getElementById('rom-valid-txt'), bar = document.getElementById('rom-valid-bar');
+    let fila = M.linhas.filter(l => /conferindo/.test(l.validado || '')).map(l => l._i); const total = fila.length; if (!total) return;
+    box.style.display = ''; let feitos = 0; const BL = 15; M.validando = true;
+    while (fila.length) {
+      const lote = fila.slice(0, BL); txt.textContent = 'Conferindo no Omie (CNPJ + vencimento + valor)… ' + feitos + '/' + total; bar.style.width = (feitos / total * 100) + '%';
+      const j = await post({csrf, acao:'validar', conta: M.conta, itens: lote.map(i => ({...M.linhas.find(l => l._i === i).t, _i: i}))});
+      if (!j) { txt.textContent = 'Conferência interrompida — os títulos sem conferência ficam marcados como "conferindo…"; dá para gerar mesmo assim marcando "incluir títulos não encontrados".'; bar.style.width = '0'; M.validando = false; return; }
+      j.linhas.forEach(nl => { const k = M.linhas.findIndex(l => l._i === nl._i); const sel = document.querySelector('#tbl-ro tr[data-i="' + nl._i + '"] .ro-sel'); const marcado = sel ? sel.checked : null; M.linhas[k] = nl; M.linhas[k]._marc = marcado; });
+      const rest = j.restantes || []; feitos += lote.length - rest.length; fila = rest.concat(fila.slice(BL));
+      render(); M.linhas.forEach(l => { if (l._marc !== undefined && l._marc !== null) { const c = document.querySelector('#tbl-ro tr[data-i="' + l._i + '"] .ro-sel'); if (c && l.classe !== 'nao' && l.classe !== 'pago') c.checked = l._marc; } }); soma();
+    }
+    M.validando = false; txt.textContent = 'Conferência no Omie concluída: ' + total + ' título(s).'; bar.style.width = '100%'; setTimeout(() => box.style.display = 'none', 2500);
+  }
+
+  // ler relatório / buscar na API: por fetch, abre o modal com o que foi lido (nada fica na página)
+  document.querySelectorAll('form.ro-form-xlsx, form.ro-form-api').forEach(f => f.addEventListener('submit', async e => {
+    e.preventDefault();
     const xlsx = f.classList.contains('ro-form-xlsx');
-    if (xlsx && !(f.querySelector('input[type=file]').files || []).length) return;
-    CFModal.progresso({titulo: xlsx ? 'Lendo o relatório' : 'Buscando no Omie', etapas: xlsx ? ['enviando o arquivo', 'lendo os títulos', 'conferindo cada um no Omie'] : ['consultando a API', 'montando a lista'], tau: xlsx ? 8 : 4}).faixa(0, 90);
+    if (xlsx && !(f.querySelector('input[type=file]').files || []).length) { await CFModal.aviso({tipo:'info', titulo:'Escolha o arquivo', texto:'Selecione o relatório .xlsx exportado do Omie (Finanças › Contas a Pagar).'}); return; }
+    const pg = CFModal.progresso({titulo: xlsx ? 'Lendo o relatório' : 'Buscando no Omie', etapas: xlsx ? ['enviando o arquivo', 'lendo os títulos', 'conferindo recibos já emitidos'] : ['consultando a API', 'montando a lista'], tau: xlsx ? 5 : 4}).faixa(0, 90);
+    const fd = new FormData(f); fd.append('ajax', '1');
+    let r = null, j = null;
+    try { r = await fetch('/recibos-omie/', {method:'POST', body: fd}); try { j = await r.json(); } catch(err) {} } catch(err) { r = null; }
+    if (!r) { pg.fechar(); await CFModal.aviso({tipo:'erro', titulo:'Sem conexão com o portal', texto:'O arquivo não chegou ao servidor. Confira sua internet e tente de novo.'}); return; }
+    if (!r.ok || !j || !j.ok) { pg.fechar(); await CFModal.aviso({tipo:'erro', titulo: xlsx ? 'Não consegui ler o relatório' : 'Busca não concluída', texto: j && j.erro ? j.erro : 'Erro ' + r.status + (r.status === 413 ? ': arquivo grande demais para o servidor' : r.status === 403 ? ': a página expirou — atualize e tente de novo' : r.status >= 500 ? ': o servidor não respondeu direito — tente de novo em instantes' : '')}); return; }
+    M.linhas = j.linhas; M.conta = j.conta; M.origem = j.origem; M.aba = 'todos'; M.gerados = 0;
+    document.getElementById('rom-sub').textContent = (xlsx ? 'relatório' : 'API') + ' · ' + j.empresa + (j.periodo ? ' · vencimento ' + j.periodo : '') + ' · ' + j.linhas.length + ' título(s)';
+    const cont = {}; j.linhas.forEach(l => cont[l.classe] = (cont[l.classe] || 0) + 1);
+    await pg.resultado({tipo: j.linhas.length ? 'ok' : 'info', titulo: xlsx ? 'Relatório lido' : 'Busca concluída', html: '<p style="margin:0">' + j.linhas.length + ' título(s)' + (j.linhas.length ? ': <b>' + (cont.novo || 0) + ' novo(s)</b>, ' + (cont.ja || 0) + ' já com recibo, ' + ((cont.pago || 0) + (cont.repasse || 0)) + ' pago(s)/repasse(s)' : '') + '.</p>' + (j.validar ? '<p class="cf-dica" style="margin:6px 0 0">A conferência no Omie começa agora, em segundo plano, dentro da janela.</p>' : '')});
+    render(); abrirModal(); f.reset();
+    if (j.validar) validar();
   }));
+  document.getElementById('rom-fechar').addEventListener('click', async () => {
+    const sobra = M.linhas.filter(l => l.classe === 'novo').length;
+    if (sobra && !await CFModal.pergunta({tipo:'parcial', titulo:'Encerrar sem gerar?', texto: sobra + ' título(s) novo(s) ainda sem recibo vão ser descartados desta leitura (nada é gravado; é só enviar o relatório de novo para vê-los outra vez).', ok:'Sim, encerrar'})) return;
+    fecharModal(); if (M.gerados) location.reload();
+  });
+  M.el.addEventListener('click', e => { if (e.target === M.el) document.getElementById('rom-fechar').click(); });
+
+  const bg = document.getElementById('btn-gerar');
+  bg.addEventListener('click', async () => {
+    if (M.validando && !await CFModal.pergunta({titulo:'Conferência em andamento', texto:'A conferência no Omie ainda não terminou. Gerar assim mesmo? (os títulos ainda não conferidos entram sem a conferência)', ok:'Sim, gerar'})) return;
+    const forcar = document.getElementById('ro-forcar').checked;
+    const sel = selecionadas();
+    const bloq = sel.filter(l => l.classe === 'nao' && !forcar);
+    if (bloq.length) { await CFModal.aviso({tipo:'parcial', titulo:'Títulos não encontrados no Omie', texto: bloq.length + ' título(s) selecionado(s) não foram encontrados no Omie. Cadastre lá primeiro ou marque "incluir títulos não encontrados".'}); return; }
+    const jaSel = sel.filter(l => l.classe === 'ja');
+    if (jaSel.length && !document.getElementById('ro-subst').checked) { await CFModal.aviso({tipo:'parcial', titulo:'Títulos que já têm recibo', texto: jaSel.length + ' título(s) marcado(s) já estão em recibos. Desmarque-os, ou marque "gerar de novo os que já têm recibo" para regerar esses recibos por inteiro.'}); return; }
+    const itens = sel.map(l => l.t); if (!itens.length) return;
+    const corpo = {csrf, itens, agrupar: document.getElementById('ro-agrupar').checked ? 1 : 0, data: document.getElementById('ro-data').value, substituir: document.getElementById('ro-subst').checked ? 1 : 0};
+    bg.disabled = true;
+    // 1) prévia: quantos recibos saem e quais recibos antigos seriam substituídos (por inteiro)
+    const pv = await post({...corpo, acao:'prever'}); if (!pv) { bg.disabled = false; return; }
+    let html = '<p style="margin:0 0 6px">Vão sair <b>' + pv.recibos + ' recibo(s)</b> com <b>' + pv.titulos + ' título(s)</b>' + (corpo.agrupar ? ' (agrupados por fornecedor e previsão de pagamento)' : '') + '.</p>';
+    if (pv.substituir.length) {
+      html += '<p style="margin:8px 0 4px"><b>Recibos que serão substituídos</b> — cada um é regerado <u>por inteiro</u>, com todos os títulos dele (os que você não selecionou entram com os dados guardados), para nenhum título ficar sem recibo:</p><ul style="margin:0 0 0 18px">';
+      pv.substituir.forEach(a => { html += '<li><b>' + esc(curto(a.numero)) + '</b> de ' + dBr(a.data) + ' — ' + a.total + ' título(s): ' + a.selecionados + ' selecionado(s)' + (a.completados ? ' + ' + a.completados + ' que entram automaticamente' : '') + '</li>'; });
+      html += '</ul><p class="cf-dica" style="margin:8px 0 0">Para gerar só os títulos novos e manter os recibos antigos como estão, cancele e desmarque os títulos "já com recibo".</p>';
+    }
+    if (!await CFModal.pergunta({titulo: pv.substituir.length ? 'Gerar e substituir?' : 'Gerar recibos?', html, ok: 'Sim, gerar', tipo: pv.substituir.length ? 'parcial' : 'info'})) { bg.disabled = false; return; }
+    // 2) gera, com progresso (modal por cima da janela de títulos)
+    const pg = CFModal.progresso({titulo: 'Gerando ' + pv.recibos + ' recibo(s)', etapas: ['numerando os títulos', 'montando os PDFs', 'gravando'], tau: 4}).faixa(0, 92);
+    const j = await post({...corpo, acao:'gerar'}, pg);
+    if (!j) { bg.disabled = false; return; }
+    // marca as linhas geradas (e as dos recibos substituídos) na janela — elas deixam de ser candidatas
+    const fps = new Set(); (j.recibos || []).forEach(r => (r.fingerprints || []).forEach(fp => fps.add(fp)));
+    M.linhas.forEach(l => { const rec = (j.recibos || []).find(r => (r.fingerprints || []).includes(l.t.fingerprint) || (r.fingerprints || []).includes(l.t.fingerprint_legado)); if (rec) { l.classe = 'gerado'; l.gerado = {id: rec.id, numero: rec.numero}; } });
+    M.gerados += j.n; render();
+    const subst = pv.substituir.length ? '<p style="margin:6px 0 0">' + pv.substituir.length + ' recibo(s) antigo(s) substituído(s) — continuam no histórico com a situação "substituído".</p>' : '';
+    const links = (j.recibos || []).map(r => '<a href="?baixar=' + r.id + '&ver=1" target="_blank">📄 ' + esc(curto(r.numero)) + '</a> — ' + esc(r.recebedor) + ' — ' + brl(+r.valor)).join('<br>');
+    const sobra = M.linhas.filter(l => l.classe === 'novo').length;
+    await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + links + '</p>' + subst + (j.ids.length > 1 ? '<p style="margin:6px 0 0"><a href="?zip=' + j.ids.join(',') + '">⬇ baixar todos (ZIP)</a></p>' : '') + '<p class="cf-dica" style="margin:8px 0 0">' + (sobra ? sobra + ' título(s) novo(s) continuam na janela — gere-os também ou encerre para ignorá-los.' : 'Não sobrou título novo. Ao encerrar a janela, a lista de recibos é atualizada.') + '</p>'});
+    cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
+  });
   // colunas longas do histórico: abre/fecha ao clicar
   document.querySelectorAll('#tbl-hist .ro-col, #tbl-hist .ro-mais').forEach(el => el.addEventListener('click', e => { e.preventDefault(); const td = el.closest('td'); const col = td.querySelector('.ro-col'); col.classList.toggle('aberto'); const m = td.querySelector('.ro-mais'); if (m) m.textContent = col.classList.contains('aberto') ? 'menos ▴' : m.dataset.rot || (m.dataset.rot = m.textContent); }));
   // filtros ativos em destaque
   (function(){ const f = document.querySelector('form.ro-filtros'); if (!f) return; let n = 0;
-    f.querySelectorAll('label').forEach(l => { const i = l.querySelector('input,select'); if (!i) return; const padrao = i.name === 'hstatus' ? 'atual' : ''; if ((i.value || '') !== padrao) { l.classList.add('on'); n++; } });
+    f.querySelectorAll('label').forEach(l => { const i = l.querySelector('input,select'); if (!i) return; const padrao = i.name === 'hstatus' ? 'todos' : ''; if ((i.value || '') !== padrao) { l.classList.add('on'); n++; } });
     const lim = document.getElementById('ro-limpar'); if (lim && n) { lim.style.display = ''; lim.textContent = '✖ limpar ' + n + ' filtro(s)'; } })();
   function hz(){ const ids = [...document.querySelectorAll('.h-sel:checked')].map(c => +c.closest('tr').dataset.id); const z = document.getElementById('h-zip'); if (!z) return; z.style.display = ids.length ? '' : 'none'; z.href = '?zip=' + ids.join(','); z.textContent = '⬇ ZIP (' + ids.length + ')'; }
   document.querySelectorAll('.h-sel').forEach(c => c.addEventListener('change', hz));
