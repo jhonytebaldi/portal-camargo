@@ -208,5 +208,14 @@ echo '<h1 class="home-titulo">Migração do banco</h1>';
 if (!$ok) echo '<div class="erro">Erro: ' . h($erro) . '</div>';
 elseif ($feitos) echo '<div class="ok-box">Aplicado: ' . h(implode(', ', $feitos)) . '</div>';
 else echo '<div class="ok-box">Banco já está atualizado. Nada a fazer.</div>';
+// conferência rápida do estado atual (para saber se uma migração já foi aplicada numa execução anterior)
+try {
+    $chk = [];
+    foreach ([['ro_recibos', 'numero'], ['cf_recibos', 'numero'], ['cf_capas', 'obs_final'], ['ro_recibos', 'descricao_nf']] as [$tb, $cl]) {
+        $st = $pdo->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?"); $st->execute([$tb, $cl]);
+        $chk[] = $tb . '.' . $cl . ' = ' . (($v = $st->fetchColumn()) ? h((string)$v) : '<b>não existe</b>');
+    }
+    echo '<p class="home-sub">Estado atual: ' . implode(' · ', $chk) . '</p>';
+} catch (Throwable $e) {}
 echo '<p class="home-sub">Pode voltar para <a href="/admin/usuarios.php">Usuários</a>.</p>';
 portal_footer();
