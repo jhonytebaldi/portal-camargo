@@ -209,23 +209,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             $ja = ro_recibo_do_titulo($pdo, $t);
             if ($ja && !$substituir) $falha('já existe recibo ' . $ja['numero'] . ' para ' . $t['razao'] . ' ' . cf_brl($t['valor']) . ' venc. ' . cf_data_br($t['vencimento']) . '. Marque "gerar de novo" para substituir.');
             $t['_antigo'] = $ja['id'] ?? null;
-            if ($ja) { $antigosInfo[(int)$ja['id']] ??= ['id' => (int)$ja['id'], 'numero' => (string)$ja['numero'], 'data' => (string)$ja['data_recibo'], 'itens' => json_decode((string)$ja['itens'], true) ?: [], 'selecionados' => 0, 'completados' => 0]; $antigosInfo[(int)$ja['id']]['selecionados']++; }
+            if ($ja) { $antigosInfo[(int)$ja['id']] ??= ['id' => (int)$ja['id'], 'numero' => (string)$ja['numero'], 'data' => (string)$ja['data_recibo'], 'itens' => json_decode((string)$ja['itens'], true) ?: [], 'selecionados' => 0]; $antigosInfo[(int)$ja['id']]['selecionados']++; }
             foreach (ro_fps($t) as $fp) $sel[$fp] = true;
             $k = $agrupar ? $t['conta'] . '|' . $t['doc_digitos'] . '|' . ($dataFixa ?: ($t['previsao'] ?: $t['vencimento'])) : $t['fingerprint'];
             $grupos[$k][] = $t;
         }
-        // "gerar de novo": um recibo antigo é substituído POR INTEIRO — os títulos dele que não estão na seleção entram também (com os dados
-        // guardados), para que os outros títulos não fiquem sem recibo. Cada título mantém a sua previsão (agrupa no próprio dia).
+        // "gerar de novo": o recibo antigo é substituído e o NOVO recibo contém SÓ os títulos selecionados (decisão do Jhony, 07/11/2026).
+        // Títulos do recibo antigo que não estão na seleção ficam sem recibo (voltam a aparecer como "novos" na próxima leitura) — a prévia avisa quantos.
         foreach ($antigosInfo as $aid => &$ai) {
-            foreach ($ai['itens'] as $it) {
-                $it = Titulo::normalizar($it); $fpsIt = ro_fps($it);
-                if (array_intersect($fpsIt, array_keys($sel))) continue;
-                foreach ($fpsIt as $fp) $sel[$fp] = true;
-                $it['_antigo'] = $aid; $ai['completados']++;
-                $k = $agrupar ? $it['conta'] . '|' . $it['doc_digitos'] . '|' . ($dataFixa ?: ($it['previsao'] ?: $it['vencimento'])) : $it['fingerprint'];
-                $grupos[$k][] = $it;
-            }
-            $ai['total'] = count($ai['itens']); unset($ai['itens']);
+            $fora = [];
+            foreach ($ai['itens'] as $it) { $it = Titulo::normalizar($it); if (!array_intersect(ro_fps($it), array_keys($sel))) $fora[] = ($it['obs']['recibo'] ?? $it['numero'] ?? '?') . ' ' . cf_brl((float)($it['valor'] ?? 0)); }
+            $ai['total'] = count($ai['itens']); $ai['fora'] = count($fora); $ai['fora_lista'] = array_slice($fora, 0, 8); unset($ai['itens']);
         }
         unset($ai);
         if ($prever) {
@@ -542,9 +536,9 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     const pv = await post({...corpo, acao:'prever'}); if (!pv) { bg.disabled = false; return; }
     let html = '<p style="margin:0 0 6px">Vão sair <b>' + pv.recibos + ' recibo(s)</b> com <b>' + pv.titulos + ' título(s)</b>' + (corpo.agrupar ? ' (agrupados por fornecedor e previsão de pagamento)' : '') + '.</p>';
     if (pv.substituir.length) {
-      html += '<p style="margin:8px 0 4px"><b>Recibos que serão substituídos</b> — cada um é regerado <u>por inteiro</u>, com todos os títulos dele (os que você não selecionou entram com os dados guardados), para nenhum título ficar sem recibo:</p><ul style="margin:0 0 0 18px">';
-      pv.substituir.forEach(a => { html += '<li><b>' + esc(curto(a.numero)) + '</b> de ' + dBr(a.data) + ' — ' + a.total + ' título(s): ' + a.selecionados + ' selecionado(s)' + (a.completados ? ' + ' + a.completados + ' que entram automaticamente' : '') + '</li>'; });
-      html += '</ul><p class="cf-dica" style="margin:8px 0 0">Para gerar só os títulos novos e manter os recibos antigos como estão, cancele e desmarque os títulos "já com recibo".</p>';
+      html += '<p style="margin:8px 0 4px"><b>Recibos que serão substituídos</b> (ficam no histórico como "substituído"; o novo recibo tem só o que você marcou):</p><ul style="margin:0 0 0 18px">';
+      pv.substituir.forEach(a => { html += '<li><b>' + esc(curto(a.numero)) + '</b> de ' + dBr(a.data) + ' — ' + a.total + ' título(s), ' + a.selecionados + ' marcado(s)' + (a.fora ? '. <span style="color:#b4512f"><b>' + a.fora + ' título(s) desse recibo não estão marcados e vão ficar sem recibo</b>' + (a.fora_lista && a.fora_lista.length ? ' (' + esc(a.fora_lista.join(', ')) + (a.fora > a.fora_lista.length ? ', …' : '') + ')' : '') + ' — aparecem como novos na próxima leitura.</span>' : '') + '</li>'; });
+      html += '</ul><p class="cf-dica" style="margin:8px 0 0">Para manter os recibos antigos como estão, cancele e desmarque os títulos "já com recibo".</p>';
     }
     if (!await CFModal.pergunta({titulo: pv.substituir.length ? 'Gerar e substituir?' : 'Gerar recibos?', html, ok: 'Sim, gerar', tipo: pv.substituir.length ? 'parcial' : 'info'})) { bg.disabled = false; return; }
     // 2) gera, com progresso (modal por cima da janela de títulos)
