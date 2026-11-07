@@ -92,9 +92,23 @@ function ro_fps(array $t): array { return array_values(array_unique(array_filter
 /** recibo ATUAL que já contém este título (ou null) */
 function ro_recibo_do_titulo(PDO $pdo, array $t): ?array
 {
+    static $porForn = [];   // recibos atuais por fornecedor (cache da requisição) — para o casamento por valor+vencimento
     $fps = ro_fps($t); if (!$fps) return null;
     $q = $pdo->prepare("SELECT r.id, r.numero, r.data_recibo, r.itens FROM ro_recibo_itens i JOIN ro_recibos r ON r.id = i.recibo_id WHERE i.fingerprint IN (" . implode(',', array_fill(0, count($fps), '?')) . ") AND r.status = 'atual' ORDER BY r.id DESC LIMIT 1");
-    $q->execute($fps); return $q->fetch() ?: null;
+    $q->execute($fps); if ($r = $q->fetch()) return $r;
+    // recibos antigos foram gravados com assinaturas de uma leitura anterior (COD/observação podem ter mudado): casa pelo que não muda —
+    // mesmo fornecedor, valor e vencimento (e, quando os dois lados têm, mesmo nº de recibo / COD)
+    $k = ($t['conta'] ?? '') . '|' . ($t['doc_digitos'] ?? '');
+    if (!isset($porForn[$k])) { $q2 = $pdo->prepare("SELECT id, numero, data_recibo, itens FROM ro_recibos WHERE status = 'atual' AND conta = ? AND REPLACE(REPLACE(REPLACE(fornecedor_doc,'.',''),'/',''),'-','') = ? ORDER BY id DESC LIMIT 60"); $q2->execute([(string)($t['conta'] ?? ''), (string)($t['doc_digitos'] ?? '')]); $porForn[$k] = $q2->fetchAll(); }
+    $rec = (string)($t['obs']['recibo'] ?? ''); $cod = (string)($t['obs']['cod'] ?? '');
+    foreach ($porForn[$k] as $r) foreach (json_decode((string)$r['itens'], true) ?: [] as $it) {
+        if (abs((float)($it['valor'] ?? -1) - (float)$t['valor']) > 0.005 || (string)($it['vencimento'] ?? '') !== (string)($t['vencimento'] ?? '')) continue;
+        $itRec = (string)($it['obs']['recibo'] ?? $it['numero'] ?? ''); $itCod = (string)($it['obs']['cod'] ?? '');
+        if ($rec !== '' && $itRec !== '' && strcasecmp($rec, $itRec) !== 0 && preg_match('/^(\d{1,6}-[PR]\d{3}|REC\d{4}-P\d{3})$/i', $itRec)) continue;
+        if ($cod !== '' && $itCod !== '' && $cod !== $itCod) continue;
+        return $r;
+    }
+    return null;
 }
 /** nº do recibo: RECIBO da observação → já emitido para o mesmo título → sequência do COD (cf_sequencias) → REC-<ano>-n */
 function ro_numero(PDO $pdo, array $t): string
@@ -290,8 +304,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $gestor) {
     if (!empty($_POST['ajax'])) {
         header('Content-Type: application/json; charset=utf-8');
         if ($erroBusca) { http_response_code(400); exit(json_encode(['ok' => false, 'erro' => $erroBusca], JSON_UNESCAPED_UNICODE)); }
-        $linhas = []; foreach ($titulos as $i => $t) $linhas[] = ro_linha($pdo, $pessoas, $t) + ['_i' => $i];
-        exit(json_encode(['ok' => true, 'origem' => $origem, 'conta' => $contaSel, 'empresa' => ro_empresa($empresas, $contaSel)['nome'], 'periodo' => $origem === 'api' ? cf_data_br($de) . ' a ' . cf_data_br($ate) : '', 'validar' => $origem === 'xlsx' && isset($contasApi[$contaSel]), 'linhas' => $linhas], JSON_UNESCAPED_UNICODE));
+        $tA = microtime(true); $linhas = []; foreach ($titulos as $i => $t) $linhas[] = ro_linha($pdo, $pessoas, $t) + ['_i' => $i];
+        exit(json_encode(['ok' => true, 'seg_linhas' => round(microtime(true) - $tA, 2), 'seg_total' => round(microtime(true) - $_SERVER['REQUEST_TIME_FLOAT'], 2), 'origem' => $origem, 'conta' => $contaSel, 'empresa' => ro_empresa($empresas, $contaSel)['nome'], 'periodo' => $origem === 'api' ? cf_data_br($de) . ' a ' . cf_data_br($ate) : '', 'validar' => $origem === 'xlsx' && isset($contasApi[$contaSel]), 'linhas' => $linhas], JSON_UNESCAPED_UNICODE));
     }
 }
 
