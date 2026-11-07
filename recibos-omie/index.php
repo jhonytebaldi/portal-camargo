@@ -57,7 +57,7 @@ function ro_regerar(PDO $pdo, array $r, array $pessoas, array $empresas, string 
     $logo = !empty($emp['logo_propria']) && is_file(__DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg') ? __DIR__ . '/../capa-financeira/modelos/logo_' . $emp['id'] . '.jpg' : null;
     try { $g = Recibo::gerar($linhas, $p, $emp, (string)$r['data_recibo'], $cidade, $logo); } catch (Throwable $e) { return null; }
     $dir = cf_data_dir() . '/recibos-omie/' . date('Y'); if (!is_dir($dir)) @mkdir($dir, 0750, true);
-    $nome = Recibo::nomeArquivo((string)$r['numero'], (string)($p['nome'] ?? $r['fornecedor_nome']));
+    $nome = Recibo::nomeArquivo((string)$r['numero'], (string)($p['nome'] ?? $r['fornecedor_nome']), (string)$r['data_recibo']);
     $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-regerado-' . $nome;
     if (@file_put_contents($path, $g['pdf']) === false || !is_file($path)) return null;
     $pdo->prepare('UPDATE ro_recibos SET arquivo_nome = ?, arquivo_path = ? WHERE id = ?')->execute([$nome, $path, (int)$r['id']]);
@@ -241,7 +241,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && str_starts_with((string)($_SERVER['
             // bairro da obra vem da capa no portal (pelo COD); sem capa, o Recibo extrai do texto do imóvel
             foreach ($linhas as &$ln) { $cod = preg_replace('/\D+/', '', (string)($ln['capa_cod'] ?? '')); if ($cod !== '') { $qb = $pdo->prepare("SELECT bairro FROM cf_capas WHERE cod = ? AND status = 'confirmada' ORDER BY id DESC LIMIT 1"); $qb->execute([$cod]); $ln['capa_bairro'] = (string)($qb->fetchColumn() ?: ''); } } unset($ln);
             $r = Recibo::gerar($linhas, $p, $emp, $data, $cidade, $logo);
-            $nome = Recibo::nomeArquivo($r['numero'], $p['nome']);
+            $nome = Recibo::nomeArquivo($r['numero'], $p['nome'], $data);
             $path = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '-' . $nome;
             if (@file_put_contents($path, $r['pdf']) === false || !is_file($path)) { $pdo->rollBack(); $falha('não consegui gravar o PDF do recibo ' . $r['numero'] . ' no servidor (' . (error_get_last()['message'] ?? 'sem detalhe') . '). Nada foi gravado — confira o espaço/permissões da pasta de dados e tente de novo.'); }
             $antigos = array_values(array_unique(array_filter(array_map(fn($t) => (int)($t['_antigo'] ?? 0), $g))));
