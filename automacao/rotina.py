@@ -782,6 +782,10 @@ def publicar():
             ant = itens_ant.get(i["atendimento_id"]) or {}
             return int(ant.get("feito") or 0) == 1 and ant.get("acao") == i["acao"]
         pend = [i for i in p["itens"] if not feita(i)]
+        # "alinhar titularidade" é tarefa do GESTOR (Jhony/Guilherme) no
+        # WeSales — o corretor não consegue executar. Fica no portal, mas
+        # NÃO entra no texto de WhatsApp do corretor.
+        pend = [i for i in pend if i["acao"] != "alinhar titularidade"]
         # pelo menos 15 tarefas (regra do Jhony): vermelho/amarelo, depois azul e branco (encerrar por contexto antes de por transferência)
         top = [i for i in pend if i["faixa"] in ("vermelho", "amarelo")]
         if len(top) < 15:
