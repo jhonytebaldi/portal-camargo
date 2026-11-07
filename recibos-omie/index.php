@@ -120,7 +120,8 @@ function ro_linha(PDO $pdo, array $pessoas, array $t): array
     $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
     // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
     $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE';
-    $classe = $naoAchou ? 'nao' : ($pago ? 'pago' : ($repasse ? 'repasse' : ($ja ? 'ja' : 'novo')));
+    // ordem de prioridade: "já com recibo" vence "pago" (um título pago normalmente já tem recibo — é isso que interessa ver)
+    $classe = $naoAchou ? 'nao' : ($ja ? 'ja' : ($repasse ? 'repasse' : ($pago ? 'pago' : 'novo')));
     $jc = $ja ? array_values(array_filter(array_map('trim', explode(' / ', (string)$ja['numero'])))) : [];
     return ['t' => $t, 'classe' => $classe, 'pessoa' => $p ? (string)$p['nome'] : '', 'ja' => $ja ? ['id' => (int)$ja['id'], 'numero' => (string)$ja['numero'], 'curto' => implode(' / ', array_slice($jc, 0, 2)) . (count($jc) > 2 ? ' +' . (count($jc) - 2) : ''), 'data' => (string)$ja['data_recibo']] : null,
             'funcao' => (string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria'])), 'bonus' => ($o['natureza'] ?? '') === 'BONUS', 'repasse' => $repasse, 'sem_obs' => ($o['padrao'] ?? '') === 'vazio',
