@@ -202,15 +202,16 @@ final class Recibo
         return sprintf('%02d de %s de %d', (int)date('d', $t), self::MESES[(int)date('n', $t)], (int)date('Y', $t));
     }
     /** nome de arquivo: Recibo_1375-P006_Jhony_Tebaldi.pdf */
-    public static function nomeArquivo(string $numero, string $nomePessoa): string
+    public static function nomeArquivo(string $numero, string $nomePessoa, ?string $dataRecibo = null): string
     {
-        // nome curto: o sistema de arquivos aceita até 255 bytes — com muitos recibos num só (ex.: 14 códigos) o nome estourava,
-        // o PDF não era gravado e o recibo ficava "não encontrado". Acima de 4 códigos: os 4 primeiros + "e-mais-N".
+        // Um título: Recibo_1346-P023_Nome.pdf. Vários num só: Recibo_2026-11-05_Nome_26-titulos.pdf — a data do recibo localiza melhor
+        // que uma lista de códigos (que nem cabia no limite de 255 bytes do nome de arquivo; decisão do Jhony, 07/11/2026).
         $n = preg_replace('/[^A-Za-z0-9]+/', '_', (string)iconv('UTF-8', 'ASCII//TRANSLIT', $nomePessoa)) ?: 'recibo';
+        $n = trim(mb_substr(trim($n, '_'), 0, 60), '_');
         $cods = array_values(array_filter(array_map('trim', explode(' / ', $numero)), fn($c) => $c !== ''));
-        if (count($cods) > 4) $cods = array_merge(array_slice($cods, 0, 4), ['e-mais-' . (count($cods) - 4)]);
-        $num = preg_replace('/[^A-Za-z0-9-]+/', '_', implode('+', $cods));
-        $nome = 'Recibo_' . $num . '_' . trim(mb_substr(trim($n, '_'), 0, 60), '_') . '.pdf';
-        return strlen($nome) > 180 ? substr($nome, 0, 176) . '.pdf' : $nome;
+        $d = $dataRecibo && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataRecibo) ? $dataRecibo : date('Y-m-d');
+        if (count($cods) > 1) return 'Recibo_' . $d . '_' . $n . '_' . count($cods) . '-titulos.pdf';
+        $num = preg_replace('/[^A-Za-z0-9-]+/', '_', $cods[0] ?? $d);
+        return 'Recibo_' . $num . '_' . $n . '.pdf';
     }
 }
