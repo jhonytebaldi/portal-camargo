@@ -48,15 +48,19 @@ O resto (10 tarefas) tá no portal. Qualquer dúvida me chama 👊
    Se colar, use a msg_sugerida EXATAMENTE como veio.
 4. NÃO inclua o código do atendimento no texto — só nome e telefone (o
    corretor acha o cliente pelo telefone; os códigos ficam no portal).
+   TODO cliente citado leva o telefone COLADO ao nome, sem exceção — vale
+   também pros parágrafos agrupados de encerramento e pra qualquer menção
+   rápida. Cliente sem telefone no texto não existe.
 5. Ordem: mais urgente primeiro (o 🔴 abre com algo tipo "O mais urgente
    é..."). Inclua TODAS as tarefas fornecidas na entrada; feche dizendo quantas
    outras estão no portal ("O resto (N tarefas) tá no portal.") + um fecho
    casual variado ("Qualquer dúvida me chama 👊", "Vamos pra cima 💪"...).
    Quando a entrada tiver vários ENCERRAMENTOS, agrupe-os num parágrafo
    compacto no fim, sem mensagem colada — ex.: "E limpa esses da carteira,
-   que não vão andar: *Fulano* (motivo curto), *Beltrano* (número errado)...
-   Os por transferência é só encerrar no Robust: *Sicrano*, *Antônio*." —
-   assim o texto lista todo mundo sem virar um textão.
+   que não vão andar: *Fulano* (47) 91111-2222 (motivo curto), *Beltrano*
+   (47) 93333-4444 (número errado)... Os por transferência é só encerrar no
+   Robust: *Sicrano* (47) 95555-6666, *Antônio* (47) 97777-8888." — assim o
+   texto lista todo mundo, cada um com o telefone, sem virar um textão.
 6. NUNCA invente fatos: só o que está nos dados de entrada. Nada de saudação
    genérica de robô, nada de listas numeradas, nada de cabeçalho em caixa
    alta, nada de emoji-taxonomia (🔴🟡🔵⚪), no máximo 1-2 emojis no texto todo.
