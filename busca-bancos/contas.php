@@ -48,17 +48,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 /** baixa uma imagem pública (https, até 300 KB, só formatos de imagem; nunca endereços internos) */
 function bb_baixar_imagem(string $url): array
 {
-    $p = parse_url($url);
-    if (($p['scheme'] ?? '') !== 'https' || empty($p['host'])) throw new RuntimeException('use um link https');
-    $ips = gethostbynamel($p['host']) ?: [];
-    if (!$ips) throw new RuntimeException('endereço não encontrado');
-    foreach ($ips as $ip) if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) throw new RuntimeException('endereço não permitido');
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => false, CURLOPT_TIMEOUT => 15, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_USERAGENT => 'Mozilla/5.0 (PortalCamargo)',
-        CURLOPT_RESOLVE => [$p['host'] . ':443:' . $ips[0]], CURLOPT_MAXFILESIZE => 400 * 1024]);
-    $ca = getenv('CURL_CA_BUNDLE') ?: getenv('SSL_CERT_FILE'); if ($ca && is_file($ca)) curl_setopt($ch, CURLOPT_CAINFO, $ca);
-    $d = curl_exec($ch); $cod = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
-    if ($d === false || $cod !== 200 || $d === '') throw new RuntimeException('o site respondeu ' . ($cod ?: 'com erro'));
+    for ($salto = 0; ; $salto++) {   // segue até 4 redirecionamentos, conferindo cada endereço
+        $p = parse_url($url);
+        if (($p['scheme'] ?? '') !== 'https' || empty($p['host'])) throw new RuntimeException('use um link https');
+        $ips = gethostbynamel($p['host']) ?: [];
+        if (!$ips) throw new RuntimeException('endereço não encontrado');
+        foreach ($ips as $ip) if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) throw new RuntimeException('endereço não permitido');
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true, CURLOPT_FOLLOWLOCATION => false, CURLOPT_TIMEOUT => 15, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_ENCODING => '',
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', CURLOPT_COOKIEFILE => '',
+            CURLOPT_HTTPHEADER => ['Accept: image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8', 'Accept-Language: pt-BR,pt;q=0.9', 'Referer: https://' . $p['host'] . '/'],
+            CURLOPT_RESOLVE => [$p['host'] . ':443:' . $ips[0]], CURLOPT_MAXFILESIZE => 400 * 1024]);
+        $ca = getenv('CURL_CA_BUNDLE') ?: getenv('SSL_CERT_FILE'); if ($ca && is_file($ca)) curl_setopt($ch, CURLOPT_CAINFO, $ca);
+        $bruto = curl_exec($ch); $cod = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $tc = (int)curl_getinfo($ch, CURLINFO_HEADER_SIZE); $para = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL); curl_close($ch);
+        if ($bruto !== false && $cod >= 301 && $cod <= 308 && $para !== '' && $salto < 4) { $url = $para; continue; }
+        $d = $bruto === false ? '' : substr($bruto, $tc);
+        if ($bruto === false || $cod !== 200 || $d === '') throw new RuntimeException('o site respondeu ' . ($cod ?: 'com erro') . ($salto ? ' depois de ' . $salto . ' redirecionamento(s), em ' . ($p['host'] ?? '') : ''));
+        break;
+    }
     if (strlen($d) > 300 * 1024) throw new RuntimeException('imagem maior que 300 KB');
     $tipo = (string)(new finfo(FILEINFO_MIME_TYPE))->buffer($d);
     if (in_array($tipo, ['text/plain', 'text/xml', 'text/html', 'application/xml'], true) && preg_match('/<svg[\s>]/i', substr($d, 0, 3000))) $tipo = 'image/svg+xml';
