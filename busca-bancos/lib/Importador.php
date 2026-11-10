@@ -1,0 +1,176 @@
+<?php
+/* =====================================================================
+   busca-bancos/lib/Importador.php — grava um extrato no banco de dados
+   sem duplicar, e marca tarifas anuladas e transferências internas.
+
+   Impressão digital de um lançamento = conta + data + valor + descrição +
+   nome + "ordem entre iguais". Não usa o FITID: o do Sicoob é inventado
+   (data+valor+sequência) e pode mudar a cada exportação. A "ordem entre
+   iguais" deixa passar 2 Pix legítimos do mesmo valor/pessoa no mesmo dia.
+   ===================================================================== */
+declare(strict_types=1);
+require_once __DIR__ . '/Ofx.php';
+
+final class BbImportador
+{
+    public const EMPRESAS = ['camargo' => 'Imobiliária Camargo', 'vertical' => 'Vertical', 'mz7' => 'MZ7'];
+    /** trechos (normalizados) que indicam "é a própria empresa do outro lado" — editável em Contas */
+    public const PROPRIOS_PADRAO = ['mesma tit', 'michael bruno da', 'imobiliaria camargo', 'camargo gestao', 'vertical gestao', 'mz7'];
+
+    public static function config(PDO $pdo, string $chave, mixed $padrao = null): mixed
+    {
+        $st = $pdo->prepare('SELECT valor FROM bb_config WHERE chave = ?'); $st->execute([$chave]);
+        $v = $st->fetchColumn();
+        return $v === false ? $padrao : (json_decode((string)$v, true) ?? $padrao);
+    }
+    public static function configSet(PDO $pdo, string $chave, mixed $valor): void
+    {
+        $pdo->prepare('INSERT INTO bb_config (chave, valor) VALUES (?, ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)')->execute([$chave, json_encode($valor, JSON_UNESCAPED_UNICODE)]);
+    }
+
+    /** empresa sugerida pelo caminho da pasta do Drive (IMOBILIARIA/…, VERTICAL/…, MZ7/…) */
+    public static function empresaDoCaminho(?string $caminho): string
+    {
+        $n = BbTexto::norm((string)$caminho);
+        if (preg_match('/\bmz7\b/', $n)) return 'mz7';
+        if (preg_match('/\bvertical\b/', $n)) return 'vertical';
+        if (preg_match('/\b(imobiliaria|camargo)\b/', $n)) return 'camargo';
+        return '';
+    }
+
+    /**
+     * Importa o conteúdo de um OFX. $meta: nome, origem (upload|drive), drive_id, drive_caminho, usuario, empresa (sugestão).
+     * Devolve uma lista (um item por conta dentro do arquivo):
+     * ['status'=>'ok'|'repetido', 'conta'=>linha bb_contas, 'conta_nova'=>bool, 'novos','dup','total','de','ate','avisos'=>[]]
+     */
+    public static function importarOfx(PDO $pdo, string $bruto, array $meta = []): array
+    {
+        $res = [];
+        foreach (BbOfx::ler($bruto) as $ext) $res[] = self::gravar($pdo, $ext, sha1($bruto), $meta + ['formato' => 'ofx']);
+        return $res;
+    }
+
+    /** $ext no formato de BbOfx::ler (também usado para extratos convertidos de PDF) */
+    public static function gravar(PDO $pdo, array $ext, string $sha1, array $meta): array
+    {
+        $avisos = [];
+        $sugestao = (string)($meta['empresa'] ?? '') ?: self::empresaDoCaminho($meta['drive_caminho'] ?? null);
+        $contaNum = preg_replace('/\s+/', '', $ext['conta']);
+        $st = $pdo->prepare('SELECT * FROM bb_contas WHERE bank_id = ? AND conta = ?'); $st->execute([$ext['bank_id'], $contaNum]);
+        $conta = $st->fetch(); $nova = false;
+        if (!$conta) {
+            $apelido = (BbOfx::BANCOS[$ext['banco']] ?? 'Banco') . ' · ' . ($ext['agencia'] !== '' ? $ext['agencia'] . ' / ' : '') . $contaNum;
+            $pdo->prepare('INSERT INTO bb_contas (banco, bank_id, agencia, conta, empresa, apelido) VALUES (?,?,?,?,?,?)')
+                ->execute([$ext['banco'], $ext['bank_id'], $ext['agencia'], $contaNum, $sugestao, mb_substr($apelido, 0, 80)]);
+            $st->execute([$ext['bank_id'], $contaNum]); $conta = $st->fetch(); $nova = true;
+            if ($sugestao === '') $avisos[] = 'Conta nova: informe de qual empresa ela é em "Contas".';
+        } elseif ($sugestao !== '' && $conta['empresa'] !== '' && $conta['empresa'] !== $sugestao) {
+            $avisos[] = 'Atenção: o arquivo está na pasta da ' . (self::EMPRESAS[$sugestao] ?? $sugestao) . ', mas esta conta está cadastrada como ' . (self::EMPRESAS[$conta['empresa']] ?? $conta['empresa']) . '.';
+        } elseif ($sugestao !== '' && $conta['empresa'] === '') {
+            $pdo->prepare('UPDATE bb_contas SET empresa = ? WHERE id = ?')->execute([$sugestao, $conta['id']]); $conta['empresa'] = $sugestao;
+        }
+        $cid = (int)$conta['id'];
+        $base = ['conta' => $conta, 'conta_nova' => $nova, 'de' => $ext['de'], 'ate' => $ext['ate'], 'total' => count($ext['lanc'])];
+
+        $st = $pdo->prepare('SELECT id FROM bb_arquivos WHERE conta_id = ? AND sha1 = ?'); $st->execute([$cid, $sha1]);
+        if ($st->fetchColumn()) return $base + ['status' => 'repetido', 'novos' => 0, 'dup' => count($ext['lanc']), 'avisos' => ['Este mesmo arquivo já tinha sido importado — nada mudou.']];
+
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare('INSERT INTO bb_arquivos (conta_id, sha1, nome, origem, formato, drive_id, drive_caminho, periodo_de, periodo_ate, saldo_final, saldo_data, n_total, enviado_por, enviado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                ->execute([$cid, $sha1, mb_substr((string)($meta['nome'] ?? ''), 0, 200), (string)($meta['origem'] ?? 'upload'), (string)($meta['formato'] ?? 'ofx'),
+                    $meta['drive_id'] ?? null, isset($meta['drive_caminho']) ? mb_substr((string)$meta['drive_caminho'], 0, 300) : null,
+                    $ext['de'], $ext['ate'], $ext['saldo'], $ext['saldo_data'], count($ext['lanc']), $meta['usuario'] ?? null, date('Y-m-d H:i:s')]);
+            $aid = (int)$pdo->lastInsertId();
+
+            $st = $pdo->prepare('SELECT fp FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ?'); $st->execute([$cid, $ext['de'], $ext['ate']]);
+            $existe = array_flip($st->fetchAll(PDO::FETCH_COLUMN));
+            $ins = $pdo->prepare('INSERT INTO bb_lanc (conta_id, arquivo_id, data, valor, tipo_ofx, categoria, fitid, checknum, refnum, memo, nome, doc, contraparte, busca, fp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            $ordem = []; $novos = 0; $dup = 0;
+            foreach ($ext['lanc'] as $l) {
+                $memoN = BbTexto::norm($l['memo']); $nomeN = BbTexto::norm($l['nome']);
+                $chave = $cid . '|' . $l['data'] . '|' . number_format($l['valor'], 2, '.', '') . '|' . $memoN . '|' . $nomeN;
+                $k = $ordem[$chave] = ($ordem[$chave] ?? 0) + 1;
+                $fp = sha1($chave . '|' . $k);
+                if (isset($existe[$fp])) { $dup++; continue; }
+                $doc = BbTexto::acharDoc($l['memo'] . ' ' . $l['nome']);
+                $contra = BbTexto::contraparte($l['memo'], $l['nome'], $doc);
+                $check = $l['checknum'] === '0' ? '' : $l['checknum'];
+                $ref = (BbTexto::norm($l['refnum']) === 'pix' || $l['refnum'] === $l['fitid']) ? '' : $l['refnum'];
+                $busca = trim($memoN . ' ' . $nomeN . ' ' . ($doc[0] ?? '') . ' ' . $check . ' ' . ($ref !== $check ? $ref : ''));
+                $ins->execute([$cid, $aid, $l['data'], $l['valor'], mb_substr($l['tipo'], 0, 20), BbTexto::categoria($l['tipo'], $memoN . ' ' . $nomeN),
+                    mb_substr($l['fitid'], 0, 80), mb_substr($check, 0, 40), mb_substr($l['refnum'], 0, 40), mb_substr($l['memo'], 0, 400), mb_substr($l['nome'], 0, 200),
+                    $doc[0] ?? '', mb_substr($contra, 0, 200), mb_substr($busca, 0, 800), $fp]);
+                $existe[$fp] = 1; $novos++;
+            }
+            $pdo->prepare('UPDATE bb_arquivos SET n_novos = ?, n_dup = ? WHERE id = ?')->execute([$novos, $dup, $aid]);
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
+
+        if ($novos) { self::marcarAnuladas($pdo, $cid, $ext['de'], $ext['ate']); self::marcarInternas($pdo, $ext['de'], $ext['ate']); }
+        if (!$ext['lanc']) $avisos[] = 'O extrato veio sem nenhum lançamento no período (o período conta como coberto).';
+        return $base + ['status' => 'ok', 'novos' => $novos, 'dup' => $dup, 'avisos' => $avisos, 'arquivo_id' => $aid];
+    }
+
+    /** tarifa + "desconto na taxa", pix + "estorno": mesmo dia, mesma conta, mesmo valor com sinal trocado */
+    public static function marcarAnuladas(PDO $pdo, int $contaId, string $de, string $ate): int
+    {
+        $st = $pdo->prepare("SELECT id, data, valor, busca FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ? AND par_id IS NULL ORDER BY data, id");
+        $st->execute([$contaId, $de, $ate]);
+        $rows = $st->fetchAll(); $usado = []; $n = 0;
+        $upd = $pdo->prepare('UPDATE bb_lanc SET anulada = 1, par_id = ? WHERE id = ?');
+        foreach ($rows as $c) {
+            if ((float)$c['valor'] <= 0 || !preg_match('/^(desconto n[ao] (taxa|tarifa)|estorno)/', $c['busca'])) continue;
+            $melhor = null;
+            foreach ($rows as $d) {
+                if (isset($usado[$d['id']]) || $d['data'] !== $c['data'] || abs((float)$d['valor'] + (float)$c['valor']) > 0.004) continue;
+                if ($melhor === null || abs($d['id'] - $c['id']) < abs($melhor['id'] - $c['id'])) $melhor = $d;
+            }
+            if (!$melhor) continue;
+            $usado[$melhor['id']] = $usado[$c['id']] = 1;
+            $upd->execute([$melhor['id'], $c['id']]); $upd->execute([$c['id'], $melhor['id']]); $n++;
+        }
+        return $n;
+    }
+
+    /** saída numa conta própria + entrada de mesmo valor em outra conta própria (até 3 dias), com indício de mesma titularidade */
+    public static function marcarInternas(PDO $pdo, string $de, string $ate): int
+    {
+        $proprios = array_values(array_filter(array_map([BbTexto::class, 'norm'], (array)self::config($pdo, 'proprios', self::PROPRIOS_PADRAO))));
+        if (!$proprios) return 0;
+        $ehProprio = function (string $busca) use ($proprios): bool { foreach ($proprios as $p) if ($p !== '' && str_contains($busca, $p)) return true; return false; };
+        $ini = date('Y-m-d', strtotime($de . ' -4 days')); $fim = date('Y-m-d', strtotime($ate . ' +4 days'));
+        $st = $pdo->prepare("SELECT id, conta_id, data, valor, busca FROM bb_lanc WHERE data BETWEEN ? AND ? AND par_id IS NULL AND categoria <> 'tarifa' ORDER BY data, id");
+        $st->execute([$ini, $fim]);
+        $porValor = [];
+        foreach ($st->fetchAll() as $r) $porValor[number_format(abs((float)$r['valor']), 2, '.', '')][] = $r;
+        $upd = $pdo->prepare('UPDATE bb_lanc SET interna = 1, par_id = ? WHERE id = ?'); $n = 0;
+        foreach ($porValor as $grupo) {
+            if (count($grupo) < 2) continue;
+            $usado = [];
+            foreach ($grupo as $d) {
+                if ((float)$d['valor'] >= 0 || isset($usado[$d['id']])) continue;
+                $melhor = null; $melhorDist = 99;
+                foreach ($grupo as $c) {
+                    if ((float)$c['valor'] <= 0 || isset($usado[$c['id']]) || $c['conta_id'] === $d['conta_id']) continue;
+                    $dist = (strtotime($c['data']) - strtotime($d['data'])) / 86400;
+                    if ($dist < -1 || $dist > 3) continue;
+                    if (!$ehProprio($d['busca']) && !$ehProprio($c['busca'])) continue;
+                    if (abs($dist) < $melhorDist) { $melhor = $c; $melhorDist = abs($dist); }
+                }
+                if (!$melhor) continue;
+                $usado[$d['id']] = $usado[$melhor['id']] = 1;
+                $upd->execute([$melhor['id'], $d['id']]); $upd->execute([$d['id'], $melhor['id']]); $n++;
+            }
+        }
+        return $n;
+    }
+
+    /** refaz as marcações de transferência interna (depois de mudar a lista de nomes próprios) */
+    public static function refazerInternas(PDO $pdo): int
+    {
+        $pdo->exec('UPDATE bb_lanc SET interna = 0, par_id = NULL WHERE interna = 1');
+        $r = $pdo->query('SELECT MIN(data) a, MAX(data) b FROM bb_lanc')->fetch();
+        return $r && $r['a'] ? self::marcarInternas($pdo, $r['a'], $r['b']) : 0;
+    }
+}
