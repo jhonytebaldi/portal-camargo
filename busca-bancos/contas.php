@@ -24,6 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tipos = ['image/png' => 1, 'image/jpeg' => 1, 'image/webp' => 1, 'image/svg+xml' => 1, 'image/gif' => 1];
         if (!array_key_exists($b, BbOfx::BANCOS)) $msg = 'Banco inválido.';
         elseif (!empty($_POST['remover'])) { $pdo->prepare('DELETE FROM bb_config WHERE chave = ?')->execute(['logo:' . $b]); $msg = 'Logo removida.'; }
+        elseif (trim((string)($_POST['url'] ?? '')) !== '') {   // logo por link: o servidor baixa a imagem do site do banco
+            try { [$tipo, $dados] = bb_baixar_imagem(trim((string)$_POST['url'])); BbImportador::configSet($pdo, 'logo:' . $b, ['tipo' => $tipo, 'dados' => base64_encode($dados), 'fonte' => trim((string)$_POST['url'])]); $msg = 'Logo do ' . BbOfx::BANCOS[$b] . ' salva.'; }
+            catch (RuntimeException $e) { $msg = 'Não consegui baixar a logo: ' . $e->getMessage(); }
+        }
         elseif (!$fl || $fl['error'] !== UPLOAD_ERR_OK) $msg = 'Escolha o arquivo da logo.';
         elseif ($fl['size'] > 300 * 1024) $msg = 'A logo precisa ter até 300 KB.';
         else {
@@ -40,15 +44,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+/** baixa uma imagem pública (https, até 300 KB, só formatos de imagem; nunca endereços internos) */
+function bb_baixar_imagem(string $url): array
+{
+    $p = parse_url($url);
+    if (($p['scheme'] ?? '') !== 'https' || empty($p['host'])) throw new RuntimeException('use um link https');
+    $ips = gethostbynamel($p['host']) ?: [];
+    if (!$ips) throw new RuntimeException('endereço não encontrado');
+    foreach ($ips as $ip) if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) throw new RuntimeException('endereço não permitido');
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => false, CURLOPT_TIMEOUT => 15, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_USERAGENT => 'Mozilla/5.0 (PortalCamargo)',
+        CURLOPT_RESOLVE => [$p['host'] . ':443:' . $ips[0]], CURLOPT_MAXFILESIZE => 400 * 1024]);
+    $ca = getenv('CURL_CA_BUNDLE') ?: getenv('SSL_CERT_FILE'); if ($ca && is_file($ca)) curl_setopt($ch, CURLOPT_CAINFO, $ca);
+    $d = curl_exec($ch); $cod = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    if ($d === false || $cod !== 200 || $d === '') throw new RuntimeException('o site respondeu ' . ($cod ?: 'com erro'));
+    if (strlen($d) > 300 * 1024) throw new RuntimeException('imagem maior que 300 KB');
+    $tipo = (string)(new finfo(FILEINFO_MIME_TYPE))->buffer($d);
+    if (in_array($tipo, ['text/plain', 'text/xml', 'text/html', 'application/xml'], true) && preg_match('/<svg[\s>]/i', substr($d, 0, 3000))) $tipo = 'image/svg+xml';
+    if (!in_array($tipo, ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif', 'image/x-icon', 'image/vnd.microsoft.icon'], true)) throw new RuntimeException('o link não é uma imagem (' . $tipo . ')');
+    return [$tipo, $d];
+}
+
 $contas = BbCobertura::contas($pdo);
 $proprios = (array)BbImportador::config($pdo, 'proprios', BbImportador::PROPRIOS_PADRAO);
 $logos = []; foreach ($pdo->query("SELECT chave FROM bb_config WHERE chave LIKE 'logo:%'") as $r) $logos[substr($r['chave'], 5)] = 1;
 // contas correntes do Omie (para ligar cada conta ao cruzamento) — só quando pedido, para não gastar chamadas
 $omieCcs = [];
-if (!empty($_GET['omie']) && OmieApi::disponivel()) foreach (array_keys(OmieApi::contas()) as $emp) {
-    try { $r = OmieApi::call($emp, 'geral/contacorrente/', 'ListarContasCorrentes', ['pagina' => 1, 'registros_por_pagina' => 100, 'apenas_importado_api' => 'N']);
-        foreach ($r['ListarContasCorrentes'] ?? [] as $cc) $omieCcs[$emp][] = ['id' => (string)$cc['nCodCC'], 'nome' => (string)($cc['descricao'] ?? ''), 'banco' => (string)($cc['codigo_banco'] ?? ''), 'conta' => (string)($cc['numero_conta_corrente'] ?? '')];
-    } catch (Throwable $e) { $omieCcs[$emp] = ['erro' => $e->getMessage()]; }
+if (!empty($_GET['omie']) && OmieApi::disponivel()) {
+    require_once __DIR__ . '/lib/Conferencia.php'; $porEmp = [];
+    foreach (array_keys(OmieApi::contas()) as $emp) {
+        try { $porEmp[$emp] = BbOmie::contasCorrentes($emp); $omieCcs[$emp] = array_values(array_filter($porEmp[$emp], fn($c) => !$c['inativo'])); }
+        catch (Throwable $e) { $omieCcs[$emp] = ['erro' => $e->getMessage()]; }
+    }
+    if ($lig = BbOmie::vincular($pdo, $porEmp)) { $msg = 'Ligadas pelo cadastro do Omie: ' . implode('; ', $lig) . '.'; $contas = BbCobertura::contas($pdo); }
 }
 bb_cabecalho('contas', $u);
 ?>
@@ -78,12 +106,12 @@ bb_cabecalho('contas', $u);
 
 <section class="bb-card">
   <h2>Logos dos bancos</h2>
-  <p>Envie o arquivo oficial da logo de cada banco (PNG, JPG, WEBP ou SVG, até 300 KB). Sem logo, aparece um selo com as iniciais.</p>
+  <p>Envie o arquivo oficial da logo de cada banco (PNG, JPG, WEBP ou SVG, até 300 KB) ou cole o link da imagem no site do banco. Sem logo, aparece um selo com as iniciais.</p>
   <div class="bb-tab-wrap"><table class="bb-tab"><tbody>
   <?php foreach (BbOfx::BANCOS as $k => $t): if ($k === 'outro') continue; ?>
     <tr><td style="width:220px"><?= bb_banco($k, true) ?></td><td>
       <form method="post" enctype="multipart/form-data" class="bb-linha-form"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="logo"><input type="hidden" name="banco" value="<?= $k ?>">
-        <input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" aria-label="Logo do <?= h($t) ?>"><button class="bb-btn sec" type="submit">Enviar</button>
+        <input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" aria-label="Logo do <?= h($t) ?>"><span>ou link</span><input class="bb-campo" type="url" name="url" placeholder="https://…/logo.svg" size="34" aria-label="Link da logo do <?= h($t) ?>"><button class="bb-btn sec" type="submit">Enviar</button>
         <?php if (isset($logos[$k])): ?><button class="bb-btn perigo" type="submit" name="remover" value="1" formnovalidate>Remover</button><?php endif; ?></form></td></tr>
   <?php endforeach; ?></tbody></table></div>
 </section>

@@ -5,14 +5,24 @@ require_once __DIR__ . '/_comum.php';
 $u = require_tool('busca-bancos');
 $pdo = db();
 const BB_PASTA_PADRAO = '1rJqfghetDnTix5VX3W-s0vOGMxbMbQEd';
-$resultados = []; $erros = [];
+$resultados = []; $erros = []; $ligadas = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
     $acao = (string)($_POST['acao'] ?? 'enviar');
     if ($acao === 'novo_token') { BbImportador::configSet($pdo, 'token_drive', bin2hex(random_bytes(24))); header('Location: /busca-bancos/importar.php?ok=token#drive'); exit; }
     if ($acao === 'pasta') { if (preg_match('~([A-Za-z0-9_-]{20,})~', (string)($_POST['pasta'] ?? ''), $mm)) BbImportador::configSet($pdo, 'drive_pasta', $mm[1]); header('Location: /busca-bancos/importar.php#drive'); exit; }
-    if ($acao === 'pdf') {   // extratos da Caixa lidos do PDF no navegador
+    if ($acao === 'omie_cash') {   // Omie Cash direto da API do Omie + liga as contas pelo cadastro do Omie
+        require_once __DIR__ . '/lib/Conferencia.php'; require_once __DIR__ . '/../recibos-omie/lib/OmieApi.php';
+        @set_time_limit(180); $porEmp = [];
+        foreach (array_keys(BbImportador::EMPRESAS) as $emp) {
+            if (!isset(OmieApi::contas()[$emp])) { $erros[] = 'Omie Cash da ' . h(BbImportador::EMPRESAS[$emp]) . ': a chave da API do Omie desta empresa não está configurada no portal.'; continue; }
+            try { $porEmp[$emp] = BbOmie::contasCorrentes($emp); foreach (BbOmie::sincronizarCash($pdo, $emp, $porEmp[$emp], (int)$u['id']) as $r) $resultados[] = $r; }
+            catch (Throwable $ex) { $erros[] = 'Omie Cash da ' . h(BbImportador::EMPRESAS[$emp]) . ': ' . h($ex->getMessage()); }
+        }
+        foreach (BbOmie::vincular($pdo, $porEmp) as $v) $ligadas[] = $v;
+        BbImportador::configSet($pdo, 'omie_cash_ultima', date('Y-m-d H:i:s'));
+    } elseif ($acao === 'pdf') {   // extratos da Caixa lidos do PDF no navegador
         foreach ((array)json_decode((string)($_POST['dados'] ?? ''), true) as $e) {
             $nome = (string)($e['arquivo'] ?? 'extrato.pdf');
             try { $resultados[] = BbImportador::importarCaixaPdf($pdo, (array)$e, ['nome' => $nome, 'usuario' => (int)$u['id']]) + ['arquivo' => $nome]; }
@@ -108,6 +118,14 @@ bb_cabecalho('importar', $u);
   </form>
 </section>
 
+<?php if ($ligadas): ?><div class="bb-alerta info"><b>Contas ligadas ao cadastro do Omie:</b><ul><?php foreach ($ligadas as $v): ?><li><?= h($v) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
+<section class="bb-card" id="bb-omie-cash">
+  <h2>Omie Cash (direto do Omie, sem arquivo)</h2>
+  <p>O Omie Cash não precisa de extrato: os lançamentos vêm da API do Omie das três empresas. Entram só os <b>conciliados</b> (o que de fato passou pela conta), com nome, CPF/CNPJ e número da transação Pix. Na primeira vez traz todo o histórico; depois, só os últimos dias.
+    <?php $uo = BbImportador::config($pdo, 'omie_cash_ultima'); echo $uo ? 'Última atualização: <b>' . h(date('d/m/Y H:i', strtotime((string)$uo))) . '</b>.' : '<b>Ainda não foi atualizado nenhuma vez.</b>'; ?></p>
+  <form method="post"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="omie_cash"><button class="bb-btn" type="submit">Atualizar Omie Cash</button></form>
+</section>
+
 <section class="bb-card" id="bb-pdf">
   <h2>Extrato da Caixa em PDF</h2>
   <p>Para a Caixa, que só entrega o "Extrato por período" em PDF. O PDF é uma foto da tela, então a leitura é feita aqui no seu navegador (o arquivo não sai do computador) e <b>só é importado se a conta fechar</b>: saldo anterior ± cada lançamento tem que dar o saldo impresso em cada linha. Se um número for lido errado, o arquivo é recusado.</p>
@@ -145,7 +163,7 @@ bb_cabecalho('importar', $u);
       <tr><td class="mono"><?= h(date('d/m/Y H:i', strtotime($a['enviado_em']))) ?></td><td><?= bb_banco($a['banco']) ?> <?= h($a['apelido']) ?></td>
         <td><?= h(($a['drive_caminho'] ? $a['drive_caminho'] . '/' : '') . $a['nome']) ?><?php if ($a['drive_id']): ?> <a href="https://drive.google.com/file/d/<?= h(rawurlencode($a['drive_id'])) ?>/view" target="_blank" rel="noopener">abrir</a><?php endif; ?></td>
         <td class="mono"><?= BbTexto::dataBr($a['periodo_de']) ?> a <?= BbTexto::dataBr($a['periodo_ate']) ?></td><td class="num"><?= (int)$a['n_novos'] ?></td><td class="num"><?= (int)$a['n_dup'] ?></td>
-        <td><?= ['upload' => 'enviado por ' . h($a['por'] ?? '—'), 'drive' => 'Drive', 'pdf' => 'PDF convertido'][$a['origem']] ?? h($a['origem']) ?></td></tr>
+        <td><?= ['upload' => 'enviado por ' . h($a['por'] ?? '—'), 'drive' => 'Drive', 'pdf' => 'PDF da Caixa', 'omie' => 'Omie (API)'][$a['origem']] ?? h($a['origem']) ?></td></tr>
     <?php endforeach; ?></tbody></table></div><?php endif; ?>
 </section>
 <script src="/busca-bancos/assets/ocr/tesseract.min.js?v=5.1.1"></script>

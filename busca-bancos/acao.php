@@ -32,7 +32,7 @@ if ($a === 'detalhe') {
             ['Nº do documento / cobrança', $l['checknum']], ['Referência', $l['refnum']], ['Código da transação no banco', $l['fitid']],
             ['Empresa', bb_empresa($l['empresa'])], ['Banco', BbOfx::BANCOS[$l['banco']] ?? $l['banco']], ['Conta', trim(($l['agencia'] !== '' ? 'ag. ' . $l['agencia'] . ' · ' : '') . 'conta ' . $l['conta']) . ' (' . $l['apelido'] . ')'],
         ], fn($c) => $c[1] !== '')),
-        'origem' => ['tipo' => ['upload' => 'Enviado na ferramenta', 'drive' => 'Pasta do Drive', 'pdf' => 'Convertido de PDF'][$arq['origem'] ?? ''] ?? '', 'arquivo' => $arq['nome'] ?? '',
+        'origem' => ['tipo' => ['upload' => 'Enviado na ferramenta', 'drive' => 'Pasta do Drive', 'pdf' => 'Lido do PDF da Caixa', 'omie' => 'API do Omie (Omie Cash)'][$arq['origem'] ?? ''] ?? '', 'arquivo' => $arq['nome'] ?? '',
             'caminho' => $arq['drive_caminho'] ?? '', 'link' => !empty($arq['drive_id']) ? 'https://drive.google.com/file/d/' . rawurlencode($arq['drive_id']) . '/view' : '',
             'por' => $arq['enviado_nome'] ?? ($arq && ($arq['origem'] ?? '') === 'drive' ? 'sincronização automática' : ''), 'em' => isset($arq['enviado_em']) ? date('d/m/Y H:i', strtotime($arq['enviado_em'])) : '',
             'periodo' => $arq ? BbTexto::dataBr($arq['periodo_de']) . ' a ' . BbTexto::dataBr($arq['periodo_ate']) : ''],

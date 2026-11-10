@@ -93,7 +93,8 @@ final class BbImportador
                 $memoN = BbTexto::norm($l['memo']); $nomeN = BbTexto::norm($l['nome']);
                 $chave = $cid . '|' . $l['data'] . '|' . number_format($l['valor'], 2, '.', '') . '|' . $memoN . '|' . $nomeN;
                 $k = $ordem[$chave] = ($ordem[$chave] ?? 0) + 1;
-                $fp = sha1($chave . '|' . $k);
+                // quando a origem tem um identificador estável de verdade (ex.: código do lançamento no Omie), ele manda
+                $fp = !empty($l['fp_chave']) ? sha1($cid . '|' . $l['fp_chave']) : sha1($chave . '|' . $k);
                 if (isset($existe[$fp])) { $dup++; continue; }
                 $dd = preg_replace('/\D+/', '', (string)($l['doc'] ?? ''));
                 $doc = BbTexto::docValido($dd) ? [$dd, (string)$l['doc']] : BbTexto::acharDoc($l['memo'] . ' ' . $l['nome']);
