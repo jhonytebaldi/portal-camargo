@@ -19,3 +19,10 @@ Decisões:
 - Período de cada conta = união dos períodos (DTSTART/DTEND) dos arquivos importados.
 - Nenhum banco informa a chave Pix no OFX. Sicredi traz CPF/CNPJ na descrição; Sicoob só nome cortado; Asaas nome + nº da cobrança.
 - O banco anotado na planilha antiga não é confiável: a conferência procura em todas as contas.
+
+Formatos vistos (nov/2026):
+- Inter (077): `<NAME>` completo, MEMO `Pix enviado: "Cp :ISPB-NOME"`, CHECKNUM/REFNUM = "077" (ruído, ignorado), FITID = data+077+seq,
+  LEDGERBAL com a data do download (não é o saldo do fim do período: ignorado na conferência pelo saldo).
+- Caixa: só PDF, e o PDF é uma imagem (pdfmake + JPEG do "Extrato por período"). `assets/pdf-caixa.js` extrai o JPEG, lê com
+  tesseract.js (em `assets/ocr/`, local, sem CDN) e só importa se saldo anterior ± lançamentos = saldo impresso em cada linha;
+  `BbImportador::importarCaixaPdf` confere de novo no servidor. Data do movimento = a do "SALDO DIA" do grupo (a hora impressa é a do processamento).

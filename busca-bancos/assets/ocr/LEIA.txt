@@ -1,0 +1,3 @@
+Leitor de texto em imagem (OCR) que roda no navegador, usado para ler o extrato da Caixa em PDF.
+tesseract.js 5 e tesseract.js-core (Apache-2.0, https://github.com/naptha/tesseract.js) e dados do idioma portugues (tessdata, Apache-2.0).
+Arquivos copiados sem alteracao dos pacotes npm tesseract.js, tesseract.js-core e @tesseract.js-data/por.

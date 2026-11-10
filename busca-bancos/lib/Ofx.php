@@ -41,7 +41,7 @@ final class BbTexto
     /** primeiro CPF/CNPJ válido dentro do texto: [dígitos, trecho como aparece] ou null */
     public static function acharDoc(string $texto): ?array
     {
-        $re = '/(?<!\d)(\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2})(?!\d)/';
+        $re = '/(?<![\d\/])(\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2}|\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2})(?!\d)/';
         if (!preg_match_all($re, $texto, $m)) return null;
         foreach ($m[1] as $c) { $d = preg_replace('/\D+/', '', $c); if (self::docValido($d)) return [$d, $c]; }
         return null;
@@ -62,7 +62,8 @@ final class BbTexto
         if ($tipoOfx === 'FEE' || preg_match('/\b(taxa|tarifa|cesta|iof|anuidade|mensalidade)\b/', $n)) return 'tarifa';
         if (str_contains($n, 'pix')) return 'pix';
         if (preg_match('/\b(ted|doc|tev|transf)/', $n)) return 'ted';
-        if (preg_match('/\b(boleto|cobranca|liquidacao|titulo)/', $n)) return 'boleto';
+        if (preg_match('/\b(boleto|cobranca|liquidacao|titulo|cob bx)/', $n)) return 'boleto';
+        if (preg_match('/\b(darf|simples nacional|das|gps|fgts|imposto|tributo)\b/', $n)) return 'imposto';
         if (preg_match('/\b(fatura|cartao|debito visa|maestro)/', $n)) return 'cartao';
         return 'outro';
     }
@@ -71,6 +72,7 @@ final class BbTexto
     public static function contraparte(string $memo, string $nome, ?array $doc): string
     {
         $limpa = fn(string $s) => trim(preg_replace('/[\s*]+$/', '', trim($s)) ?? '');
+        if ($nome !== '' && BbTexto::norm($nome) === BbTexto::norm($memo)) return '';   // Inter repete a descrição no nome (DARF, Simples Nacional…)
         if ($nome !== '') {
             $n = preg_replace('/^(recebimento|pagamento|transfer[eê]ncia|devolu[cç][aã]o)\s+(de\s+)?pix\s+/iu', '', $nome) ?? $nome;
             if ($doc) $n = str_replace($doc[1], '', $n);

@@ -12,13 +12,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? 'enviar');
     if ($acao === 'novo_token') { BbImportador::configSet($pdo, 'token_drive', bin2hex(random_bytes(24))); header('Location: /busca-bancos/importar.php?ok=token#drive'); exit; }
     if ($acao === 'pasta') { if (preg_match('~([A-Za-z0-9_-]{20,})~', (string)($_POST['pasta'] ?? ''), $mm)) BbImportador::configSet($pdo, 'drive_pasta', $mm[1]); header('Location: /busca-bancos/importar.php#drive'); exit; }
+    if ($acao === 'pdf') {   // extratos da Caixa lidos do PDF no navegador
+        foreach ((array)json_decode((string)($_POST['dados'] ?? ''), true) as $e) {
+            $nome = (string)($e['arquivo'] ?? 'extrato.pdf');
+            try { $resultados[] = BbImportador::importarCaixaPdf($pdo, (array)$e, ['nome' => $nome, 'usuario' => (int)$u['id']]) + ['arquivo' => $nome]; }
+            catch (Throwable $ex) { $erros[] = h($nome) . ': ' . h($ex instanceof RuntimeException ? $ex->getMessage() : 'não foi possível importar') . '.'; if (!$ex instanceof RuntimeException) error_log('busca-bancos pdf: ' . $ex->getMessage()); }
+        }
+        if (!$resultados && !$erros) $erros[] = 'Nenhum extrato recebido.';
+    } else {
     $fs = $_FILES['arquivos'] ?? null; $empresa = array_key_exists($_POST['empresa'] ?? '', BbImportador::EMPRESAS) ? (string)$_POST['empresa'] : '';
     if (!$fs || !is_array($fs['name']) || ($fs['name'][0] ?? '') === '') $erros[] = 'Escolha pelo menos um arquivo .ofx.';
     else foreach ($fs['name'] as $i => $nome) {
         if ($fs['error'][$i] !== UPLOAD_ERR_OK) { $erros[] = h($nome) . ': o envio falhou (arquivo grande demais ou conexão interrompida).'; continue; }
-        if (!preg_match('/\.(ofx|qfx)$/i', (string)$nome)) { $erros[] = h($nome) . ': não é um arquivo .ofx. Para extratos que só existem em PDF, peça a conversão (não dá para ler PDF com segurança direto aqui).'; continue; }
+        if (!preg_match('/\.(ofx|qfx)$/i', (string)$nome)) { $erros[] = h($nome) . ': não é um arquivo .ofx. Para o extrato da Caixa em PDF use o quadro "Extrato da Caixa em PDF", logo abaixo.'; continue; }
         try { foreach (BbImportador::importarOfx($pdo, (string)file_get_contents($fs['tmp_name'][$i]), ['nome' => (string)$nome, 'origem' => 'upload', 'usuario' => (int)$u['id'], 'empresa' => $empresa]) as $r) $resultados[] = $r + ['arquivo' => (string)$nome]; }
         catch (Throwable $e) { $erros[] = h($nome) . ': ' . h($e instanceof RuntimeException ? $e->getMessage() : 'não foi possível ler o arquivo'); if (!$e instanceof RuntimeException) error_log('busca-bancos upload: ' . $e->getMessage()); }
+    }
     }
 }
 
@@ -99,6 +108,15 @@ bb_cabecalho('importar', $u);
   </form>
 </section>
 
+<section class="bb-card" id="bb-pdf">
+  <h2>Extrato da Caixa em PDF</h2>
+  <p>Para a Caixa, que só entrega o "Extrato por período" em PDF. O PDF é uma foto da tela, então a leitura é feita aqui no seu navegador (o arquivo não sai do computador) e <b>só é importado se a conta fechar</b>: saldo anterior ± cada lançamento tem que dar o saldo impresso em cada linha. Se um número for lido errado, o arquivo é recusado.</p>
+  <div class="bb-solta"><b>Arraste os PDFs da Caixa para cá</b> ou escolha:<input type="file" multiple accept=".pdf,application/pdf"><span data-nomes></span></div>
+  <div data-saida style="margin-top:12px"></div>
+  <form method="post" data-envio hidden><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="pdf"><input type="hidden" name="dados" value=""></form>
+  <p class="bb-nota" style="margin-top:10px">A sincronização automática do Drive só envia arquivos .ofx. Os PDFs da Caixa precisam passar por este quadro. Os outros bancos (Sicoob, Sicredi, Inter, Asaas) têm .ofx: prefira sempre o .ofx.</p>
+</section>
+
 <section class="bb-card" id="drive">
   <h2>Atualização automática pela pasta do Drive</h2>
   <p>Um pequeno script do Google confere a pasta a cada 15 minutos e manda para cá os .ofx novos, incluindo os das subpastas. A pasta (IMOBILIARIA / VERTICAL / MZ7) é usada para sugerir a empresa das contas novas.
@@ -130,4 +148,6 @@ bb_cabecalho('importar', $u);
         <td><?= ['upload' => 'enviado por ' . h($a['por'] ?? '—'), 'drive' => 'Drive', 'pdf' => 'PDF convertido'][$a['origem']] ?? h($a['origem']) ?></td></tr>
     <?php endforeach; ?></tbody></table></div><?php endif; ?>
 </section>
+<script src="/busca-bancos/assets/ocr/tesseract.min.js?v=5.1.1"></script>
+<script src="/busca-bancos/assets/pdf-caixa.js?v=<?= @filemtime(__DIR__ . '/assets/pdf-caixa.js') ?: 1 ?>"></script>
 <?php bb_rodape();
