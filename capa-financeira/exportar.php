@@ -632,6 +632,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 isset($res['depois']['codigo_lancamento_omie']) ? (int)$res['depois']['codigo_lancamento_omie'] : null, $r['pedido'] ?? null, $res['depois'] ?? null, $res['msg'], (int)$u['id'], $res['status'] === 'alterado');
             exit(json_encode(['ok' => true, 'status' => $res['status'], 'msg' => $res['msg']], JSON_UNESCAPED_UNICODE));
         }
+        if ($acao === 'cancelar_alteracao') {
+            // desiste da alteração (ex.: título já baixado no Omie): a linha do portal volta a ser como foi exportada
+            $st = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE id = ? AND alteracao_pos_exportacao = 1 AND status = 'exportado'"); $st->execute([(int)($in['id'] ?? 0)]);
+            if (!($l = $st->fetch())) $falha('linha não está mais na lista de alterações — recarregue a página');
+            $snap = json_decode((string)$l['snapshot_exp'], true);
+            if (!$snap) $falha('não tenho o retrato de como esta linha foi exportada — use "ajustado à mão"');
+            $sets = []; $vals = [];
+            foreach (['valor', 'data_prevista', 'categoria', 'nota_fiscal', 'pessoa_id', 'conta_corrente', 'cliente_omie', 'parcela', 'total_parcelas'] as $k) {
+                if (!array_key_exists($k, $snap)) continue;
+                $sets[] = "$k = ?"; $vals[] = ($snap[$k] === '' && in_array($k, ['categoria', 'nota_fiscal', 'conta_corrente', 'cliente_omie'], true)) ? null : $snap[$k];
+            }
+            if (($snap['chave_pix'] ?? '') !== '') { $sets[] = 'chave_pix = ?'; $vals[] = $snap['chave_pix']; }
+            $vals[] = (int)$l['id'];
+            $pdo->prepare('UPDATE cf_lancamentos SET ' . implode(', ', $sets) . ($sets ? ', ' : '') . 'alteracao_pos_exportacao = 0 WHERE id = ?')->execute($vals);
+            $emp = (string)($in['empresa'] ?? '');
+            cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $emp, $l['tipo'] === 'R' ? 'R' : 'P', 'alterar', 'recusado', $l['omie_id'] ? (int)$l['omie_id'] : null, null, null,
+                'alteração cancelada por ' . ($u['nome'] ?? '') . ': a linha voltou a ser como foi exportada (' . implode(', ', cf_diferencas_exp($snap, $l)) . ')', (int)$u['id']);
+            exit(json_encode(['ok' => true, 'msg' => 'alteração cancelada — a linha voltou a ser como está no Omie'], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'ajustado') {
             $pdo->prepare('UPDATE cf_lancamentos SET alteracao_pos_exportacao = 0 WHERE id = ?')->execute([(int)($in['id'] ?? 0)]);
             exit(json_encode(['ok' => true]));
@@ -1171,6 +1190,17 @@ document.getElementById('exp-forcar').onclick = async () => {
     const cls = ok ? 'cf-ok' : (j && j.status === 'manual' ? 'cf-leve' : 'cf-grave');
     cel.innerHTML = '<span class="cf-flag ' + cls + '">' + (ok ? '✔ ok — ' : (j && j.status === 'manual' ? '✋ ' : '✖ ')) + String(j ? (j.msg || j.erro || '') : 'sem resposta').replace(/</g, '&lt;') + '</span>';
     if (ok) { tr.style.opacity = .55; if (bt) bt.remove(); } else if (bt) bt.disabled = false;
+    if (j && j.status === 'manual' && !tr.querySelector('.exp-cancelar-alt')) {   // já baixado: dá para desistir da alteração
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'btn cf-btn-sec exp-cancelar-alt'; c.style.cssText = 'padding:4px 10px;font-size:13px;margin-top:4px;display:block';
+      c.textContent = '✖ Cancelar esta alteração'; c.title = 'desiste da alteração: a linha do portal volta a ser como foi enviada ao Omie';
+      c.onclick = async () => {
+        if (!confirm('Cancelar a alteração de ' + tr.querySelector('td b').textContent + '?\n\nA linha do portal volta a ser como foi enviada ao Omie (o título de lá não muda).')) return;
+        c.disabled = true; const r = await postRaw({acao: 'cancelar_alteracao', id: +tr.dataset.id});
+        if (r && r.ok) { cel.innerHTML = '<span class="cf-flag cf-ok">✔ ' + r.msg + '</span>'; tr.style.opacity = .55; tr.querySelectorAll('button').forEach(x => x.remove()); }
+        else { c.disabled = false; cel.innerHTML += '<br><span class="cf-flag cf-grave">' + String(r ? r.erro : 'sem resposta').replace(/</g, '&lt;') + '</span>'; }
+      };
+      cel.after(c);
+    }
     return ok ? 'ok' : (j && j.status === 'manual' ? 'manual' : 'erro');
   }
   document.querySelectorAll('.exp-aplicar').forEach(b => b.addEventListener('click', async () => {
