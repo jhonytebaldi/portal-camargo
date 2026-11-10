@@ -7,13 +7,19 @@ $e3 = $v['e3'] ?? Fluxo::vazio();
 $e3ok = $v['e3_status'] !== 'rascunho';
 $contas = cv_contas((string)$v['empresa']);
 $compJs = array_map(fn($c) => ['nome' => $c['nome']], $v['compradores']);
-$parcJs = array_map(fn($p) => ['data' => $p['data'], 'valor' => $p['valor'] !== null ? number_format((float)$p['valor'], 2, ',', '.') : '', 'pagador' => $p['pagador'],
+$parcJs = array_map(fn($p) => ['data' => $p['data_contrato'] ?? $p['data'], 'valor' => $p['valor'] !== null ? number_format((float)$p['valor'], 2, ',', '.') : '', 'pagador' => $p['pagador'],
                                'outro_nome' => $p['outro_nome'], 'outro_doc' => $p['outro_doc'] ? Venda::docFormatado($p['outro_doc']) : '', 'conta' => $p['conta'], 'ref' => $p['ref'],
                                'recebido' => $p['recebido'], 'arras' => $p['arras']], Fluxo::ordenadas($e3['parcelas']));
 $empresaNome = '';
 foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa']) $empresaNome = (string)$em['nome'];
+$sugestao = trim((string)$v['construtora']) !== '' && $v['empresa'] ? cv_construtora_sugestao((string)$v['construtora'], (string)$v['empresa']) : null;
+$qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['construtora_cad'] ?? null, 'construtora' => (string)$v['construtora'], 'empresa' => (string)$v['empresa'],
+         'empresaNome' => $empresaNome, 'sugestao' => $sugestao, 'temCapa' => (bool)$v['capa_id']];
 ?>
-<style>.cv-alca{cursor:grab;touch-action:none;color:var(--mute);user-select:none;text-align:center;font-weight:700;vertical-align:middle!important}tr.cv-arrastando td{background:#fff8e1;opacity:.7}</style>
+<style>.cv-qp-grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.cv-qp-op{display:flex;gap:8px;align-items:flex-start;border:2px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer;font-weight:600;font-size:14px;background:#fff}
+.cv-qp-op small{font-weight:400;color:var(--mute)}.cv-qp-op.on{border-color:var(--moss);background:#f1f7f3}.cv-qp-op input{width:auto;margin:3px 0 0}
+.cv-alca{cursor:grab;touch-action:none;color:var(--mute);user-select:none;text-align:center;font-weight:700;vertical-align:middle!important}tr.cv-arrastando td{background:#fff8e1;opacity:.7}</style>
 <div class="cv-cols">
 <form id="cv-form3" class="cv-f" autocomplete="off" onsubmit="return false">
   <?php if ($v['e1_status'] === 'rascunho'): ?><div class="aviso" style="margin-bottom:10px">A etapa 1 ainda não foi concluída — dá para preencher o fluxo, mas só dá para concluir depois dela.</div><?php endif; ?>
@@ -33,8 +39,9 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   <section class="card">
     <div class="cv-bloco-h"><h2>Fluxo de pagamento do cliente</h2><small>tem que fechar em <b data-total-esp>—</b> (comissão + bônus)</small></div>
     <p class="cf-dica" style="margin-top:0">Cada linha vira uma conta a receber no Omie da <b><?= h($empresaNome ?: '(escolha a empresa na etapa 1)') ?></b>, em aberto — a baixa é dada lá. O que já entrou: marque “recebida” (com a data em que entrou) e, se for sinal, “arras”.</p>
+    <div id="cv-qp-barra" class="cv-comp" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px"></div>
     <table class="cv-tab" id="cv-parc">
-      <thead><tr><th style="width:22px" title="arraste para reorganizar"></th><th style="width:140px">Data</th><th style="width:120px">Valor</th><th>Quem paga</th><th style="width:130px">Conta</th><th style="width:110px">Referência</th><th style="width:70px">Recebida</th><th style="width:55px">Arras</th><th style="width:105px" class="n">% / acum.</th><th style="width:30px"></th></tr></thead>
+      <thead><tr><th style="width:22px" title="arraste para reorganizar"></th><th style="width:140px">Data</th><th style="width:120px">Valor</th><th style="min-width:200px">Quem paga</th><th style="width:130px">Conta</th><th style="width:110px">Referência</th><th style="width:70px">Recebida</th><th style="width:55px">Arras</th><th style="width:105px" class="n">% / acum.</th><th style="width:30px"></th></tr></thead>
       <tbody></tbody>
       <tfoot><tr><td></td><td style="text-align:right">total</td><td class="n" data-soma></td><td colspan="5" data-dif></td><td class="n" data-soma-pct></td><td></td></tr></tfoot>
     </table>
@@ -98,16 +105,23 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   const num = s => { s = String(s || '').replace(/[R$\s]/g, ''); if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); return Number(s) || 0; };
   const addDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
+  /* ---------- quem paga as parcelas ---------- */
+  const QP = <?= json_encode($qpJs, JSON_UNESCAPED_UNICODE) ?>;
+  let quemPaga = QP.quem_paga, construtoraCad = QP.construtora_cad;
+  const nomeCons = () => construtoraCad ? construtoraCad.nome : (QP.construtora || 'construtora');
+  const rotPag = v => v === 'construtora' ? 'Construtora — ' + nomeCons() : v === 'outro' ? 'Outro pagador' : /^c\d+$/.test(v || '') ? 'Comprador ' + (+v.slice(1) + 1) + ' — ' + ((comps[+v.slice(1)] || {}).nome || '?') : '—';
+  const padraoPag = () => quemPaga ? (quemPaga.modo === 'construtora' ? 'construtora' : quemPaga.pagador || 'c0') : 'c0';
   function optsPag(sel) {
     return comps.map((c, i) => '<option value="c' + i + '"' + (sel === 'c' + i ? ' selected' : '') + '>Comprador ' + (i + 1) + ' — ' + esc(c.nome) + '</option>').join('')
+      + '<option value="construtora"' + (sel === 'construtora' ? ' selected' : '') + '>Construtora — ' + esc(nomeCons()) + ' (repasse +7 dias)</option>'
       + '<option value="outro"' + (sel === 'outro' ? ' selected' : '') + '>Outro pagador (parente, empresa…)</option>';
   }
   function addParc(p) {
     const tr = document.createElement('tr'); tr.dataset.k = k++;
     const conta = p.conta || contaPadrao;
-    tr.innerHTML = '<td class="cv-alca" title="arraste para reorganizar">⋮⋮</td><td><input type="date" data-f="data" value="' + esc(p.data || '') + '"></td>'
+    tr.innerHTML = '<td class="cv-alca" title="arraste para reorganizar">⋮⋮</td><td><input type="date" data-f="data" value="' + esc(p.data || '') + '"><small data-repasse style="display:block;color:var(--moss);font-weight:600"></small></td>'
       + '<td><input data-f="valor" class="cv-num" inputmode="decimal" value="' + esc(p.valor || '') + '"></td>'
-      + '<td><select data-f="pagador">' + optsPag(p.pagador || 'c0') + '</select><div data-outro style="display:none;margin-top:4px"><input data-f="outro_nome" placeholder="nome completo" value="' + esc(p.outro_nome || '') + '" style="margin-bottom:4px"><input data-f="outro_doc" placeholder="CPF ou CNPJ" value="' + esc(p.outro_doc || '') + '"></div></td>'
+      + '<td><select data-f="pagador">' + optsPag(p.pagador || padraoPag()) + '</select><div data-outro style="display:none;margin-top:4px"><input data-f="outro_nome" placeholder="nome completo" value="' + esc(p.outro_nome || '') + '" style="margin-bottom:4px"><input data-f="outro_doc" placeholder="CPF ou CNPJ" value="' + esc(p.outro_doc || '') + '"><button type="button" class="cv-mini-btn" data-outro-omie style="margin:4px 0 0">🔍 buscar no Omie</button></div></td>'
       + '<td><select data-f="conta">' + contas.map(c => '<option' + (c === conta ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + (contas.includes(conta) ? '' : '<option selected>' + esc(conta) + '</option>') + '</select></td>'
       + '<td><input data-f="ref" value="' + esc(p.ref || '') + '" placeholder="PARCELA 01"></td>'
       + '<td style="text-align:center"><input type="checkbox" data-f="recebido"' + (p.recebido ? ' checked' : '') + ' style="width:auto;margin:6px auto"></td>'
@@ -115,6 +129,10 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
       + '<td class="n" data-pct>—</td><td><button type="button" class="cf-x">✕</button></td>';
     const sel = tr.querySelector('[data-f=pagador]'), outro = tr.querySelector('[data-outro]');
     const mostra = () => outro.style.display = sel.value === 'outro' ? '' : 'none'; mostra(); sel.addEventListener('change', mostra);
+    tr.querySelector('[data-outro-omie]').onclick = async () => {
+      const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: tr.querySelector('[data-f=outro_nome]').value || '', doc: tr.querySelector('[data-f=outro_doc]').value, titulo: 'Quem paga esta parcela — cadastro no Omie'});
+      if (c) { tr.querySelector('[data-f=outro_nome]').value = c.nome; tr.querySelector('[data-f=outro_doc]').value = c.doc; mudou(); }
+    };
     tr.querySelector('.cf-x').onclick = () => { tr.remove(); mudou(); };
     tr.querySelector('[data-f=valor]').addEventListener('blur', e => CV.numBlur(e.target, false));
     const rec = tr.querySelector('[data-f=recebido]'), arr = tr.querySelector('[data-f=arras]');
@@ -123,7 +141,13 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
       if (rec.checked && d && dataVenda && d <= addDias(dataVenda, DIAS_ARRAS)) arr.checked = true;
       if (!rec.checked) arr.checked = false;
     });
-    arr.addEventListener('change', () => { if (arr.checked) rec.checked = true; });
+    const pagSinal = () => {   // construtora repassa: a parcela do sinal é de quem pagou o sinal
+      if (!(quemPaga && quemPaga.modo === 'construtora' && quemPaga.sinal)) return;
+      const alvo = arr.checked ? quemPaga.sinal : 'construtora';
+      if (sel.value !== alvo) { sel.innerHTML = optsPag(alvo); sel.dispatchEvent(new Event('change')); }
+    };
+    rec.addEventListener('change', pagSinal);
+    arr.addEventListener('change', () => { if (arr.checked) rec.checked = true; pagSinal(); });
     tb.appendChild(tr);
   }
   parc0.forEach(addParc);
@@ -131,7 +155,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   document.getElementById('cv-add-parc').onclick = () => { addParc({}); mudou(); };   // linha nova entra no fim; ao preencher a data, reordena (se a ordem não for manual)
   /* gerador de parcelas: painel na própria página (não some ao trocar de aba) */
   const ger = document.getElementById('cv-gerador'), g = k => ger.querySelector('[data-g=' + k + ']');
-  g('pagador').innerHTML = optsPag('c0');
+  g('pagador').innerHTML = optsPag(padraoPag());
   const gOutro = ger.querySelector('[data-g-outro]');
   g('pagador').addEventListener('change', () => gOutro.style.display = g('pagador').value === 'outro' ? '' : 'none');
   g('conta').innerHTML = contas.map(c => '<option' + (c === contaPadrao ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
@@ -215,9 +239,80 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   if (!manual) ordenaPorData();
   mostraOrdem();
 
+  /* modal "Quem vai pagar as parcelas?" — obrigatório com o fluxo vazio; depois, "trocar quem paga em todas as parcelas" */
+  function barraQP() {
+    const b = document.getElementById('cv-qp-barra');
+    let txt;
+    if (quemPaga) {
+      txt = '<b>Quem paga as parcelas:</b> ' + esc(quemPaga.modo === 'construtora' ? 'a construtora (' + nomeCons() + ') — repasse 7 dias depois do cliente, próximo dia útil' : rotPag(quemPaga.pagador))
+        + (quemPaga.modo === 'construtora' ? ' · <b>sinal:</b> ' + esc(quemPaga.sinal === 'construtora' ? 'pela construtora' : rotPag(quemPaga.sinal)) : '');
+    } else txt = '<b>Quem paga as parcelas:</b> definido parcela a parcela';
+    b.innerHTML = '<span style="font-size:13.5px">' + txt + '</span>' + (CV.somenteLeitura ? '' : '<button type="button" class="cv-mini-btn" id="cv-qp-trocar">trocar quem paga em todas as parcelas…</button>');
+    const bt = document.getElementById('cv-qp-trocar'); if (bt) bt.onclick = () => modalQP(false);
+  }
+  function modalQP(obrigatorio) {
+    return new Promise(res => {
+      const sug = QP.sugestao;
+      let modo = quemPaga ? quemPaga.modo : (sug ? (sug.modo === 'construtora' ? 'construtora' : sug.modo === 'cliente' ? 'comprador' : '') : '');
+      let pag = quemPaga && /^c\d+$/.test(quemPaga.pagador || '') ? quemPaga.pagador : 'c0';
+      let sinal = quemPaga && quemPaga.sinal ? quemPaga.sinal : (sug && sug.sinal === 'construtora' ? 'construtora' : 'c0');
+      let cad = construtoraCad || (sug && sug.cadastro) || null;
+      const tro = [...tb.querySelectorAll('tr')].find(tr => tr.querySelector('[data-f=pagador]').value === 'outro');
+      let outro = tro ? {nome: tro.querySelector('[data-f=outro_nome]').value, doc: tro.querySelector('[data-f=outro_doc]').value} : null;
+      const m = document.createElement('div'); m.className = 'cv-modal'; m.style.zIndex = 800;
+      const opc = (nome, val, atual, rot) => '<label class="cv-qp-op' + (val === atual ? ' on' : '') + '"><input type="radio" name="' + nome + '" value="' + esc(val) + '"' + (val === atual ? ' checked' : '') + '> <span>' + rot + '</span></label>';
+      function desenha() {
+        const comp = comps.map((c, i) => 'c' + i);
+        m.innerHTML = '<div style="max-width:700px"><h2 style="margin-top:0">Quem vai pagar as parcelas?</h2>'
+          + (sug ? '<p class="cv-msg ok" style="margin:6px 0 12px">⭐ <b>Sugestão:</b> ' + esc(sug.texto) + '</p>' : '<p class="cf-dica">Sem histórico desta construtora ainda — a resposta passa a ser a sugestão nas próximas vendas dela.</p>')
+          + '<div class="cv-qp-grade">' + comp.map(v => opc('qp', 'comprador:' + v, modo === 'comprador' ? 'comprador:' + pag : '', 'Comprador ' + (+v.slice(1) + 1) + '<br><small>' + esc(comps[+v.slice(1)].nome) + '</small>')).join('')
+          + opc('qp', 'construtora', modo, 'A construtora<br><small>' + esc(QP.construtora || '(sem construtora na etapa 1)') + ' — recebe do cliente e repassa</small>')
+          + opc('qp', 'outro', modo, 'Outro<br><small>parente, empresa…</small>') + '</div>'
+          + (modo === 'construtora' ? '<div class="cv-comp" style="margin-top:12px"><b>Cadastro da construtora no Omie da ' + esc(QP.empresaNome) + '</b><br>'
+              + (cad ? '<span class="cv-chip ok">' + esc(cad.nome) + ' · ' + esc(cad.doc || 'sem documento') + '</span> ' : '<span class="cv-chip mal">não escolhido</span> ')
+              + '<button type="button" class="cv-mini-btn" data-cad>' + (cad ? 'trocar' : '🔍 escolher / cadastrar no Omie') + '</button>'
+              + '<p class="cf-dica" style="margin:6px 0 0">Às vezes quem paga é a SPE do empreendimento (outro CNPJ) — escolha o cadastro certo.</p>'
+              + '<p style="margin:12px 0 4px"><b>De quem veio o sinal de negócio (arras)?</b></p><div class="cv-qp-grade">'
+              + comp.map(v => opc('sinal', v, sinal, 'Comprador ' + (+v.slice(1) + 1) + '<br><small>' + esc(comps[+v.slice(1)].nome) + '</small>')).join('')
+              + opc('sinal', 'construtora', sinal, 'Da construtora') + '</div>'
+              + '<p class="cf-dica" style="margin:6px 0 0">Datas: digite a do quadro resumo do contrato — a conta a receber vai para 7 dias depois (próximo dia útil).</p></div>' : '')
+          + (modo === 'outro' ? '<div class="cv-comp" style="margin-top:12px"><b>Quem paga</b><br>' + (outro && outro.nome ? '<span class="cv-chip ok">' + esc(outro.nome) + ' · ' + esc(outro.doc) + '</span> ' : '<span class="cv-chip mal">não escolhido</span> ')
+              + '<button type="button" class="cv-mini-btn" data-outro>🔍 buscar / cadastrar no Omie</button></div>' : '')
+          + (!obrigatorio && QP.temCapa ? '<p class="cf-dica" style="margin-top:10px">Parcelas que já foram ao Omie: a troca entra em <b>Exportar p/ Omie → Alterações depois da exportação</b>, onde dá para aplicar no Omie pela API (títulos já baixados ficam para ajuste manual).</p>' : '')
+          + '<div class="cv-botoes" style="margin-top:14px"><button type="button" class="btn" data-ok>' + (obrigatorio ? 'Confirmar e preencher as parcelas' : 'Trocar em todas as parcelas') + '</button>'
+          + (obrigatorio ? '<a class="btn cf-btn-sec" href="/capa-financeira/vendas/editar.php?id=' + CV.id + '&etapa=2">← voltar à etapa 2</a>' : '<button type="button" class="btn cf-btn-sec" data-x>Cancelar</button>') + '</div></div>';
+        m.querySelectorAll('input[name=qp]').forEach(r => r.onchange = () => { const v = r.value; if (v.startsWith('comprador:')) { modo = 'comprador'; pag = v.split(':')[1]; } else modo = v; desenha(); });
+        m.querySelectorAll('input[name=sinal]').forEach(r => r.onchange = () => { sinal = r.value; desenha(); });
+        const bc = m.querySelector('[data-cad]'); if (bc) bc.onclick = async () => { const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: cad ? cad.nome : QP.construtora, titulo: 'Construtora que paga — cadastro no Omie'}); if (c) { cad = c; desenha(); } };
+        const bo = m.querySelector('[data-outro]'); if (bo) bo.onclick = async () => { const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: outro ? outro.nome : '', titulo: 'Quem paga as parcelas — cadastro no Omie'}); if (c) { outro = c; desenha(); } };
+        const bx = m.querySelector('[data-x]'); if (bx) bx.onclick = () => { m.remove(); res(false); };
+        m.querySelector('[data-ok]').onclick = () => {
+          if (!modo) { CV.alerta('Escolha quem paga as parcelas.'); return; }
+          if (modo === 'construtora' && !cad) { CV.alerta('Escolha (ou cadastre) a construtora no Omie.'); return; }
+          if (modo === 'outro' && !(outro && outro.nome && outro.doc)) { CV.alerta('Escolha (ou cadastre) no Omie quem paga — com CPF/CNPJ.'); return; }
+          quemPaga = {modo, pagador: modo === 'construtora' ? 'construtora' : modo === 'outro' ? 'outro' : pag, sinal: modo === 'construtora' ? sinal : ''};
+          if (modo === 'construtora') construtoraCad = cad;
+          // aplica nas parcelas: arras → quem pagou o sinal; demais → quem paga
+          tb.querySelectorAll('tr').forEach(tr => {
+            const alvo = modo === 'construtora' && tr.querySelector('[data-f=arras]').checked ? sinal : quemPaga.pagador;
+            const sel = tr.querySelector('[data-f=pagador]'); sel.innerHTML = optsPag(alvo); sel.dispatchEvent(new Event('change'));
+            if (alvo === 'outro' && outro) { tr.querySelector('[data-f=outro_nome]').value = outro.nome; tr.querySelector('[data-f=outro_doc]').value = outro.doc; }
+          });
+          g('pagador').innerHTML = optsPag(padraoPag());
+          if (modo === 'outro' && outro) { g('outro_nome').value = outro.nome; g('outro_doc').value = outro.doc; g('pagador').dispatchEvent(new Event('change')); }
+          m.remove(); barraQP(); mudou(); res(true);
+        };
+      }
+      desenha(); document.body.appendChild(m);
+    });
+  }
+  barraQP();
+  if (!CV.somenteLeitura && !quemPaga && !parc0.length) modalQP(true);
+
   function coleta() {
     const val = (tr, f) => { const i = tr.querySelector('[data-f=' + f + ']'); return i.type === 'checkbox' ? i.checked : i.value; };
     return {travas: [...form.querySelectorAll('[name=trava]:checked')].map(x => x.value), conferido: document.getElementById('cv-conferido').checked, ordem_manual: manual,
+            quem_paga: quemPaga, construtora_cad: construtoraCad,
             parcelas: [...tb.querySelectorAll('tr')].map(tr => ({k: +tr.dataset.k, data: val(tr, 'data'), valor: val(tr, 'valor'), pagador: val(tr, 'pagador'), outro_nome: val(tr, 'outro_nome'),
                         outro_doc: val(tr, 'outro_doc'), conta: val(tr, 'conta'), ref: val(tr, 'ref'), recebido: val(tr, 'recebido'), arras: val(tr, 'arras')}))};
   }
@@ -226,6 +321,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
     form.querySelector('[data-total-esp]').textContent = brl(c.total_esperado);
     const porK = {}; c.linhas.forEach(l => porK[l.k] = l);
     tb.querySelectorAll('tr').forEach(tr => { const l = porK[tr.dataset.k];
+      const rp = tr.querySelector('[data-repasse]'); if (rp) rp.textContent = l && l.repasse && l.venc ? '→ repasse ' + l.venc.split('-').reverse().join('/') : '';
       tr.querySelector('[data-pct]').innerHTML = l ? pc(l.pct) + '<br><small>' + pc(l.pct_acum) + '</small>' + (l.gatilhos.length ? '<br><span class="cv-chip ok">' + esc(l.gatilhos.join(' / ')) + '</span>' : '') : '—'; });
     document.querySelector('#cv-parc [data-soma]').textContent = brl(c.total_fluxo);
     document.querySelector('#cv-parc [data-soma-pct]').textContent = c.total_esperado ? pc(c.total_fluxo / c.total_esperado) : '';

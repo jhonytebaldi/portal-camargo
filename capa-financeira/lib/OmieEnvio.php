@@ -469,6 +469,45 @@ final class OmieEnvio
     }
 
     /**
+     * Aplica num título já enviado o que mudou na capa depois da exportação (cliente/fornecedor, valor, vencimento,
+     * categoria, conta corrente, NF). Manda só os campos diferentes e confere consultando de volta.
+     * @param array $alvo pedido de inclusão montado agora (OmieEnvio::conferir)
+     * @return array{status:'alterado'|'ja_ok'|'manual'|'erro', msg:string, antes:?array, depois:?array}
+     */
+    public static function aplicarAlteracao(string $empresa, string $tipo, string $codigo, ?int $omieId, array $alvo): array
+    {
+        $t0 = self::titulos($empresa, $tipo)['por_codigo'][$codigo] ?? null;
+        $id = $omieId ?: (int)($t0['omie_id'] ?? 0);
+        $t = $id ? self::consultarPorOmieId($empresa, $tipo, $id) : self::consultarPorIntegracao($empresa, $tipo, $codigo);
+        if (!$t) return ['status' => 'erro', 'msg' => 'título não existe no Omie com este código — se foi excluído por lá, use "Forçar reenvio"', 'antes' => null, 'depois' => null];
+        $st = (string)($t['status_titulo'] ?? ''); $pago = (float)($t['valor_pag'] ?? $t['valor_recebido'] ?? 0);
+        if ($pago > 0 || preg_match('/PAG|RECEB|LIQ/i', $st)) return ['status' => 'manual', 'msg' => "título já tem baixa no Omie (status $st) — o Omie não deixa alterar; ajuste manualmente", 'antes' => null, 'depois' => null];
+        if (preg_match('/CANCEL/i', $st)) return ['status' => 'manual', 'msg' => 'título cancelado no Omie — ajuste manualmente', 'antes' => null, 'depois' => null];
+        $campos = ['codigo_cliente_fornecedor', 'valor_documento', 'data_vencimento', 'data_previsao', 'codigo_categoria', 'id_conta_corrente', 'numero_documento_fiscal'];
+        $igual = fn($a, $b) => is_numeric($a) && is_numeric($b) ? abs((float)$a - (float)$b) < 0.005 : trim((string)$a) === trim((string)$b);
+        $mud = [];
+        foreach ($campos as $k) if (array_key_exists($k, $alvo) && !$igual($alvo[$k], $t[$k] ?? '')) $mud[$k] = $alvo[$k];
+        if (!$mud) return ['status' => 'ja_ok', 'msg' => 'o título no Omie já está igual à capa', 'antes' => $t, 'depois' => $t];
+        if (isset($mud['valor_documento']) && !empty($alvo['distribuicao'])) $mud['distribuicao'] = $alvo['distribuicao'];   // rateio acompanha o valor
+        $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']] + $mud;
+        OmieApi::call($empresa, self::path($tipo), 'Alterar' . self::sufixo($tipo), $ped);
+        OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']]);
+        sleep(2);   // o Omie leva um instante para refletir a alteração
+        $v = self::consultarPorOmieId($empresa, $tipo, (int)$t['codigo_lancamento_omie']);
+        if (!$v) return ['status' => 'erro', 'msg' => 'o Omie aceitou a alteração mas a consulta de volta não achou o título — confira no Omie', 'antes' => $t, 'depois' => null];
+        $falhou = [];
+        foreach ($mud as $k => $x) if ($k !== 'distribuicao' && !$igual($x, $v[$k] ?? '')) $falhou[] = $k . ' (ficou ' . json_encode($v[$k] ?? null, JSON_UNESCAPED_UNICODE) . ')';
+        $outros = [];   // nada além do pedido pode ter mudado
+        foreach ($campos as $k) if (!isset($mud[$k]) && !$igual($t[$k] ?? '', $v[$k] ?? '')) $outros[] = $k;
+        self::lembrarTitulo($empresa, $tipo, $codigo, $v);
+        if ($falhou) return ['status' => 'erro', 'msg' => 'o Omie aceitou, mas a consulta de volta não mostra a alteração em: ' . implode(', ', $falhou) . ' — confira no Omie', 'antes' => $t, 'depois' => $v];
+        if ($outros) return ['status' => 'erro', 'msg' => 'alterado, mas outros campos também mudaram na consulta (' . implode(', ', $outros) . ') — confira o título no Omie', 'antes' => $t, 'depois' => $v];
+        $rot = ['codigo_cliente_fornecedor' => $tipo === 'P' ? 'fornecedor' : 'cliente', 'valor_documento' => 'valor', 'data_vencimento' => 'vencimento', 'data_previsao' => 'previsão',
+                'codigo_categoria' => 'categoria', 'id_conta_corrente' => 'conta corrente', 'numero_documento_fiscal' => 'nota fiscal'];
+        return ['status' => 'alterado', 'msg' => 'alterado no Omie e conferido: ' . implode(', ', array_map(fn($k) => $rot[$k], array_keys(array_diff_key($mud, ['distribuicao' => 1])))), 'antes' => $t, 'depois' => $v];
+    }
+
+    /**
      * Corrige a forma de pagamento de um título a pagar que ficou como "PIX QR-Code" (importação por planilha)
      * para Transferência Bancária + finalidade "Transferência por chave PIX" (01.3) + chave.
      * @return array{status:'corrigido'|'ja_ok'|'pulado'|'erro', msg:string, antes:?array, depois:?array}

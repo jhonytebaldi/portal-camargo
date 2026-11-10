@@ -332,7 +332,8 @@ function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u)
     $emp = (string)$venda['empresa'];
     $vistos = []; $pend = []; $falhas = []; $ok = [];
     foreach ($d['parcelas'] as $p) {
-        $pg = Fluxo::pagador($p, $venda['compradores']);
+        $pg = Fluxo::pagador($p, $venda['compradores'], $d);
+        if (!empty($pg['construtora'])) continue;   // cadastro da construtora já foi escolhido na lista do Omie (modal "quem paga")
         $doc = $pg['documento'];
         if ($doc === '' || isset($vistos[$doc])) continue;
         $vistos[$doc] = true;
@@ -385,8 +386,9 @@ function cv_gerar_capa(int $id, array $u): int
     $ordem = Fluxo::ordenadas($v['e3']['parcelas']);
     foreach ($mapa['receber'] as $linha => $j) {
         $p = $ordem[$j];
-        $pg = Fluxo::pagador($p, $v['compradores']);
-        $upd->execute([$pg['documento'] !== '' ? Venda::docFormatado($pg['documento']) : null, $p['conta'] ?: null, $capaId, $linha]);
+        $pg = Fluxo::pagador($p, $v['compradores'], $v['e3']);
+        $cli = $pg['documento'] !== '' ? Venda::docFormatado($pg['documento']) : (!empty($pg['construtora']) ? mb_substr($pg['nome'], 0, 60) : null);   // cadastro sem documento: pelo nome exato
+        $upd->execute([$cli, $p['conta'] ?: null, $capaId, $linha]);
     }
     // pagamento liberado → linha da capa (para mostrar se já foi enviado ao Omie)
     if (!empty($mapa['pagar']) && $v['e4']) {
@@ -546,3 +548,59 @@ function cv_titulo_ok(string $m): string
         default => 'Salvo!',
     };
 }
+
+/* ---------------- construtoras: quem paga as parcelas ---------------- */
+
+/** nome da construtora normalizado para casar grafias (sem LTDA, S.A., EIRELI, ME, EPP e pontuação) */
+function cv_construtora_chave(string $nome): string
+{
+    $k = ' ' . preg_replace('/[^A-Z0-9 ]+/', ' ', Venda::chave($nome)) . ' ';
+    foreach (['LTDA', 'S A', 'SA', 'EIRELI', 'ME', 'EPP', 'SS'] as $t) $k = str_replace(' ' . $t . ' ', ' ', $k);
+    return trim((string)preg_replace('/\s+/', ' ', $k));
+}
+
+function cv_construtora(string $nome): ?array
+{
+    $k = cv_construtora_chave($nome);
+    if ($k === '') return null;
+    $st = db()->prepare('SELECT * FROM cv_construtoras WHERE chave = ?'); $st->execute([$k]);
+    $r = $st->fetch();
+    if ($r) $r['omie'] = json_decode((string)$r['omie'], true) ?: [];
+    return $r ?: null;
+}
+
+/**
+ * Grava a marcação/decisão sobre quem paga. $contar = true quando vem de uma venda/capa confirmada (soma no histórico);
+ * a última decisão confirmada vira a sugestão (reforça ou corrige).
+ */
+function cv_construtora_gravar(string $nome, ?string $modo, ?string $sinal, ?string $empresa, ?array $cad, array $u, bool $contar): void
+{
+    $k = cv_construtora_chave($nome);
+    if ($k === '') return;
+    $r = cv_construtora($nome);
+    $omie = $r['omie'] ?? [];
+    if ($empresa && $cad) $omie[$empresa] = ['codigo' => (int)$cad['codigo'], 'nome' => (string)$cad['nome'], 'doc' => (string)($cad['doc'] ?? '')];
+    $nc = (int)($r['n_cliente'] ?? 0) + ($contar && $modo === 'cliente' ? 1 : 0);
+    $nk = (int)($r['n_construtora'] ?? 0) + ($contar && $modo === 'construtora' ? 1 : 0);
+    db()->prepare('INSERT INTO cv_construtoras (chave, nome, modo, sinal, omie, n_cliente, n_construtora, atualizado_por, atualizado_em) VALUES (?,?,?,?,?,?,?,?,NOW())
+                   ON DUPLICATE KEY UPDATE nome = VALUES(nome), modo = VALUES(modo), sinal = VALUES(sinal), omie = VALUES(omie), n_cliente = VALUES(n_cliente),
+                   n_construtora = VALUES(n_construtora), atualizado_por = VALUES(atualizado_por), atualizado_em = NOW()')
+        ->execute([$k, mb_substr(trim($nome), 0, 200), $modo, $modo === 'construtora' ? $sinal : null, json_encode($omie, JSON_UNESCAPED_UNICODE), $nc, $nk, (int)$u['id']]);
+}
+
+/** sugestão para a pergunta "quem paga as parcelas" — null se não há marcação nem histórico */
+function cv_construtora_sugestao(string $nome, string $empresa): ?array
+{
+    $r = cv_construtora($nome);
+    if (!$r || !$r['modo']) return null;
+    $n = (int)$r['n_cliente'] + (int)$r['n_construtora'];
+    $txt = match ($r['modo']) {
+        'construtora' => 'a construtora recebe e repassa' . ($r['sinal'] === 'construtora' ? ' (inclusive o sinal)' : ' (o sinal vem direto do cliente)'),
+        'cliente' => 'o cliente paga direto',
+        default => 'varia de venda para venda',
+    };
+    $base = $n ? 'nas ' . $n . ' venda(s) confirmada(s) desta construtora (' . (int)$r['n_construtora'] . ' com repasse, ' . (int)$r['n_cliente'] . ' com o cliente pagando)' : 'marcado na tela de construtoras';
+    return ['modo' => $r['modo'], 'sinal' => $r['sinal'], 'cadastro' => $r['omie'][$empresa] ?? null, 'texto' => ucfirst($txt) . ' — ' . $base . '.'];
+}
+
+Fluxo::$feriados = cv_feriados();   // repasse da construtora: próximo dia útil

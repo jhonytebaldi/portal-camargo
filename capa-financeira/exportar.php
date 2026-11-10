@@ -598,6 +598,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->commit();
             exit(json_encode(['ok' => true]));
         }
+        if ($acao === 'aplicar_alteracao') {   // alteração depois da exportação → aplica no Omie pela API e confere
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida — recarregue a página');
+            $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND c.empresa = ? AND l.alteracao_pos_exportacao = 1 AND l.status IN ('exportado','removido')");
+            $st->execute([(int)($in['id'] ?? 0), $empresa]);
+            if (!($l = $st->fetch())) $falha('linha não está mais na lista de alterações — recarregue a página');
+            if (!OmieApi::disponivel() || !isset(OmieApi::contas()[$empresa])) $falha('API do Omie não configurada para esta empresa');
+            if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('API do Omie bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
+            $tipoL = $l['tipo'] === 'R' ? 'R' : 'P'; $cod = (string)$l['codigo_integracao'];
+            $porQuem = (string)($u['nome'] ?? $u['login'] ?? 'portal');
+            try {
+                if ($l['status'] === 'removido') {
+                    $r = OmieEnvio::excluir($empresa, $tipoL, $cod);
+                    $res = ['status' => $r['ok'] ? 'alterado' : 'manual', 'msg' => $r['msg']];
+                    if ($r['ok']) $pdo->prepare('UPDATE cf_lancamentos SET alteracao_pos_exportacao = 0, omie_id = NULL WHERE id = ?')->execute([(int)$l['id']]);
+                    cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipoL, 'excluir', $r['ok'] ? 'ok' : 'erro', null, null, null, $r['msg'], (int)$u['id'], $r['ok']);
+                    exit(json_encode(['ok' => true] + $res, JSON_UNESCAPED_UNICODE));
+                }
+                $cat = OmieEnvio::catalogo($empresa);
+                $reg = date('Y-m-d');
+                $r = cf_exp_conferir_api($pdo, $empresa, $tipoL, $l, cf_pessoas(false), $empresas[$empresa], ['data_registro' => $reg, 'emissao' => 'venda'], $cat, $porQuem);
+                $errs = array_values(array_filter($r['erros'], fn($e) => !str_starts_with($e, 'já existe no Omie um título com este código')));
+                if ($errs) exit(json_encode(['ok' => true, 'status' => 'erro', 'msg' => 'não dá para aplicar: ' . implode(' · ', $errs)], JSON_UNESCAPED_UNICODE));
+                $res = OmieEnvio::aplicarAlteracao($empresa, $tipoL, $cod, $l['omie_id'] ? (int)$l['omie_id'] : null, $r['pedido']);
+            } catch (Throwable $e) {
+                $res = ['status' => 'erro', 'msg' => 'API do Omie: ' . $e->getMessage() . (OmieEnvio::erroTemporario($e->getMessage()) ? ' (temporário — tente de novo em alguns minutos)' : '')];
+            }
+            if (in_array($res['status'], ['alterado', 'ja_ok'], true)) {
+                $pdo->prepare('UPDATE cf_lancamentos SET alteracao_pos_exportacao = 0, snapshot_exp = ?, omie_erro = NULL, omie_id = COALESCE(omie_id, ?) WHERE id = ?')
+                    ->execute([json_encode(cf_retrato($l), JSON_UNESCAPED_UNICODE), isset($res['depois']['codigo_lancamento_omie']) ? (int)$res['depois']['codigo_lancamento_omie'] : null, (int)$l['id']]);
+            }
+            if ($res['status'] !== 'ja_ok') cf_exp_log_envio($pdo, $l['exportacao_id'] ? (int)$l['exportacao_id'] : null, $l, $empresa, $tipoL, 'alterar', $res['status'] === 'alterado' ? 'ok' : 'erro',
+                isset($res['depois']['codigo_lancamento_omie']) ? (int)$res['depois']['codigo_lancamento_omie'] : null, $r['pedido'] ?? null, $res['depois'] ?? null, $res['msg'], (int)$u['id'], $res['status'] === 'alterado');
+            exit(json_encode(['ok' => true, 'status' => $res['status'], 'msg' => $res['msg']], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'ajustado') {
             $pdo->prepare('UPDATE cf_lancamentos SET alteracao_pos_exportacao = 0 WHERE id = ?')->execute([(int)($in['id'] ?? 0)]);
             exit(json_encode(['ok' => true]));
@@ -738,16 +772,17 @@ portal_header('Exportar para o Omie', $u);
 <?php endif; ?>
 
 <?php if ($alteradas): ?>
-<h2 class="cf-h2">Alterações depois da exportação <small>ajustar manualmente no Omie</small></h2>
+<h2 class="cf-h2">Alterações depois da exportação <small><?= $apiOk ? 'aplique no Omie pela API (confere depois) ou ajuste à mão' : 'ajustar manualmente no Omie' ?></small></h2>
+<?php if ($apiOk): ?><p><button type="button" class="btn" id="exp-aplicar-todas">Aplicar todas no Omie (<?= count($alteradas) ?>)</button></p><?php endif; ?>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl">
 <thead><tr><th>Código</th><th>Capa</th><th>Favorecido/Cliente</th><th>Valor</th><th>Vencimento</th><th>NF</th><th>Exportado em</th><th>O que fazer no Omie</th><th></th></tr></thead>
 <tbody><?php foreach ($alteradas as $a): ?>
 <tr data-id="<?= (int)$a['id'] ?>"><td><b><?= h((string)$a['codigo_integracao']) ?></b></td><td><a href="/capa-financeira/revisar.php?id=<?= (int)$a['capa_id'] ?>"><?= h((string)$a['capa_cod']) ?></a> <?= h(mb_substr((string)$a['capa_cliente'], 0, 30)) ?></td>
 <td><?= h((string)$a['cf_raw']) ?></td><td class="cf-num"><?= cf_brl($a['valor']) ?></td><td><?= cf_data_br($a['data_prevista']) ?></td><td><?= h((string)$a['nota_fiscal']) ?></td><td><small><?= h((string)$a['arquivo_nome']) ?></small></td>
 <td><?php if ($a['status'] === 'removido'): ?><span class="cf-tag cf-grave">excluir o título</span><?php else: $dif = cf_diferencas_exp(json_decode((string)$a['snapshot_exp'], true), $a); echo $dif ? 'alterar: ' . h(implode(', ', $dif)) : 'conferir o título'; endif; ?></td>
-<td><button type="button" class="cf-x exp-ajustado" title="já ajustei este título no Omie">✔ ajustado</button></td></tr>
+<td class="exp-alt-st"><?php if ($apiOk): ?><button type="button" class="btn cf-btn-sec exp-aplicar" style="padding:4px 10px;font-size:13px">Aplicar no Omie</button><br><?php endif; ?><button type="button" class="cf-x exp-ajustado" title="já ajustei este título no Omie">✔ ajustado à mão</button><div class="exp-alt-msg" style="font-size:12px;margin-top:4px"></div></td></tr>
 <?php endforeach; ?></tbody></table></div>
-<p class="cf-dica">Na importação por planilha o Omie identifica o título por Categoria + Nota Fiscal + Fornecedor + Valor + Parcela + Vencimento — reimportar uma linha alterada criaria um título novo. Por isso estas ficam para ajuste manual (busque pelo Nº Documento = código de integração). Com a API isso passa a ser automático.</p>
+<p class="cf-dica">Na importação por planilha o Omie identifica o título por Categoria + Nota Fiscal + Fornecedor + Valor + Parcela + Vencimento — reimportar uma linha alterada criaria um título novo. Pela API o portal altera só o que mudou e consulta o título de volta para confirmar; título já baixado o Omie não deixa alterar (ajuste manual — busque pelo Nº Documento = código de integração).</p>
 <?php endif; ?>
 
 <?php if ($enviadosApi): ?>
@@ -1126,6 +1161,38 @@ document.getElementById('exp-forcar').onclick = async () => {
     const texto = f === 0 ? '✔ Envio concluído: ' + n + ' de ' + n + ' título(s) no Omie (100%) — ' + brl(j.total) : (n ? '⚠ Envio parcial: ' + n + ' enviado(s) (' + brl(j.total) + ') · ' + f + ' para revisar — continuam na lista com o motivo em vermelho' : '✖ Nenhum título enviado: ' + f + ' para revisar — veja o motivo em vermelho em cada linha');
     try { sessionStorage.setItem('exp-resultado', JSON.stringify({tipo: f === 0 ? 'ok' : (n ? 'parcial' : 'erro'), texto, detalhe: det.trim()})); } catch(e) { alert(texto + '\n\n' + det); }
     location.reload();
+  });
+  // alterações depois da exportação → Omie pela API (uma por vez; cada uma confere consultando de volta)
+  async function aplicarAlt(tr) {
+    const cel = tr.querySelector('.exp-alt-msg'), bt = tr.querySelector('.exp-aplicar');
+    if (bt) bt.disabled = true; cel.innerHTML = '<span class="cf-flag cf-leve">⏳ processando no Omie…</span>';
+    const j = await postRaw({acao: 'aplicar_alteracao', id: +tr.dataset.id});
+    const ok = j && j.ok && (j.status === 'alterado' || j.status === 'ja_ok');
+    const cls = ok ? 'cf-ok' : (j && j.status === 'manual' ? 'cf-leve' : 'cf-grave');
+    cel.innerHTML = '<span class="cf-flag ' + cls + '">' + (ok ? '✔ ok — ' : (j && j.status === 'manual' ? '✋ ' : '✖ ')) + String(j ? (j.msg || j.erro || '') : 'sem resposta').replace(/</g, '&lt;') + '</span>';
+    if (ok) { tr.style.opacity = .55; if (bt) bt.remove(); } else if (bt) bt.disabled = false;
+    return ok ? 'ok' : (j && j.status === 'manual' ? 'manual' : 'erro');
+  }
+  document.querySelectorAll('.exp-aplicar').forEach(b => b.addEventListener('click', async () => {
+    const r = await aplicarAlt(b.closest('tr'));
+    if (window.CFModal) CFModal.aviso(r === 'ok' ? {tipo: 'ok', titulo: 'Alterado no Omie', texto: 'Conferido consultando o título de volta.'} : {tipo: r === 'manual' ? 'parcial' : 'erro', titulo: r === 'manual' ? 'Ajuste manual' : 'Não alterou', texto: b.closest('tr').querySelector('.exp-alt-msg').textContent});
+  }));
+  const bat = document.getElementById('exp-aplicar-todas');
+  if (bat) bat.addEventListener('click', async () => {
+    const trs = [...document.querySelectorAll('.exp-aplicar')].map(b => b.closest('tr'));
+    if (!trs.length) return;
+    if (!confirm('Aplicar no Omie as ' + trs.length + ' alteração(ões)? Cada título é alterado e conferido; os já baixados ficam para ajuste manual.')) return;
+    bat.disabled = true;
+    const prog = window.CFModal ? CFModal.progresso({titulo: 'Aplicando ' + trs.length + ' alteração(ões) no Omie', tau: 4}) : null;
+    const cont = {ok: 0, manual: 0, erro: 0};
+    for (let i = 0; i < trs.length; i++) {
+      if (prog) prog.pct(i / trs.length * 100).faixa(i / trs.length * 100, (i + 1) / trs.length * 100 - 1, 'título ' + (i + 1) + ' de ' + trs.length + ' — alterando e conferindo…');
+      cont[await aplicarAlt(trs[i])]++;
+    }
+    bat.disabled = false;
+    const det = trs.map(tr => tr.querySelector('td b').textContent + ': ' + tr.querySelector('.exp-alt-msg').textContent).join('\n');
+    if (prog) await prog.resultado({tipo: cont.erro ? (cont.ok ? 'parcial' : 'erro') : (cont.manual ? 'parcial' : 'ok'), titulo: cont.ok + ' de ' + trs.length + ' alterado(s) no Omie',
+      texto: (cont.manual ? cont.manual + ' para ajuste manual (já baixados). ' : '') + (cont.erro ? cont.erro + ' com erro — veja o motivo na linha e tente de novo.' : ''), detalhe: det});
   });
   document.querySelectorAll('.exp-ajustado').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr'); const j = await post({acao:'ajustado', id: +tr.dataset.id}); if (j) tr.remove();

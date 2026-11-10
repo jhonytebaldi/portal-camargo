@@ -14,7 +14,11 @@
 
    Guardado em cv_vendas.e3_dados (JSON):
      {travas: [..], conferido: bool, conferido_por, conferido_em,
-      parcelas: [{data, valor, pagador: 'c0'|'c1'|…|'outro', outro_nome, outro_doc, conta, ref, recebido, arras}]}
+      parcelas: [{data, valor, pagador: 'c0'|'c1'|…|'construtora'|'outro', outro_nome, outro_doc, conta, ref, recebido, arras}],
+      quem_paga: {modo: comprador|construtora|outro, pagador, sinal}  — resposta do modal (padrão das parcelas novas),
+      construtora_cad: {codigo, nome, doc} — cadastro no Omie (empresa da venda) de quando a construtora paga}
+   Parcela paga pela CONSTRUTORA (recebe do cliente e repassa): digita-se a data do quadro resumo do contrato;
+   a conta a receber (e os gatilhos da etapa 4) usam o REPASSE = data + 7 dias corridos → próximo dia útil.
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/Venda.php';
@@ -25,6 +29,24 @@ final class Fluxo
     public const CONTAS_PADRAO = ['SICOOB', 'ASAAS', 'OMIE.CASH', 'INTER', 'SICREDI'];
     public const GATILHOS = [0.5, 0.75, 1.0];
     public const DIAS_ARRAS = 10;   // recebimentos até N dias depois da venda entram como arras por padrão
+    public const DIAS_REPASSE = 7;  // construtora repassa N dias corridos depois do pagamento do cliente
+    /** feriados ('Y-m-d' => nome) — definidos em _vendas.php (cf_config 'feriados') */
+    public static array $feriados = [];
+
+    /** data + N dias corridos; caindo em fim de semana/feriado, vai para o próximo dia útil */
+    public static function repasse(?string $data): ?string
+    {
+        if (!$data) return null;
+        $d = new DateTimeImmutable($data . ' 12:00:00');
+        $d = $d->modify('+' . self::DIAS_REPASSE . ' days');
+        while ((int)$d->format('N') >= 6 || isset(self::$feriados[$d->format('Y-m-d')])) $d = $d->modify('+1 day');
+        return $d->format('Y-m-d');
+    }
+    /** data da conta a receber: a da parcela, ou a do repasse quando quem paga é a construtora */
+    public static function vencimento(array $p): ?string
+    {
+        return ($p['pagador'] ?? '') === 'construtora' ? self::repasse($p['data'] ?? null) : ($p['data'] ?? null);
+    }
 
     public static function vazio(): array
     {
@@ -43,20 +65,30 @@ final class Fluxo
             $valor = Venda::dinheiro($p['valor'] ?? null);
             if ($valor === false) { $fmt[] = 'Parcela ' . ($i + 1) . ': valor ilegível.'; $valor = null; }
             $pag = (string)($p['pagador'] ?? 'c0');
-            if ($pag !== 'outro' && !preg_match('/^c\d$/', $pag)) $pag = 'c0';
+            if ($pag !== 'outro' && $pag !== 'construtora' && !preg_match('/^c\d$/', $pag)) $pag = 'c0';
             if ($data === null && $valor === null && trim((string)($p['ref'] ?? '')) === '') continue;
             $d['parcelas'][] = ['data' => $data, 'valor' => $valor, 'pagador' => $pag,
                 'outro_nome' => $pag === 'outro' ? Venda::texto($p['outro_nome'] ?? '') : '', 'outro_doc' => $pag === 'outro' ? Venda::docLimpo($p['outro_doc'] ?? '') : '',
                 'conta' => Venda::texto($p['conta'] ?? ''), 'ref' => Venda::texto($p['ref'] ?? ''),
                 'recebido' => !empty($p['recebido']), 'arras' => !empty($p['arras']) && !empty($p['recebido'])] + (isset($p['k']) ? ['k' => (int)$p['k']] : []);
         }
+        $q = (array)($in['quem_paga'] ?? []);
+        if (in_array($q['modo'] ?? '', ['comprador', 'construtora', 'outro'], true)) {
+            $d['quem_paga'] = ['modo' => $q['modo'], 'pagador' => preg_replace('/[^a-z0-9]/', '', (string)($q['pagador'] ?? '')), 'sinal' => preg_replace('/[^a-z0-9]/', '', (string)($q['sinal'] ?? ''))];
+        }
+        $cc = (array)($in['construtora_cad'] ?? []);
+        if (!empty($cc['codigo'])) $d['construtora_cad'] = ['codigo' => (int)$cc['codigo'], 'nome' => Venda::texto((string)($cc['nome'] ?? '')), 'doc' => Venda::docLimpo((string)($cc['doc'] ?? ''))];
         return [$d, $fmt];
     }
 
-    /** nome e documento de quem paga a parcela */
-    public static function pagador(array $p, array $compradores): array
+    /** nome e documento de quem paga a parcela ($d = dados da etapa 3, para o cadastro da construtora) */
+    public static function pagador(array $p, array $compradores, ?array $d = null): array
     {
         if ($p['pagador'] === 'outro') return ['nome' => $p['outro_nome'], 'documento' => $p['outro_doc'], 'email' => '', 'comprador' => null];
+        if ($p['pagador'] === 'construtora') {
+            $cc = $d['construtora_cad'] ?? null;
+            return ['nome' => (string)($cc['nome'] ?? 'CONSTRUTORA'), 'documento' => (string)($cc['doc'] ?? ''), 'email' => '', 'comprador' => null, 'construtora' => true, 'omie_codigo' => $cc['codigo'] ?? null];
+        }
         $i = (int)substr($p['pagador'], 1);
         $c = $compradores[$i] ?? null;
         return ['nome' => (string)($c['nome'] ?? ''), 'documento' => (string)($c['documento'] ?? ''), 'email' => (string)($c['email'] ?? ''), 'comprador' => $c ? $i : null];
@@ -67,7 +99,8 @@ final class Fluxo
     public static function ordenadas(array $parcelas): array
     {
         $out = [];
-        foreach (array_values($parcelas) as $i => $p) $out[] = $p + ['_i' => $i];
+        // 'data' passa a ser a da conta a receber (repasse, se a construtora paga); a digitada fica em 'data_contrato'
+        foreach (array_values($parcelas) as $i => $p) $out[] = ['data_contrato' => $p['data'] ?? null, 'data' => self::vencimento($p)] + $p + ['_i' => $i];
         return $out;
     }
 
@@ -95,7 +128,7 @@ final class Fluxo
             $marca = [];
             foreach ($pend as $j => $g) if ($pctBase + 1e-9 >= $g) { $marca[] = (int)round($g * 100) . '%'; unset($pend[$j]); }
             if ($marca) $gat[] = ['quando' => $p['data'], 'gatilhos' => $marca, 'pct_base' => $pctBase];
-            $linhas[] = ['i' => $p['_i'], 'k' => $p['k'] ?? null, 'pct' => $total > 0 ? $v / $total : 0, 'pct_acum' => $total > 0 ? $acum / $total : 0,
+            $linhas[] = ['i' => $p['_i'], 'k' => $p['k'] ?? null, 'venc' => $p['data'], 'repasse' => ($p['pagador'] ?? '') === 'construtora', 'pct' => $total > 0 ? $v / $total : 0, 'pct_acum' => $total > 0 ? $acum / $total : 0,
                          'pct_base' => $pctBase, 'gatilhos' => $marca];
         }
         usort($linhas, fn($a, $b) => $a['i'] <=> $b['i']);   // devolve na ordem da lista (índice = posição gravada)
@@ -114,8 +147,10 @@ final class Fluxo
             $q = 'Parcela ' . ($i + 1) . ($p['ref'] !== '' ? ' (' . $p['ref'] . ')' : '');
             if (!$p['data']) $e[] = "$q: falta a data.";
             if (!$p['valor'] || $p['valor'] <= 0) $e[] = "$q: falta o valor.";
-            $pg = self::pagador($p, $comp);
-            if ($p['pagador'] === 'outro') {
+            $pg = self::pagador($p, $comp, $d);
+            if ($p['pagador'] === 'construtora') {
+                if (empty($d['construtora_cad']['codigo'])) $e[] = "$q: escolha o cadastro da construtora no Omie (botão \"quem paga\").";
+            } elseif ($p['pagador'] === 'outro') {
                 if ($p['outro_nome'] === '' || count(explode(' ', $p['outro_nome'])) < 2) $e[] = "$q: informe o nome completo de quem paga.";
                 if ($p['outro_doc'] === '') $e[] = "$q: falta o CPF/CNPJ de quem paga.";
                 elseif (!Venda::tipoDoc($p['outro_doc'])) $e[] = "$q: CPF/CNPJ de quem paga é inválido.";
@@ -140,9 +175,14 @@ final class Fluxo
         if (!$d) return [];
         $out = [];
         foreach (self::ordenadas($d['parcelas']) as $p) {
-            $pg = self::pagador($p, $comp);
-            $out[] = 'Parcela ' . ($p['ref'] ?: '') . ' · ' . Venda::br($p['data']) . ' · ' . self::brl((float)$p['valor']) . ' · ' . $pg['nome'] . ' · ' . $p['conta']
+            $pg = self::pagador($p, $comp, $d);
+            $out[] = 'Parcela ' . ($p['ref'] ?: '') . ' · ' . Venda::br($p['data_contrato']) . ($p['pagador'] === 'construtora' ? ' (repasse ' . Venda::br($p['data']) . ')' : '') . ' · ' . self::brl((float)$p['valor']) . ' · ' . $pg['nome'] . ' · ' . $p['conta']
                    . ($p['recebido'] ? ' · recebida' : '') . ($p['arras'] ? ' · arras' : '');
+        }
+        if (!empty($d['quem_paga'])) {
+            $q = $d['quem_paga'];
+            $rot = fn($x) => $x === 'construtora' ? 'construtora' : ($x === 'outro' ? 'outro pagador' : (preg_match('/^c(\d+)$/', (string)$x, $m) ? ($comp[(int)$m[1]]['nome'] ?? 'comprador') : (string)$x));
+            $out[] = 'Quem paga as parcelas: ' . ($q['modo'] === 'construtora' ? 'construtora (' . ($d['construtora_cad']['nome'] ?? '?') . ') — sinal: ' . $rot($q['sinal']) : $rot($q['pagador']));
         }
         foreach ($d['travas'] as $t) $out[] = 'Trava: ' . self::TRAVAS[$t];
         if ($d['conferido']) $out[] = 'Conferido com contrato e termo de honorários';
