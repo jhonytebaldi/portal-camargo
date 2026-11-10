@@ -266,6 +266,8 @@ function cf_cabecalho(string $titulo, string $sub, array $trilha, string $atual 
              'recibos-omie' => ['/recibos-omie/', 'Recibos do Omie'], 'pessoas' => ['/capa-financeira/pessoas.php', 'Pessoas'], 'config' => ['/capa-financeira/configuracoes.php', 'Configurações']];
     $js = __DIR__ . '/cf-modal.js';
     echo '<script src="/capa-financeira/cf-modal.js?v=' . (is_file($js) ? filemtime($js) : 1) . '"></script>';
+    $js3 = __DIR__ . '/cf-quem-paga.js';
+    echo '<script src="/capa-financeira/cf-quem-paga.js?v=' . (is_file($js3) ? filemtime($js3) : 1) . '"></script>';
     $js2 = __DIR__ . '/cf-omie-cad.js';
     echo '<script src="/capa-financeira/cf-omie-cad.js?v=' . (is_file($js2) ? filemtime($js2) : 1) . '"></script>';
     echo '<div class="cf-top"><div><nav class="cf-trilha"><a href="/">Portal</a>';

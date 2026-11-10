@@ -6,6 +6,7 @@
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
+require_once __DIR__ . '/_quem_paga.php';
 
 $u = require_tool('capa-financeira');
 $pdo = db();
@@ -36,7 +37,9 @@ $editavel = $capa['status'] === 'revisao';
 $funcoes = ['CORRETOR', 'CAPTADOR', 'COORDENADOR', 'INTEGRACAO', 'DIRETOR', 'PRE VENDA', 'FINANCEIRO', 'SAC', 'ADM'];
 
 // pendências
+$qpCtx = cf_qp_contexto($pdo, $capa);
 $pend = [];
+if ($qpCtx['linhas'] && !$qpCtx['atual']) $pend[] = 'Responda quem pagou as parcelas (cliente ou construtora) — quadro "Quem pagou as parcelas?"';
 $capaOkIni = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: [];
 foreach ($capaFlags as $cf) if (str_starts_with($cf, 'GRAVE:') && !in_array(cf_flag_codigo($cf), $capaOkIni, true)) $pend[] = 'Capa: ' . cf_flag_curto($cf) . ' — confirme no aviso da capa';
 foreach ($linhas as $l) {
@@ -107,6 +110,17 @@ foreach ($escTxt as $campo => [$rot, $cel, $t1, $t2, $btn]): if (!$opcoes[$campo
 </div>
 <?php endforeach; ?>
 
+<?php if ($qpCtx['linhas'] && in_array($capa['status'], ['revisao', 'confirmada'], true)): $qa = $qpCtx['atual']; ?>
+<div class="cf-escolha" id="cf-qp" style="<?= $qa ? '' : 'border-left:4px solid #b4512f' ?>">
+  <b>Quem pagou as parcelas?</b>
+  <span id="cf-qp-txt"><?php if (!$qa): ?><span style="color:#b4512f">ainda não respondido</span><?= $qpCtx['sugestao'] ? ' · sugestão: ' . h($qpCtx['sugestao']['texto']) : '' ?>
+  <?php elseif (($qa['origem'] ?? '') === 'formulario'): ?>definido no formulário da venda (etapa 3 — para mudar, troque lá)
+  <?php elseif ($qa['modo'] === 'construtora'): ?>a construtora — <?= h((string)($qa['cad']['nome'] ?? '')) ?> <?= h(cf_fmt_doc((string)($qa['cad']['doc'] ?? ''))) ?><?= ($qa['origem'] ?? '') === 'formulario' ? ' (definido no formulário da venda)' : ' · ' . count($qa['sinal_ids'] ?? []) . ' conta(s) de sinal no nome do cliente' ?>
+  <?php else: ?>o cliente, direto<?= ($qa['origem'] ?? '') === 'formulario' ? ' (definido no formulário da venda)' : '' ?><?php endif; ?></span>
+  <?php if (($qa['origem'] ?? '') !== 'formulario'): ?><button type="button" class="btn cf-btn-sec" id="cf-qp-btn"><?= $qa ? 'Alterar' : 'Responder' ?></button><?php endif; ?>
+  <?php if ($qa && !empty($qa['por'])): ?><small class="cf-raw"> respondido por <?= h((string)$qa['por']) ?></small><?php endif; ?>
+</div>
+<?php endif; ?>
 <?php if ($editavel): ?>
 <div class="cf-barra">
   <div id="cf-pend" class="<?= $pend ? 'cf-pend' : 'cf-pend ok' ?>">
@@ -246,6 +260,13 @@ $receber = array_filter($linhas, fn($l) => $l['tipo'] === 'R');
 (function(){
   const csrf = document.querySelector('meta[name=csrf]').content;
   const capaId = <?= (int)$capa['id'] ?>;
+  const qpBtn = document.getElementById('cf-qp-btn');
+  if (qpBtn) qpBtn.addEventListener('click', async () => {
+    const j = await CFQuemPaga.abrir(<?= json_encode($qpCtx, JSON_UNESCAPED_UNICODE) ?>, csrf);
+    if (!j) return;
+    await CFModal.aviso({tipo: 'ok', titulo: 'Quem pagou: registrado', texto: j.alteradas + ' conta(s) a receber tiveram o cliente ajustado.' + (j.pos_exportacao ? ' ' + j.pos_exportacao + ' já estavam no Omie — aplique em Exportar p/ Omie → Alterações depois da exportação.' : '')});
+    location.reload();
+  });
   async function acao(body){
     body.csrf = csrf; body.capa_id = capaId;
     const r = await fetch('/capa-financeira/acao.php', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF':csrf}, body: JSON.stringify(body)});

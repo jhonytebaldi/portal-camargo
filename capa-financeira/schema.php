@@ -208,6 +208,10 @@ function cf_migrar(PDO $pdo): array
         if ($tp && strtolower((string)$tp) !== 'text') { $pdo->exec("ALTER TABLE cf_recibos MODIFY numero TEXT NOT NULL"); $feitos[] = 'cf_recibos.numero TEXT'; } }
     // bloco "OBSERVAÇÃO:" do fim da planilha (texto livre do financeiro) — mostrado em destaque na revisão
     // avisos graves da capa (não de linha) que o usuário confirmou — códigos; ex. COMPRADOR_COM_CNPJ
+    if (!$colExiste('cf_capas', 'quem_paga')) {   // resposta de "quem pagou as parcelas" (cliente | construtora + sinal + cadastro do Omie)
+        $pdo->exec("ALTER TABLE cf_capas ADD COLUMN quem_paga JSON NULL AFTER capa_flags");
+        $feitos[] = 'cf_capas.quem_paga';
+    }
     if (!$colExiste('cf_capas', 'capa_flags_ok')) {
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN capa_flags_ok JSON NULL AFTER capa_flags");
         $feitos[] = 'cf_capas.capa_flags_ok';

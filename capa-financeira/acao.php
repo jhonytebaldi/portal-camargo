@@ -5,6 +5,7 @@
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
+require_once __DIR__ . '/_quem_paga.php';
 
 header('Content-Type: application/json; charset=utf-8');
 $u = require_tool('capa-financeira');
@@ -50,6 +51,13 @@ if ($acao === 'reabrir') {
     } catch (Throwable $e) { $pdo->rollBack(); falha('erro ao reabrir: ' . $e->getMessage(), 500); }
     exit(json_encode(['ok' => true]));
 }
+if ($acao === 'quem_paga') {   // vale para capa em revisão e para capa já confirmada (lista das antigas)
+    try { $r = cf_qp_aplicar($pdo, $capa, (string)($in['modo'] ?? ''), (array)($in['sinal_ids'] ?? []), is_array($in['cad'] ?? null) ? $in['cad'] : null, $u); }
+    catch (Throwable $e) { falha($e->getMessage()); }
+    $st = $pdo->prepare('SELECT * FROM cf_capas WHERE id = ?'); $st->execute([$capaId]); $capa = $st->fetch();
+    exit(json_encode(['ok' => true] + $r + ['pendencias' => $capa['status'] === 'revisao' ? cf_pendencias($pdo, $capa) : [], 'quem_paga' => cf_qp_atual($capa)], JSON_UNESCAPED_UNICODE));
+}
+
 if ($capa['status'] !== 'revisao') falha('esta capa não está mais em revisão');
 
 /** Pendências que impedem a confirmação. */
@@ -59,6 +67,7 @@ function cf_pendencias(PDO $pdo, array $capa): array
     if ($capa['cod'] === null || $capa['cod'] === '') $p[] = 'Capa sem COD do imóvel — informe o código (Robust)';
     $ok = json_decode((string)($capa['capa_flags_ok'] ?? ''), true) ?: [];
     foreach (json_decode((string)($capa['capa_flags'] ?? ''), true) ?: [] as $cf) if (str_starts_with($cf, 'GRAVE:') && !in_array(cf_flag_codigo($cf), $ok, true)) $p[] = 'Capa: ' . cf_flag_curto($cf) . ' — confirme no aviso da capa';
+    if (!cf_qp_atual($capa) && cf_qp_linhas($pdo, (int)$capa['id'])) $p[] = 'Responda quem pagou as parcelas (cliente ou construtora) — quadro "Quem pagou as parcelas?"';
     $st = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE capa_id = ? AND status = 'revisao' ORDER BY linha_xlsx");
     $st->execute([$capa['id']]);
     $n = 0;
@@ -316,6 +325,8 @@ case 'confirmar':
             $pdo->prepare("UPDATE cf_capas SET status = 'substituida' WHERE id = ? AND status IN ('revisao','confirmada')")->execute([$capa['capa_anterior_id']]);
         }
         $pdo->prepare("UPDATE cf_capas SET status = 'confirmada', confirmado_em = NOW(), confirmado_por = ? WHERE id = ?")->execute([$u['id'], $capaId]);
+        $qpC = cf_qp_atual($capa);
+        if ($qpC && empty($qpC['contado'])) { cf_qp_contar($capa, $qpC, $u); $qpC['contado'] = true; $pdo->prepare('UPDATE cf_capas SET quem_paga = ? WHERE id = ?')->execute([json_encode($qpC, JSON_UNESCAPED_UNICODE), $capaId]); }
         $pdo->commit();
     } catch (Throwable $e) { $pdo->rollBack(); falha('erro ao confirmar: ' . $e->getMessage(), 500); }
     break;

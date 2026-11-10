@@ -107,6 +107,20 @@ function cv_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cv_construtoras (quem paga as parcelas)';
     }
+    // capas geradas pelo formulário antes da pergunta "quem pagou as parcelas": a resposta é a da etapa 3 (não vira pendência nem entra na lista das antigas)
+    $temQP = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cf_capas' AND COLUMN_NAME = 'quem_paga'")->fetchColumn() > 0;
+    if ($temQP && $tem('cv_vendas')) {
+        $n = 0; $get = $pdo->prepare('SELECT capa_anterior_id, quem_paga FROM cf_capas WHERE id = ?'); $set = $pdo->prepare('UPDATE cf_capas SET quem_paga = ? WHERE id = ?');
+        foreach ($pdo->query('SELECT capa_id FROM cv_vendas WHERE capa_id IS NOT NULL')->fetchAll() as $v) {
+            $cid = (int)$v['capa_id']; $vistos = [];
+            while ($cid && !isset($vistos[$cid])) {
+                $vistos[$cid] = true; $get->execute([$cid]); $c = $get->fetch(); if (!$c) break;
+                if ($c['quem_paga'] === null) { $set->execute([json_encode(['modo' => 'cliente', 'origem' => 'formulario', 'cad' => null, 'sinal_ids' => [], 'por' => 'migração', 'em' => date('Y-m-d H:i:s'), 'contado' => true]), $cid]); $n++; }
+                $cid = (int)$c['capa_anterior_id'];
+            }
+        }
+        if ($n) $feitos[] = "cf_capas.quem_paga: $n capa(s) do formulário marcadas (resposta da etapa 3)";
+    }
     // colunas acrescentadas depois da 1ª versão
     $col = function (string $t, string $c) use ($pdo): bool {
         $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');

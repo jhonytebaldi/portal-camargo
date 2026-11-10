@@ -396,6 +396,11 @@ function cv_gerar_capa(int $id, array $u): int
         foreach ($mapa['pagar'] as $linha => $k) if (isset($e4['liberados'][$k])) { $e4['liberados'][$k]['linha'] = $linha; $e4['liberados'][$k]['capa'] = $capaId; }
         db()->prepare('UPDATE cv_vendas SET e4_dados = ? WHERE id = ?')->execute([json_encode($e4, JSON_UNESCAPED_UNICODE), $id]);
     }
+    // capa do formulário: "quem pagou" já foi respondido na etapa 3 (não vira pendência na conferência)
+    $q3 = $v['e3']['quem_paga'] ?? null;
+    $temCons = (bool)array_filter($v['e3']['parcelas'], fn($p) => $p['pagador'] === 'construtora');
+    db()->prepare('UPDATE cf_capas SET quem_paga = ? WHERE id = ?')->execute([json_encode(['modo' => $temCons ? 'construtora' : 'cliente', 'origem' => 'formulario', 'cad' => $temCons ? ($v['e3']['construtora_cad'] ?? null) : null,
+        'sinal_ids' => [], 'por' => (string)$u['nome'], 'em' => date('Y-m-d H:i:s'), 'contado' => true, 'etapa3' => $q3], JSON_UNESCAPED_UNICODE), $capaId]);
     db()->prepare('UPDATE cv_vendas SET capa_id = ?, rev = rev + 1 WHERE id = ?')->execute([$capaId, $id]);
     if (!empty($mapa['pagar'])) cv_hist($id, 4, 'contas_receber', 'Contas a receber e a pagar', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'nova versão na capa #' . $capaId . ' com ' . count($mapa['pagar']) . ' pagamento(s) liberado(s) (em revisão na Capa Financeira)', $u);
     else cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (em revisão na Capa Financeira)', $u);

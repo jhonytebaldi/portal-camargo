@@ -54,6 +54,7 @@ main.wrap{max-width:1300px}
 </style>
 <?php cf_cabecalho('Construtoras — quem paga as parcelas', 'Marque uma vez como cada construtora costuma receber: é a sugestão inicial na etapa 3 das vendas e na conferência das capas. Cada decisão confirmada depois reforça ou corrige a marcação.',
     [['Capa Financeira', '/capa-financeira/'], ['Vendas', '/capa-financeira/vendas/'], ['Construtoras', null]], 'vendas'); ?>
+<p><a class="btn cf-btn-sec" href="/capa-financeira/quem-paga-antigas.php">Capas antigas para corrigir →</a></p>
 <?php if ($semMarca): ?><div class="aviso" style="margin-bottom:10px"><?= $semMarca ?> construtora(s) ainda sem marcação (destacadas).</div><?php endif; ?>
 <section class="card">
 <table class="cvc-tab">
