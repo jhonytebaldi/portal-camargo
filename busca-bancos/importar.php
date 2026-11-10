@@ -34,16 +34,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $drive = json_decode((string)($_POST['drive'] ?? ''), true) ?: [];   // [i => {id, caminho}] opcional, alinhado com arquivos[]
     $fs = $_FILES['arquivos'] ?? null; $empresa = array_key_exists($_POST['empresa'] ?? '', BbImportador::EMPRESAS) ? (string)$_POST['empresa'] : '';
     if (!$fs || !is_array($fs['name']) || ($fs['name'][0] ?? '') === '') $erros[] = 'Escolha pelo menos um arquivo .ofx.';
-    else foreach ($fs['name'] as $i => $nome) {
+    else {
+    // .zip (ex.: pasta baixada do Drive): abre e trata cada .ofx de dentro como um arquivo enviado, com a pasta de origem
+    $entradas = []; $pdfsZip = 0;
+    foreach ($fs['name'] as $i => $nome) {
         if ($fs['error'][$i] !== UPLOAD_ERR_OK) { $erros[] = h($nome) . ': o envio falhou (arquivo grande demais ou conexão interrompida).'; continue; }
-        if (!preg_match('/\.(ofx|qfx)$/i', (string)$nome)) { $erros[] = h($nome) . ': não é um arquivo .ofx. Para o extrato da Caixa em PDF use o quadro "Extrato da Caixa em PDF", logo abaixo.'; continue; }
+        if (!preg_match('/\.zip$/i', (string)$nome)) { $entradas[] = ['nome' => (string)$nome, 'tmp' => $fs['tmp_name'][$i], 'drive' => $drive[$i] ?? null]; continue; }
+        $z = new ZipArchive();
+        if ($z->open($fs['tmp_name'][$i]) !== true) { $erros[] = h($nome) . ': não consegui abrir o .zip.'; continue; }
+        $achou = 0;
+        for ($k = 0; $k < $z->numFiles && $k < 2000; $k++) {
+            $st = $z->statIndex($k); $cam = str_replace('\\', '/', (string)$st['name']);
+            if (str_ends_with($cam, '/') || str_contains($cam, '__MACOSX/')) continue;
+            if (preg_match('/\.pdf$/i', $cam)) { $pdfsZip++; continue; }
+            if (!preg_match('/\.(ofx|qfx)$/i', $cam) || $st['size'] > 8 * 1024 * 1024) continue;
+            $tmp = tempnam(sys_get_temp_dir(), 'bbz'); file_put_contents($tmp, (string)$z->getFromIndex($k));
+            $nomeZip = mb_convert_encoding($cam, 'UTF-8', mb_check_encoding($cam, 'UTF-8') ? 'UTF-8' : 'CP437');
+            $entradas[] = ['nome' => basename($nomeZip), 'tmp' => $tmp, 'zip' => true, 'drive' => ['caminho' => trim(dirname($nomeZip), './')]];
+            $achou++;
+        }
+        $z->close();
+        if (!$achou) $erros[] = h($nome) . ': o .zip não tem nenhum arquivo .ofx.';
+    }
+    if ($pdfsZip) $avisoZip = $pdfsZip . ' PDF(s) dentro do .zip foram ignorados: o extrato da Caixa em PDF entra pelo quadro "Extrato da Caixa em PDF".';
+    foreach ($entradas as $i => $ent) { $nome = $ent['nome'];
+        if (!preg_match('/\.(ofx|qfx)$/i', (string)$nome)) { $erros[] = h($nome) . ': não é um arquivo .ofx nem .zip. Para o extrato da Caixa em PDF use o quadro "Extrato da Caixa em PDF", logo abaixo.'; continue; }
         // arquivo vindo do Drive pelo navegador: guarda a pasta e o link (a pasta sugere a empresa de conta nova)
-        $dm = is_array($drive[$i] ?? null) ? $drive[$i] : null;
+        $dm = is_array($ent['drive'] ?? null) ? $ent['drive'] : null;
         $meta = $dm && preg_match('/^[A-Za-z0-9_-]{20,}$/', (string)($dm['id'] ?? ''))
             ? ['origem' => 'drive', 'drive_id' => (string)$dm['id'], 'drive_caminho' => mb_substr(trim((string)($dm['caminho'] ?? '')), 0, 300) ?: null]
-            : ['origem' => 'upload'];
-        try { foreach (BbImportador::importarOfx($pdo, (string)file_get_contents($fs['tmp_name'][$i]), $meta + ['nome' => (string)$nome, 'usuario' => (int)$u['id'], 'empresa' => $empresa]) as $r) $resultados[] = $r + ['arquivo' => (string)$nome]; }
-        catch (Throwable $e) { $erros[] = h($nome) . ': ' . h($e instanceof RuntimeException ? $e->getMessage() : 'não foi possível ler o arquivo'); if (!$e instanceof RuntimeException) error_log('busca-bancos upload: ' . $e->getMessage()); }
+            : ['origem' => 'upload', 'drive_caminho' => $dm && trim((string)($dm['caminho'] ?? '')) !== '' ? mb_substr(trim((string)$dm['caminho']), 0, 300) : null];
+        try { foreach (BbImportador::importarOfx($pdo, (string)file_get_contents($ent['tmp']), $meta + ['nome' => (string)$nome, 'usuario' => (int)$u['id'], 'empresa' => $empresa]) as $r) $resultados[] = $r + ['arquivo' => (($dm['caminho'] ?? '') !== '' ? $dm['caminho'] . '/' : '') . (string)$nome]; }
+        catch (Throwable $e) { $erros[] = h(($dm['caminho'] ?? '') !== '' ? $dm['caminho'] . '/' . $nome : $nome) . ': ' . h($e instanceof RuntimeException ? $e->getMessage() : 'não foi possível ler o arquivo'); if (!$e instanceof RuntimeException) error_log('busca-bancos upload: ' . $e->getMessage()); }
+        if (!empty($ent['zip'])) @unlink($ent['tmp']);
+    }
     }
     }
 }
@@ -101,6 +125,7 @@ JS;
 bb_cabecalho('importar', $u);
 ?>
 <?php foreach ($erros as $e): ?><div class="bb-alerta erro"><?= $e ?></div><?php endforeach; ?>
+<?php if (!empty($avisoZip)): ?><div class="bb-alerta info"><?= h($avisoZip) ?></div><?php endif; ?>
 <?php if ($resultados): $novos = array_sum(array_column($resultados, 'novos')); $dup = array_sum(array_column($resultados, 'dup')); ?>
   <div class="bb-alerta ok"><b><?= $novos ?> lançamento(s) novo(s)</b> entraram na busca; <?= $dup ?> já existiam e foram ignorados (sem duplicar).</div>
   <div class="bb-tab-wrap" style="margin-bottom:14px"><table class="bb-tab">
@@ -113,10 +138,10 @@ bb_cabecalho('importar', $u);
 
 <section class="bb-card">
   <h2>Enviar extratos (.ofx)</h2>
-  <p>Pode mandar vários de uma vez, de bancos e meses diferentes: o banco, a conta e o período são lidos de dentro de cada arquivo, e lançamentos repetidos não entram duas vezes.</p>
+  <p>Pode mandar vários de uma vez, de bancos e meses diferentes: o banco, a conta e o período são lidos de dentro de cada arquivo, e lançamentos repetidos não entram duas vezes. <b>Para trazer a pasta inteira do Drive:</b> no Drive, clique com o botão direito na pasta → <b>Fazer download</b>, e arraste aqui o .zip que baixar (se o Drive dividir em vários .zip, mande todos).</p>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-    <div class="bb-solta"><b>Arraste os arquivos .ofx para cá</b> ou escolha:<input type="file" name="arquivos[]" multiple accept=".ofx,.qfx" required><span data-nomes></span></div>
+    <div class="bb-solta"><b>Arraste os arquivos .ofx (ou o .zip da pasta baixada do Drive) para cá</b> ou escolha:<input type="file" name="arquivos[]" multiple accept=".ofx,.qfx,.zip" required><span data-nomes></span></div>
     <div class="bb-linha-form" style="margin-top:12px">
       <label>Se aparecer uma conta nova, ela é da empresa
         <select name="empresa" class="bb-campo"><option value="">perguntar depois (em Contas)</option><?php foreach (BbImportador::EMPRESAS as $k => $t): ?><option value="<?= $k ?>"><?= h($t) ?></option><?php endforeach; ?></select></label>
