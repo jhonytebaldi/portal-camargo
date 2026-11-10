@@ -199,6 +199,9 @@ try {
     // ---- Imóveis da campanha (imoveis-campanha/schema.php): config + botão na home -----
     require_once dirname(__DIR__) . '/imoveis-campanha/schema.php';
     foreach (imc_migrar($pdo) as $f) $feitos[] = 'imoveis-campanha: ' . $f;
+    // ---- Busca Bancos (busca-bancos/schema.php): extratos unificados + botão na home -----
+    require_once dirname(__DIR__) . '/busca-bancos/schema.php';
+    foreach (bb_migrar($pdo) as $f) $feitos[] = 'busca-bancos: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }

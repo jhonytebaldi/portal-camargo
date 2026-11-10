@@ -18,6 +18,11 @@ if (is_admin($u) && is_file(__DIR__ . '/imoveis-campanha/schema.php')) {
     require_once __DIR__ . '/imoveis-campanha/schema.php';
     imc_instalar_se_preciso();
 }
+// Busca Bancos, mesmo jeito: tabelas e botão nascem na primeira visita de um admin.
+if (is_admin($u) && is_file(__DIR__ . '/busca-bancos/schema.php')) {
+    require_once __DIR__ . '/busca-bancos/schema.php';
+    bb_instalar_se_preciso();
+}
 $tools = user_tools($u);
 
 portal_header('Início', $u);
