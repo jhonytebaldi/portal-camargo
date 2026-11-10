@@ -13,6 +13,15 @@ $e1ok = $v['e1_status'] !== 'rascunho';
 <div class="cv-cols">
 <form id="cv-form" class="cv-f" autocomplete="off" onsubmit="return false">
   <section class="card">
+    <h2>Método de cálculo dos pagamentos</h2>
+    <?php $metodoTravado = !empty($v['e4']['liberados']); ?>
+    <div class="cv-radio" style="flex-wrap:wrap">
+      <?php foreach (Pagamentos::METODOS as $mk => $mt): ?><label><input type="radio" name="metodo" value="<?= $mk ?>"<?= ($v['metodo'] ?? 'atual') === $mk ? ' checked' : '' ?><?= $metodoTravado ? ' disabled' : '' ?>> <?= h($mt) ?></label><?php endforeach; ?>
+    </div>
+    <p class="cf-dica" style="margin-bottom:0"><?= $metodoTravado ? 'Já há pagamentos liberados — o método não pode mais ser trocado.' : '<b>Antigo</b> (processos antigos): Sinal / 50% / 80% / 100%, brinde e cesta descontados no sinal, últimos 20% retidos até a entrega das chaves; só a trava de Pré-Reserva (50% da comissão).' ?></p>
+  </section>
+
+  <section class="card">
     <h2>Empresa da venda</h2>
     <div class="cv-g cv-g2">
       <label>As contas desta venda vão para
@@ -234,6 +243,7 @@ $e1ok = $v['e1_status'] !== 'rascunho';
     const fd = new FormData(form), o = {};
     for (const [k, val] of fd.entries()) o[k] = val;
     o.status_imovel = (form.querySelector('[name=status_imovel]:checked') || {}).value || '';
+    o.metodo = (form.querySelector('[name=metodo]:checked') || {}).value || 'atual';
     o.compradores = [...box.querySelectorAll('.cv-comp')].map(el => { const c = {}; el.querySelectorAll('[data-c]').forEach(i => c[i.dataset.c] = i.value); return c; });
     return o;
   }

@@ -80,12 +80,12 @@ final class Fluxo
     }
 
     /** % e acumulados; prévia dos gatilhos da etapa 4 (o fluxo enche primeiro a comissão base dos corretores) */
-    public static function calc(array $d, array $c1): array
+    public static function calc(array $d, array $c1, ?array $gatilhos = null): array
     {
         $total = (float)$c1['comissao_mais_bonus'];
         $base = (float)$c1['comissao_base'];
         $soma = 0.0; $rec = 0.0; $arras = 0.0; $acum = 0.0;
-        $linhas = []; $gat = []; $pend = self::GATILHOS;
+        $linhas = []; $gat = []; $pend = $gatilhos ?? self::GATILHOS;
         foreach (self::porData($d['parcelas']) as $p) {   // acumulado sempre em ordem de data, qualquer que seja a ordem da lista
             $v = (float)$p['valor'];
             $soma += $v; $acum += $v;

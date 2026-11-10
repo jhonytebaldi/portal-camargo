@@ -15,7 +15,7 @@ $venda = $id ? cv_carregar($id) : null;
 if ($id && !$venda) { http_response_code(404); portal_header('Venda', $u); echo '<p class="aviso">Venda não encontrada.</p>'; portal_footer(); exit; }
 $etapa = $venda ? max(1, min(4, (int)($_GET['etapa'] ?? 1))) : 1;
 
-$v = $venda ?? (['id' => 0, 'empresa' => '', 'construtora' => '', 'endereco' => '', 'bairro' => '', 'cep' => '', 'unidade' => '', 'cod_imovel' => '', 'status_imovel' => null, 'data_venda' => null,
+$v = $venda ?? (['id' => 0, 'metodo' => 'atual', 'empresa' => '', 'construtora' => '', 'endereco' => '', 'bairro' => '', 'cep' => '', 'unidade' => '', 'cod_imovel' => '', 'status_imovel' => null, 'data_venda' => null,
                  'valor_contrato' => null, 'valor_bonus' => null, 'documentacao' => null, 'descontos' => null, 'obs' => null, 'e1_status' => 'rascunho',
                  'e2_status' => 'rascunho', 'e3_status' => 'rascunho', 'e4_status' => 'rascunho', 'status' => 'andamento', 'rev' => 0, 'compradores' => [], 'e2' => null, 'e3' => null, 'capa_id' => null] + Venda::PADROES);
 $cancelada = $v['status'] === 'cancelada';

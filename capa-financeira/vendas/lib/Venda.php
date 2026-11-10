@@ -25,7 +25,7 @@ final class Venda
 
     /** campos da etapa 1 em cv_vendas → [rótulo no histórico, tipo] */
     public const CAMPOS_E1 = [
-        'empresa' => ['Empresa', 'txt'], 'construtora' => ['Construtora', 'txt'], 'endereco' => ['Endereço', 'txt'],
+        'metodo' => ['Método de cálculo', 'metodo'], 'empresa' => ['Empresa', 'txt'], 'construtora' => ['Construtora', 'txt'], 'endereco' => ['Endereço', 'txt'],
         'bairro' => ['Bairro', 'txt'], 'cep' => ['CEP', 'txt'], 'unidade' => ['Unidade', 'txt'], 'cod_imovel' => ['Cód. do imóvel', 'txt'],
         'status_imovel' => ['Planta/Pronto', 'txt'], 'data_venda' => ['Data da venda', 'data'],
         'valor_contrato' => ['Valor do contrato', 'brl'], 'valor_bonus' => ['Bônus', 'brl'],
@@ -233,6 +233,7 @@ final class Venda
         $erros = [];
         $v = [];
         $v['empresa'] = in_array($in['empresa'] ?? '', ['camargo', 'vertical'], true) ? $in['empresa'] : '';
+        $v['metodo'] = ($in['metodo'] ?? '') === 'antigo' ? 'antigo' : 'atual';
         foreach (['construtora', 'endereco', 'bairro', 'unidade'] as $k) $v[$k] = self::texto($in[$k] ?? '');
         $v['cod_imovel'] = preg_replace('/\D+/', '', (string)($in['cod_imovel'] ?? '')) ?? '';
         $cep = preg_replace('/\D+/', '', (string)($in['cep'] ?? '')) ?? '';
@@ -361,6 +362,7 @@ final class Venda
             'brl' => 'R$ ' . number_format((float)$x, 2, ',', '.'),
             'pct' => rtrim(rtrim(number_format((float)$x * 100, 3, ',', ''), '0'), ',') . '%',
             'data' => self::br((string)$x),
+            'metodo' => class_exists('Pagamentos') ? (Pagamentos::METODOS[$x] ?? (string)$x) : (string)$x,
             default => (string)$x,
         };
     }

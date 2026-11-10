@@ -19,9 +19,14 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
   <?php if ($v['e1_status'] === 'rascunho'): ?><div class="aviso" style="margin-bottom:10px">A etapa 1 ainda não foi concluída — dá para preencher o fluxo, mas só dá para concluir depois dela.</div><?php endif; ?>
   <section class="card">
     <h2>Travas de pagamento</h2>
+    <?php $antigo = Pagamentos::metodo($v) === 'antigo'; ?>
+    <?php if ($antigo): ?>
+    <p class="cf-dica" style="margin-top:0"><b>Método antigo</b>: os últimos 20% da comissão ficam sempre retidos até a entrega das chaves (etapa 100% travada, condição ENTREGA CHAVES). <b>Pré-Reserva</b>: comissão paga só até exatamente 50% (80% e 100% travados); bônus normal. Pagamento travado = data e condição obrigatórias na etapa 4.</p>
+    <?php else: ?>
     <p class="cf-dica" style="margin-top:0"><b>Pré-Reserva</b>: comissão paga só até exatamente 50% (75% e 100% travados) e o bônus em 2 — metade na quitação, metade travada. <b>IR Futuro / abaixo de 70%</b>: comissão paga até exatamente 75% (100% travado); bônus normal. Pagamento travado = data e condição obrigatórias na etapa 4.</p>
+    <?php endif; ?>
     <div class="cv-radio" style="flex-wrap:wrap">
-      <?php foreach (Fluxo::TRAVAS as $k => $t): ?><label><input type="checkbox" name="trava" value="<?= $k ?>"<?= in_array($k, $e3['travas'], true) ? ' checked' : '' ?>> <?= h($t) ?></label><?php endforeach; ?>
+      <?php foreach (Fluxo::TRAVAS as $k => $t): if ($antigo && $k !== 'PRE_RESERVA') continue; ?><label><input type="checkbox" name="trava" value="<?= $k ?>"<?= in_array($k, $e3['travas'], true) ? ' checked' : '' ?>> <?= h($t) ?></label><?php endforeach; ?>
     </div>
   </section>
 
@@ -72,7 +77,7 @@ foreach (cf_config('empresas', []) as $em) if (($em['id'] ?? '') === $v['empresa
 <aside class="cv-lado">
   <section class="card"><h2>Resumo do fluxo</h2><table class="cv-calc" id="cv-res3"></table></section>
   <section class="card"><h2>Gatilhos (prévia da etapa 4)</h2><table class="cv-calc" id="cv-gat"></table>
-    <p class="cf-dica">Quando o que o cliente pagou atinge 50%, 75% e 100% da comissão base dos corretores.</p></section>
+    <p class="cf-dica">Quando o que o cliente pagou atinge <?= $antigo ? '50%, 80%' : '50%, 75%' ?> e 100% da comissão base dos corretores.</p></section>
   <section class="card cv-pend" id="cv-pend"></section>
   <?php if ($v['capa_id']): ?><section class="card"><p class="cf-dica" style="margin:0">Contas a receber na <a href="/capa-financeira/revisar.php?id=<?= (int)$v['capa_id'] ?>">capa #<?= (int)$v['capa_id'] ?></a> (revisar, confirmar e enviar pela Capa Financeira). Alterar as parcelas gera uma nova versão da capa.</p></section><?php endif; ?>
   <?php cv_aside_comum($venda, $hist, $cancelada); ?>
