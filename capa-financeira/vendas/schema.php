@@ -90,6 +90,23 @@ function cv_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cv_historico';
     }
+    if (!$tem('cv_construtoras')) {
+        // quem paga as parcelas, por construtora: aprende só com decisões confirmadas (tela de construtoras, formulário, conferência das capas)
+        $pdo->exec("CREATE TABLE cv_construtoras (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            chave VARCHAR(190) NOT NULL,                       -- nome normalizado (sem LTDA/S.A./pontuação)
+            nome VARCHAR(200) NOT NULL DEFAULT '',
+            modo VARCHAR(12) NULL,                             -- cliente | construtora | varia (NULL = não marcada)
+            sinal VARCHAR(12) NULL,                            -- quando a construtora repassa: sinal veio do cliente | construtora
+            omie JSON NULL,                                    -- cadastro usado por empresa: {vertical:{codigo,nome,doc}, camargo:{…}}
+            n_cliente INT UNSIGNED NOT NULL DEFAULT 0,         -- confirmações: cliente pagou
+            n_construtora INT UNSIGNED NOT NULL DEFAULT 0,     -- confirmações: construtora repassou
+            atualizado_por INT UNSIGNED NULL,
+            atualizado_em DATETIME NULL,
+            PRIMARY KEY (id), UNIQUE KEY uq_cvco_chave (chave)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela cv_construtoras (quem paga as parcelas)';
+    }
     // colunas acrescentadas depois da 1ª versão
     $col = function (string $t, string $c) use ($pdo): bool {
         $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');

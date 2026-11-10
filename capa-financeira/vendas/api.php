@@ -227,6 +227,7 @@ try {
         if (($acao === 'concluir3' || $concluida) && $val['erros']) {
             $resp(['ok' => false, 'erros' => $val['erros'], 'msg' => $concluida ? 'O fluxo já está concluído: as alterações só são gravadas se tudo continuar válido.' : 'Corrija antes de concluir:']);
         }
+        $antesQP = $venda['e3']['quem_paga'] ?? null;
         $g = cv_gravar_e3($id, $rev, $d, $u);
         $rev = $g['rev'];
         if ($acao === 'salvar3' && !$concluida) $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'msg' => 'Rascunho do fluxo salvo.']);
@@ -238,6 +239,13 @@ try {
         if (!$concluida) {
             db()->prepare("UPDATE cv_vendas SET e3_status = 'concluida', e3_em = NOW(), e3_por = ?, rev = rev + 1 WHERE id = ?")->execute([(int)$u['id'], $id]);
             cv_hist($id, 3, 'concluir', 'Etapa 3', 'rascunho', 'concluída', $u);
+        }
+        // quem paga: decisão confirmada vira histórico da construtora (sugestão das próximas vendas)
+        $qp = $venda['e3']['quem_paga'] ?? null;
+        if ($qp && in_array($qp['modo'], ['comprador', 'construtora'], true) && trim((string)$venda['construtora']) !== ''
+            && (!$concluida || json_encode($qp) !== json_encode($antesQP))) {
+            cv_construtora_gravar((string)$venda['construtora'], $qp['modo'] === 'construtora' ? 'construtora' : 'cliente', $qp['sinal'] === 'construtora' ? 'construtora' : 'cliente',
+                                  (string)$venda['empresa'], $qp['modo'] === 'construtora' ? ($venda['e3']['construtora_cad'] ?? null) : null, $u, true);
         }
         $capaId = null;
         if (!$concluida || $g['mudou'] > 0 || !$venda['capa_id']) $capaId = cv_gerar_receber($id, $u);

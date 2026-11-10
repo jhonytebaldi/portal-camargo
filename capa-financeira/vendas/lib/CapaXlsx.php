@@ -149,7 +149,7 @@ final class CapaXlsx
             foreach (['A' => 'DATA', 'B' => 'CONTA', 'C' => 'Cliente e fornecedor', 'D' => 'histórico', 'E' => 'A RECEBER ', 'F' => 'A PAGAR '] as $c => $t) $x->set($s, "$c$hdr", $t, ['bold' => true, 'fill' => 'E7E6E6', 'border' => true]);
             $r = $ini;
             foreach ($ordem as $j => $p) {
-                $pg = Fluxo::pagador($p, $comp);
+                $pg = Fluxo::pagador($p, $comp, $venda['e3']);
                 $x->set($s, "A$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data']);
                 $x->set($s, "B$r", $p['conta']);
                 $x->set($s, "C$r", $pg['nome']);
@@ -220,7 +220,7 @@ final class CapaXlsx
         $r++;
         $ini = $r; $fim = $ini + count($ordem) - 1; $totRow = $fim + 1;
         foreach ($ordem as $j => $p) {
-            $pg = Fluxo::pagador($p, $comp);
+            $pg = Fluxo::pagador($p, $comp, $d);
             $l = $calc['linhas'][$j];
             $x->set($s, "A$r", $pg['nome'], ['fill' => 'FFF8E1', 'border' => true]);
             $x->set($s, "B$r", round((float)$p['valor'], 2), $brl + ['fill' => 'FFF8E1', 'border' => true]);
@@ -229,7 +229,7 @@ final class CapaXlsx
             $x->set($s, "E$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data', 'fill' => 'FFF8E1', 'border' => true]);
             $x->set($s, "F$r", $p['conta'], ['fill' => 'FFF8E1', 'border' => true]);
             $x->set($s, "G$r", $p['ref'], ['fill' => 'FFF8E1', 'border' => true]);   // G = rótulo da parcela (vai para a observação no Omie)
-            $marca = array_filter([$p['recebido'] ? 'RECEBIDA' : '', $p['arras'] ? 'ARRAS' : '', $l['gatilhos'] ? 'atinge ' . implode(' / ', $l['gatilhos']) . ' da comissão' : '']);
+            $marca = array_filter([$p['pagador'] === 'construtora' ? 'REPASSE DA CONSTRUTORA (contrato ' . Venda::br($p['data_contrato']) . ' + 7 dias)' : '', $p['recebido'] ? 'RECEBIDA' : '', $p['arras'] ? 'ARRAS' : '', $l['gatilhos'] ? 'atinge ' . implode(' / ', $l['gatilhos']) . ' da comissão' : '']);
             if ($marca) $x->set($s, "H$r", implode(' · ', $marca), ['italic' => true, 'color' => '2F5D4F']);
             $r++;
         }
@@ -250,7 +250,7 @@ final class CapaXlsx
         $r++;
         $iniR = $r;
         foreach ($ordem as $p) if ($p['recebido']) {
-            $pg = Fluxo::pagador($p, $comp);
+            $pg = Fluxo::pagador($p, $comp, $d);
             $x->set($s, "A$r", $pg['nome']);
             $x->set($s, "B$r", round((float)$p['valor'], 2), $brl);
             $x->set($s, "E$r", $p['data'] ? ['d' => $p['data']] : null, ['fmt' => 'data']);
