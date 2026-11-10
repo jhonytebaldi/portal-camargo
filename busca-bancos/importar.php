@@ -30,12 +30,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!$resultados && !$erros) $erros[] = 'Nenhum extrato recebido.';
     } else {
+    $drive = json_decode((string)($_POST['drive'] ?? ''), true) ?: [];   // [i => {id, caminho}] opcional, alinhado com arquivos[]
     $fs = $_FILES['arquivos'] ?? null; $empresa = array_key_exists($_POST['empresa'] ?? '', BbImportador::EMPRESAS) ? (string)$_POST['empresa'] : '';
     if (!$fs || !is_array($fs['name']) || ($fs['name'][0] ?? '') === '') $erros[] = 'Escolha pelo menos um arquivo .ofx.';
     else foreach ($fs['name'] as $i => $nome) {
         if ($fs['error'][$i] !== UPLOAD_ERR_OK) { $erros[] = h($nome) . ': o envio falhou (arquivo grande demais ou conexão interrompida).'; continue; }
         if (!preg_match('/\.(ofx|qfx)$/i', (string)$nome)) { $erros[] = h($nome) . ': não é um arquivo .ofx. Para o extrato da Caixa em PDF use o quadro "Extrato da Caixa em PDF", logo abaixo.'; continue; }
-        try { foreach (BbImportador::importarOfx($pdo, (string)file_get_contents($fs['tmp_name'][$i]), ['nome' => (string)$nome, 'origem' => 'upload', 'usuario' => (int)$u['id'], 'empresa' => $empresa]) as $r) $resultados[] = $r + ['arquivo' => (string)$nome]; }
+        // arquivo vindo do Drive pelo navegador: guarda a pasta e o link (a pasta sugere a empresa de conta nova)
+        $dm = is_array($drive[$i] ?? null) ? $drive[$i] : null;
+        $meta = $dm && preg_match('/^[A-Za-z0-9_-]{20,}$/', (string)($dm['id'] ?? ''))
+            ? ['origem' => 'drive', 'drive_id' => (string)$dm['id'], 'drive_caminho' => mb_substr(trim((string)($dm['caminho'] ?? '')), 0, 300) ?: null]
+            : ['origem' => 'upload'];
+        try { foreach (BbImportador::importarOfx($pdo, (string)file_get_contents($fs['tmp_name'][$i]), $meta + ['nome' => (string)$nome, 'usuario' => (int)$u['id'], 'empresa' => $empresa]) as $r) $resultados[] = $r + ['arquivo' => (string)$nome]; }
         catch (Throwable $e) { $erros[] = h($nome) . ': ' . h($e instanceof RuntimeException ? $e->getMessage() : 'não foi possível ler o arquivo'); if (!$e instanceof RuntimeException) error_log('busca-bancos upload: ' . $e->getMessage()); }
     }
     }
