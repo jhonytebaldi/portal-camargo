@@ -30,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!$resultados && !$erros) $erros[] = 'Nenhum extrato recebido.';
     } else {
+    $ligarOmie = true;
     $drive = json_decode((string)($_POST['drive'] ?? ''), true) ?: [];   // [i => {id, caminho}] opcional, alinhado com arquivos[]
     $fs = $_FILES['arquivos'] ?? null; $empresa = array_key_exists($_POST['empresa'] ?? '', BbImportador::EMPRESAS) ? (string)$_POST['empresa'] : '';
     if (!$fs || !is_array($fs['name']) || ($fs['name'][0] ?? '') === '') $erros[] = 'Escolha pelo menos um arquivo .ofx.';
@@ -124,6 +125,7 @@ bb_cabecalho('importar', $u);
   </form>
 </section>
 
+<?php if (!empty($ligarOmie) && array_filter($resultados, fn($r) => $r['conta_nova'])) { require_once __DIR__ . '/lib/Conferencia.php'; try { $ligadas = array_merge($ligadas, BbOmie::vincularTudo($pdo)); } catch (Throwable $e) {} } ?>
 <?php if ($ligadas): ?><div class="bb-alerta info"><b>Contas ligadas ao cadastro do Omie:</b><ul><?php foreach ($ligadas as $v): ?><li><?= h($v) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
 <section class="bb-card" id="bb-omie-cash">
   <h2>Omie Cash (direto do Omie, sem arquivo)</h2>

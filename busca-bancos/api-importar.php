@@ -26,4 +26,6 @@ try {
 } catch (RuntimeException $e) { $sai(['erro' => $e->getMessage()], 422); }
 catch (Throwable $e) { error_log('busca-bancos api: ' . $e->getMessage()); $sai(['erro' => 'falha interna'], 500); }
 BbImportador::configSet($pdo, 'drive_ultima', date('Y-m-d H:i:s'));
+// conta nova: tenta ligar ao cadastro do Omie (corrige a empresa sugerida pela pasta)
+if (array_filter($res, fn($r) => $r['conta_nova'])) { require_once __DIR__ . '/lib/Conferencia.php'; try { BbOmie::vincularTudo($pdo); } catch (Throwable $e) { error_log('busca-bancos api vincular: ' . $e->getMessage()); } }
 $sai(['ok' => true, 'resultados' => array_map(fn($r) => ['status' => $r['status'], 'conta' => $r['conta']['apelido'], 'novos' => $r['novos'], 'repetidos' => $r['dup'], 'de' => $r['de'], 'ate' => $r['ate'], 'avisos' => $r['avisos']], $res)]);

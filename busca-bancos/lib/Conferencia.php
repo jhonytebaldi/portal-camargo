@@ -267,6 +267,16 @@ final class BbOmie
         return $feito;
     }
 
+    /** liga as contas ainda sem vínculo, consultando o cadastro de contas do Omie das empresas com API configurada (falha do Omie não atrapalha a importação) */
+    public static function vincularTudo(PDO $pdo): array
+    {
+        require_once __DIR__ . '/../../recibos-omie/lib/OmieApi.php';
+        if (!(int)$pdo->query("SELECT COUNT(*) FROM bb_contas WHERE omie_cc IS NULL AND banco <> 'omie-cash'")->fetchColumn()) return [];
+        $por = [];
+        foreach (array_keys(OmieApi::contas()) as $emp) { try { $por[$emp] = self::contasCorrentes($emp); } catch (Throwable $e) { error_log('busca-bancos vincular ' . $emp . ': ' . $e->getMessage()); } }
+        return $por ? self::vincular($pdo, $por) : [];
+    }
+
     /**
      * Puxa o Omie Cash de uma empresa direto do Omie (sem arquivo). Só entram os movimentos "Conciliado" — os que de fato
      * passaram pela conta; os "Previsto" são contas a pagar ainda não pagas. Volta de 3 em 3 meses até não achar mais nada.
