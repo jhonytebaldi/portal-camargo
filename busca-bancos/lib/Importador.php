@@ -34,7 +34,7 @@ final class BbImportador
         $n = BbTexto::norm((string)$caminho);
         if (preg_match('/\bmz7\b/', $n)) return 'mz7';
         if (preg_match('/\bvertical\b/', $n)) return 'vertical';
-        if (preg_match('/\b(imobiliaria|camargo)\b/', $n)) return 'camargo';
+        if (preg_match('/\b(imobiliaria|imobliaria|camargo)\b/', $n)) return 'camargo';
         return '';
     }
 
@@ -70,6 +70,8 @@ final class BbImportador
             $pdo->prepare('UPDATE bb_contas SET empresa = ? WHERE id = ?')->execute([$sugestao, $conta['id']]); $conta['empresa'] = $sugestao;
         }
         $cid = (int)$conta['id'];
+        // o Inter informa o saldo do dia em que o arquivo foi baixado, não o do fim do período: esse saldo não serve para conferir
+        if ($ext['saldo'] !== null && $ext['saldo_data'] !== null && $ext['saldo_data'] > date('Y-m-d', strtotime($ext['ate'] . ' +1 day'))) { $ext['saldo'] = null; $ext['saldo_data'] = null; }
         $base = ['conta' => $conta, 'conta_nova' => $nova, 'de' => $ext['de'], 'ate' => $ext['ate'], 'total' => count($ext['lanc'])];
 
         $st = $pdo->prepare('SELECT id FROM bb_arquivos WHERE conta_id = ? AND sha1 = ?'); $st->execute([$cid, $sha1]);
@@ -93,13 +95,16 @@ final class BbImportador
                 $k = $ordem[$chave] = ($ordem[$chave] ?? 0) + 1;
                 $fp = sha1($chave . '|' . $k);
                 if (isset($existe[$fp])) { $dup++; continue; }
-                $doc = BbTexto::acharDoc($l['memo'] . ' ' . $l['nome']);
+                $dd = preg_replace('/\D+/', '', (string)($l['doc'] ?? ''));
+                $doc = BbTexto::docValido($dd) ? [$dd, (string)$l['doc']] : BbTexto::acharDoc($l['memo'] . ' ' . $l['nome']);
                 $contra = BbTexto::contraparte($l['memo'], $l['nome'], $doc);
-                $check = $l['checknum'] === '0' ? '' : $l['checknum'];
-                $ref = (BbTexto::norm($l['refnum']) === 'pix' || $l['refnum'] === $l['fitid']) ? '' : $l['refnum'];
+                // nº de documento/referência que é só ruído: "0", "Pix" (Sicoob), o próprio FITID (Sicredi) ou o código do banco (Inter manda 077 em tudo)
+                $ruido = fn(string $v) => $v === '' || ltrim($v, '0') === '' || BbTexto::norm($v) === 'pix' || $v === $l['fitid'] || ltrim($v, '0') === ltrim((string)$ext['bank_id'], '0');
+                $check = $ruido($l['checknum']) ? '' : $l['checknum'];
+                $ref = $ruido($l['refnum']) ? '' : $l['refnum'];
                 $busca = trim($memoN . ' ' . $nomeN . ' ' . ($doc[0] ?? '') . ' ' . $check . ' ' . ($ref !== $check ? $ref : ''));
                 $ins->execute([$cid, $aid, $l['data'], $l['valor'], mb_substr($l['tipo'], 0, 20), BbTexto::categoria($l['tipo'], $memoN . ' ' . $nomeN),
-                    mb_substr($l['fitid'], 0, 80), mb_substr($check, 0, 40), mb_substr($l['refnum'], 0, 40), mb_substr($l['memo'], 0, 400), mb_substr($l['nome'], 0, 200),
+                    mb_substr($l['fitid'], 0, 80), mb_substr($check, 0, 40), mb_substr($ref, 0, 40), mb_substr($l['memo'], 0, 400), mb_substr($l['nome'], 0, 200),
                     $doc[0] ?? '', mb_substr($contra, 0, 200), mb_substr($busca, 0, 800), $fp]);
                 $existe[$fp] = 1; $novos++;
             }
@@ -110,6 +115,35 @@ final class BbImportador
         if ($novos) { self::marcarAnuladas($pdo, $cid, $ext['de'], $ext['ate']); self::marcarInternas($pdo, $ext['de'], $ext['ate']); }
         if (!$ext['lanc']) $avisos[] = 'O extrato veio sem nenhum lançamento no período (o período conta como coberto).';
         return $base + ['status' => 'ok', 'novos' => $novos, 'dup' => $dup, 'avisos' => $avisos, 'arquivo_id' => $aid];
+    }
+
+    /**
+     * Extrato da Caixa lido do PDF pelo navegador (assets/pdf-caixa.js). Confere tudo de novo aqui: datas, valores e,
+     * principalmente, se saldo anterior ± cada lançamento = saldo impresso em cada linha. Só grava se fechar.
+     */
+    public static function importarCaixaPdf(PDO $pdo, array $e, array $meta = []): array
+    {
+        $dt = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && strtotime($v) ? $v : null;
+        $de = $dt($e['de'] ?? null); $ate = $dt($e['ate'] ?? null);
+        $conta = preg_replace('/[^\d.\-]/', '', (string)($e['conta'] ?? '')); $ag = preg_replace('/\D+/', '', (string)($e['agencia'] ?? ''));
+        if (!$de || !$ate || $de > $ate || strlen(preg_replace('/\D+/', '', $conta)) < 6 || !is_numeric($e['saldo_anterior'] ?? null) || !is_array($e['lanc'] ?? null)) throw new RuntimeException('dados do extrato incompletos (conta, período ou saldo anterior)');
+        // leitura de imagem pode trocar um dígito da conta: se já existe uma conta da Caixa quase igual, é quase certo que é ela
+        $dig = preg_replace('/\D+/', '', $conta);
+        foreach ($pdo->query("SELECT conta, apelido FROM bb_contas WHERE banco = 'caixa'") as $c) {
+            $d2 = preg_replace('/\D+/', '', $c['conta']);
+            if ($c['conta'] !== $conta && ($d2 === $dig || levenshtein($d2, $dig) <= 2)) throw new RuntimeException('a conta lida no PDF (' . $conta . ') é quase igual à conta já cadastrada "' . $c['apelido'] . '" (' . $c['conta'] . '): a leitura deve ter trocado um dígito. Não importei');
+        }
+        $s = round((float)$e['saldo_anterior'], 2); $lanc = []; $min = date('Y-m-d', strtotime("$de -2 days")); $max = date('Y-m-d', strtotime("$ate +2 days"));
+        foreach ($e['lanc'] as $l) {
+            $d = $dt($l['data'] ?? null); $v = round((float)($l['valor'] ?? 0), 2); $sl = round((float)($l['saldo'] ?? 0), 2);
+            if (!$d || $d < $min || $d > $max || abs($v) < 0.005) throw new RuntimeException('lançamento com data ou valor inválido');
+            if (abs($s + $v - $sl) > 0.005) throw new RuntimeException('a conta não fecha em ' . BbTexto::dataBr($d) . ' (' . mb_substr((string)($l['memo'] ?? ''), 0, 40) . '): algum valor foi lido errado. Não importei');
+            $s = $sl;
+            $lanc[] = ['data' => max($de, min($ate, $d)), 'valor' => $v, 'tipo' => $v > 0 ? 'CREDIT' : 'DEBIT', 'fitid' => mb_substr((string)($l['quando'] ?? ''), 0, 40), 'checknum' => preg_replace('/\D+/', '', (string)($l['checknum'] ?? '')),
+                'refnum' => '', 'memo' => trim((string)($l['memo'] ?? '')), 'nome' => trim((string)($l['nome'] ?? '')), 'doc' => (string)($l['doc'] ?? '')];
+        }
+        $ext = ['bank_id' => '104', 'org' => 'CAIXA ECONOMICA FEDERAL', 'agencia' => $ag, 'conta' => $conta, 'banco' => 'caixa', 'de' => $de, 'ate' => $ate, 'saldo' => $s, 'saldo_data' => $ate, 'lanc' => $lanc];
+        return self::gravar($pdo, $ext, sha1(json_encode($ext)), $meta + ['formato' => 'pdf', 'origem' => 'pdf', 'empresa' => self::empresaDoCaminho((string)($e['cliente'] ?? ''))]);
     }
 
     /** tarifa + "desconto na taxa", pix + "estorno": mesmo dia, mesma conta, mesmo valor com sinal trocado */

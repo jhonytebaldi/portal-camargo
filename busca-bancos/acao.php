@@ -28,7 +28,7 @@ if ($a === 'detalhe') {
             ['Data', BbTexto::dataBr($l['data'])], ['Valor', BbTexto::brl((float)$l['valor']) . ((float)$l['valor'] >= 0 ? ' (entrada)' : ' (saída)')],
             ['Descrição do banco', $l['memo']], ['Nome informado pelo banco', $l['nome']], ['Pessoa / empresa identificada', $l['contraparte']],
             ['CPF/CNPJ', BbTexto::docFmt($l['doc'])], ['Chave Pix', 'os bancos não informam a chave no extrato'],
-            ['Tipo', ['pix' => 'Pix', 'ted' => 'TED/transferência', 'boleto' => 'Boleto/cobrança', 'tarifa' => 'Tarifa', 'cartao' => 'Cartão/fatura', 'outro' => 'Outro'][$l['categoria']] . ($l['tipo_ofx'] !== '' ? ' (' . $l['tipo_ofx'] . ' no arquivo)' : '')],
+            ['Tipo', (['pix' => 'Pix', 'ted' => 'TED/transferência', 'boleto' => 'Boleto/cobrança', 'tarifa' => 'Tarifa', 'cartao' => 'Cartão/fatura', 'imposto' => 'Imposto', 'outro' => 'Outro'][$l['categoria']] ?? $l['categoria']) . ($l['tipo_ofx'] !== '' ? ' (' . $l['tipo_ofx'] . ' no arquivo)' : '')],
             ['Nº do documento / cobrança', $l['checknum']], ['Referência', $l['refnum']], ['Código da transação no banco', $l['fitid']],
             ['Empresa', bb_empresa($l['empresa'])], ['Banco', BbOfx::BANCOS[$l['banco']] ?? $l['banco']], ['Conta', trim(($l['agencia'] !== '' ? 'ag. ' . $l['agencia'] . ' · ' : '') . 'conta ' . $l['conta']) . ' (' . $l['apelido'] . ')'],
         ], fn($c) => $c[1] !== '')),
