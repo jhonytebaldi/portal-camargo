@@ -21,10 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $modo = in_array($in['modo'] ?? '', ['cliente', 'construtora', 'varia'], true) ? $in['modo'] : null;
     $sinal = in_array($in['sinal'] ?? '', ['cliente', 'construtora'], true) ? $in['sinal'] : 'cliente';
     if ($nome === '' || !$modo) { echo json_encode(['ok' => false, 'erro' => 'escolha uma opção']); exit; }
-    $emp = (string)($in['empresa'] ?? '');
-    $cad = is_array($in['cadastro'] ?? null) ? $in['cadastro'] : null;
-    if ($emp !== '' && !in_array($emp, array_column($empresas, 'id'), true)) { echo json_encode(['ok' => false, 'erro' => 'empresa inválida']); exit; }
-    cv_construtora_gravar($nome, $modo, $sinal, $emp ?: null, $cad, $u, false);
+    $cad = is_array($in['cadastro'] ?? null) && !empty($in['cadastro']['codigo']) ? $in['cadastro'] : null;
+    cv_construtora_gravar($nome, $modo, $sinal, null, $cad, $u, false);
     echo json_encode(['ok' => true, 'linha' => cv_construtora($nome)], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -59,7 +57,7 @@ main.wrap{max-width:1300px}
 <?php if ($semMarca): ?><div class="aviso" style="margin-bottom:10px"><?= $semMarca ?> construtora(s) ainda sem marcação (destacadas).</div><?php endif; ?>
 <section class="card">
 <table class="cvc-tab">
-<thead><tr><th>Construtora</th><th>Aparece em</th><th>Quem paga as parcelas</th><th>Sinal (arras)</th><th>Cadastro no Omie (quem paga, quando é a construtora)</th><th>Histórico</th></tr></thead>
+<thead><tr><th>Construtora</th><th>Aparece em</th><th>Quem paga as parcelas</th><th>Sinal (arras)</th><th>Cadastro no Omie</th><th>Histórico</th></tr></thead>
 <tbody>
 <?php foreach ($lista as $k => $c): $m = $marc[$k] ?? null; $modo = $m['modo'] ?? ''; ?>
 <tr data-nome="<?= h($m['nome'] ?? $c['nome']) ?>" class="<?= $modo ? '' : 'cvc-nao' ?>">
@@ -70,10 +68,9 @@ main.wrap{max-width:1300px}
       <label><input type="radio" name="m<?= md5($k) ?>" value="<?= $v ?>"<?= $modo === $v ? ' checked' : '' ?>> <?= $t ?></label>
     <?php endforeach; ?></div></td>
   <td><select data-sinal<?= $modo === 'construtora' ? '' : ' disabled' ?>><option value="cliente"<?= ($m['sinal'] ?? 'cliente') !== 'construtora' ? ' selected' : '' ?>>veio do cliente</option><option value="construtora"<?= ($m['sinal'] ?? '') === 'construtora' ? ' selected' : '' ?>>também pela construtora</option></select></td>
-  <td><?php foreach ($empresas as $e): $cad = $m['omie'][$e['id']] ?? null; ?>
-    <div class="cvc-cad"><?= h(strtoupper($e['id'])) ?>: <?= $cad ? '<b>' . h($cad['nome']) . '</b> ' . h(cf_fmt_doc((string)$cad['doc'])) : '<i class="cvc-st">—</i>' ?>
-      <button type="button" class="cf-x" data-cad="<?= h($e['id']) ?>" data-empnome="<?= h($e['nome']) ?>">🔍 escolher</button></div>
-  <?php endforeach; ?></td>
+  <?php $cad = cv_construtora_cad($m); ?>
+  <td><div class="cvc-cad" data-cadbox<?= $cad ? ' data-tem="1"' : '' ?>><?= $cad ? '<b>' . h($cad['nome']) . '</b> ' . h(cf_fmt_doc((string)$cad['doc'])) : '<i class="cvc-st">procurando no Omie…</i>' ?></div>
+    <button type="button" class="cf-x" data-cad>🔍 <?= $cad ? 'trocar' : 'escolher outro / cadastrar' ?></button></td>
   <td class="cvc-st" data-hist><?= $m ? (int)$m['n_construtora'] . ' com repasse · ' . (int)$m['n_cliente'] . ' cliente direto' . ($m['atualizado_em'] ? '<br>atualizado ' . h(date('d/m/Y', strtotime((string)$m['atualizado_em']))) : '') : 'sem marcação' ?></td>
 </tr>
 <?php endforeach; ?>
@@ -82,11 +79,11 @@ main.wrap{max-width:1300px}
 </section>
 <script>
 (() => {
-  const csrf = <?= json_encode(csrf_token()) ?>;
+  const csrf = <?= json_encode(csrf_token()) ?>, EMP = <?= json_encode(in_array('vertical', array_column($empresas, 'id'), true) ? 'vertical' : (string)($empresas[0]['id'] ?? '')) ?>;
   async function gravar(tr, extra) {
     const modo = (tr.querySelector('input[type=radio]:checked') || {}).value;
     if (!modo) { CFModal.aviso({tipo: 'parcial', titulo: 'Escolha quem paga', texto: 'Marque primeiro quem paga as parcelas desta construtora.'}); return null; }
-    const r = await fetch(location.pathname, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({csrf, nome: tr.dataset.nome, modo, sinal: tr.querySelector('[data-sinal]').value, ...extra})});
+    const r = await fetch(location.pathname, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({csrf, nome: tr.dataset.nome, modo, sinal: tr.querySelector('[data-sinal]').value, cadastro: tr._cad || null, ...extra})});
     const j = await r.json().catch(() => ({ok: false, erro: 'erro ' + r.status}));
     if (!j.ok) { CFModal.aviso({tipo: 'erro', texto: j.erro}); return null; }
     tr.classList.remove('cvc-nao');
@@ -96,13 +93,28 @@ main.wrap{max-width:1300px}
   document.querySelectorAll('tr[data-nome]').forEach(tr => {
     tr.querySelectorAll('input[type=radio]').forEach(r => r.addEventListener('change', () => { tr.querySelector('[data-sinal]').disabled = r.value !== 'construtora'; gravar(tr, {}); }));
     tr.querySelector('[data-sinal]').addEventListener('change', () => gravar(tr, {}));
-    tr.querySelectorAll('[data-cad]').forEach(b => b.addEventListener('click', async () => {
-      const c = await CFOmie.escolher({empresa: b.dataset.cad, empresaNome: b.dataset.empnome, termo: tr.dataset.nome, titulo: 'Cadastro da construtora no Omie — ' + b.dataset.cad.toUpperCase(), csrf});
+    const box = tr.querySelector('[data-cadbox]');
+    const mostra = (c, nota) => { tr._cad = c; box.innerHTML = '<b>' + CVesc(c.nome) + '</b> ' + CVesc(c.doc || 'sem documento') + (nota ? '<br><span class="cvc-st">' + nota + '</span>' : ''); };
+    const temModo = () => !!tr.querySelector('input[type=radio]:checked');
+    tr.querySelector('[data-cad]').addEventListener('click', async () => {
+      const c = await CFOmie.escolher({empresa: EMP, empresaNome: 'Vertical / Camargo (base compartilhada)', termo: tr.dataset.nome, titulo: 'Cadastro da construtora no Omie', csrf});
       if (!c) return;
-      const j = await gravar(tr, {empresa: b.dataset.cad, cadastro: c});
-      if (j) b.parentElement.innerHTML = b.dataset.cad.toUpperCase() + ': <b>' + CVesc(c.nome) + '</b> ' + CVesc(c.doc) + ' <span class="cvc-st">(salvo)</span>';
-    }));
+      mostra(c, temModo() ? 'salvo' : 'será salvo quando você marcar quem paga');
+      if (temModo()) gravar(tr, {});
+    });
   });
+  // identifica sozinho pelo nome as construtoras ainda sem cadastro (uma por vez)
+  (async () => {
+    for (const tr of document.querySelectorAll('tr[data-nome]')) {
+      const box = tr.querySelector('[data-cadbox]'); if (box.dataset.tem) continue;
+      const r = await CFOmie.identificar({empresa: EMP, termo: tr.dataset.nome, csrf});
+      if (r.certo) {
+        tr._cad = r.certo;
+        box.innerHTML = '<b>' + CVesc(r.certo.nome) + '</b> ' + CVesc(r.certo.doc || 'sem documento') + '<br><span class="cvc-st">identificado pelo nome' + (tr.querySelector('input[type=radio]:checked') ? ' · salvo' : ' — confira') + '</span>';
+        if (tr.querySelector('input[type=radio]:checked')) await gravar(tr, {});
+      } else box.innerHTML = '<i class="cvc-st">' + (r.erro ? CVesc(r.erro) : r.lista.length ? r.lista.length + ' cadastro(s) parecido(s) — escolha' : 'nenhum cadastro com esse nome no Omie') + '</i>';
+    }
+  })();
   function CVesc(s) { return String(s ?? '').replace(/</g, '&lt;'); }
 })();
 </script>

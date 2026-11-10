@@ -82,5 +82,16 @@
       setTimeout(() => $('[data-busca]').focus(), 50);
     });
   }
-  window.CFOmie = {escolher};
+  /** tenta identificar sozinho pelo nome: {certo: cadastro|null, lista} — "certo" só quando UM cadastro bate com todas as palavras do nome */
+  async function identificar(o) {
+    const csrf = o.csrf || (document.querySelector('meta[name=csrf]') || {}).content || (window.CV && CV.csrf) || '';
+    try {
+      const r = await fetch('/capa-financeira/omie-cadastro.php', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({acao: 'buscar', termo: o.termo, csrf, empresa: o.empresa})});
+      const j = await r.json();
+      if (!j.ok) return {certo: null, lista: [], erro: j.erro};
+      const cheios = j.lista.filter(c => !c.inativo && c.de > 0 && c.pontos === c.de);
+      return {certo: cheios.length === 1 ? {codigo: cheios[0].codigo, nome: cheios[0].nome, doc: cheios[0].doc} : null, lista: j.lista};
+    } catch (e) { return {certo: null, lista: [], erro: 'sem conexão'}; }
+  }
+  window.CFOmie = {escolher, identificar};
 })();

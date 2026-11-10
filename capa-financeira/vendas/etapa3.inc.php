@@ -259,6 +259,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
       let cad = construtoraCad || (sug && sug.cadastro) || null;
       const tro = [...tb.querySelectorAll('tr')].find(tr => tr.querySelector('[data-f=pagador]').value === 'outro');
       let outro = tro ? {nome: tro.querySelector('[data-f=outro_nome]').value, doc: tro.querySelector('[data-f=outro_doc]').value} : null;
+      let cadAuto = false;
       const m = document.createElement('div'); m.className = 'cv-modal'; m.style.zIndex = 800;
       const opc = (nome, val, atual, rot) => '<label class="cv-qp-op' + (val === atual ? ' on' : '') + '"><input type="radio" name="' + nome + '" value="' + esc(val) + '"' + (val === atual ? ' checked' : '') + '> <span>' + rot + '</span></label>';
       function desenha() {
@@ -268,9 +269,9 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
           + '<div class="cv-qp-grade">' + comp.map(v => opc('qp', 'comprador:' + v, modo === 'comprador' ? 'comprador:' + pag : '', 'Comprador ' + (+v.slice(1) + 1) + '<br><small>' + esc(comps[+v.slice(1)].nome) + '</small>')).join('')
           + opc('qp', 'construtora', modo, 'A construtora<br><small>' + esc(QP.construtora || '(sem construtora na etapa 1)') + ' — recebe do cliente e repassa</small>')
           + opc('qp', 'outro', modo, 'Outro<br><small>parente, empresa…</small>') + '</div>'
-          + (modo === 'construtora' ? '<div class="cv-comp" style="margin-top:12px"><b>Cadastro da construtora no Omie da ' + esc(QP.empresaNome) + '</b><br>'
+          + (modo === 'construtora' ? '<div class="cv-comp" style="margin-top:12px"><b>Cadastro da construtora no Omie</b><br>'
               + (cad ? '<span class="cv-chip ok">' + esc(cad.nome) + ' · ' + esc(cad.doc || 'sem documento') + '</span> ' : '<span class="cv-chip mal">não escolhido</span> ')
-              + '<button type="button" class="cv-mini-btn" data-cad>' + (cad ? 'trocar' : '🔍 escolher / cadastrar no Omie') + '</button>'
+              + (cad && cadAuto ? '<small class="cf-dica" style="margin:0"> identificado pelo nome — confira </small>' : '') + '<button type="button" class="cv-mini-btn" data-cad>' + (cad ? 'trocar' : '🔍 escolher / cadastrar no Omie') + '</button>'
               + '<p class="cf-dica" style="margin:6px 0 0">Às vezes quem paga é a SPE do empreendimento (outro CNPJ) — escolha o cadastro certo.</p>'
               + '<p style="margin:12px 0 4px"><b>De quem veio o sinal de negócio (arras)?</b></p><div class="cv-qp-grade">'
               + comp.map(v => opc('sinal', v, sinal, 'Comprador ' + (+v.slice(1) + 1) + '<br><small>' + esc(comps[+v.slice(1)].nome) + '</small>')).join('')
@@ -283,7 +284,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
           + (obrigatorio ? '<a class="btn cf-btn-sec" href="/capa-financeira/vendas/editar.php?id=' + CV.id + '&etapa=2">← voltar à etapa 2</a>' : '<button type="button" class="btn cf-btn-sec" data-x>Cancelar</button>') + '</div></div>';
         m.querySelectorAll('input[name=qp]').forEach(r => r.onchange = () => { const v = r.value; if (v.startsWith('comprador:')) { modo = 'comprador'; pag = v.split(':')[1]; } else modo = v; desenha(); });
         m.querySelectorAll('input[name=sinal]').forEach(r => r.onchange = () => { sinal = r.value; desenha(); });
-        const bc = m.querySelector('[data-cad]'); if (bc) bc.onclick = async () => { const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: cad ? cad.nome : QP.construtora, titulo: 'Construtora que paga — cadastro no Omie'}); if (c) { cad = c; desenha(); } };
+        const bc = m.querySelector('[data-cad]'); if (bc) bc.onclick = async () => { const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: cad ? cad.nome : QP.construtora, titulo: 'Construtora que paga — cadastro no Omie'}); if (c) { cad = c; cadAuto = false; desenha(); } };
         const bo = m.querySelector('[data-outro]'); if (bo) bo.onclick = async () => { const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: outro ? outro.nome : '', titulo: 'Quem paga as parcelas — cadastro no Omie'}); if (c) { outro = c; desenha(); } };
         const bx = m.querySelector('[data-x]'); if (bx) bx.onclick = () => { m.remove(); res(false); };
         m.querySelector('[data-ok]').onclick = () => {
@@ -304,6 +305,8 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
         };
       }
       desenha(); document.body.appendChild(m);
+      // tenta identificar a construtora no Omie sozinho, pelo nome (só aceita se UM cadastro bate com o nome inteiro)
+      if (!cad && QP.construtora) CFOmie.identificar({empresa: QP.empresa, termo: QP.construtora}).then(r => { if (r.certo && !cad && document.body.contains(m)) { cad = r.certo; cadAuto = true; desenha(); } });
     });
   }
   barraQP();
