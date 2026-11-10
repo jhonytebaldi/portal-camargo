@@ -49,7 +49,8 @@ if ($a === 'conferir') {
     bb_json(['ok' => true, 'conferido' => (bool)$v, 'por' => $u['nome']]);
 }
 if ($a === 'nota') {
-    $pdo->prepare('UPDATE bb_lanc SET nota = ? WHERE id = ?')->execute([mb_substr(trim((string)($_POST['nota'] ?? '')), 0, 500), $id]);
+    $nota = mb_substr(trim((string)($_POST['nota'] ?? '')), 0, 500);
+    $pdo->prepare('UPDATE bb_lanc SET nota = ?, nota_busca = ? WHERE id = ?')->execute([$nota, BbTexto::norm($nota), $id]);
     bb_json(['ok' => true]);
 }
 if ($a === 'desparear') {   // "não é transferência interna" / "não se anulam"

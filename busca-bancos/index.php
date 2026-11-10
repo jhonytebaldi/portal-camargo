@@ -11,6 +11,15 @@ $contas = BbCobertura::contas($pdo);
 $f = bb_filtros();
 $porPagina = 100; $pag = max(1, (int)($_GET['p'] ?? 1));
 
+// filtros em uso (para o botão "Limpar filtros" e o resumo embaixo da caixa)
+$filtrosAtivos = array_values(array_filter([
+    $f['per'] !== 'tudo' ? 'período' : null, $f['tipo'] !== '' ? ($f['tipo'] === 'E' ? 'só entradas' : 'só saídas') : null,
+    $f['empresas'] ? 'empresa' : null, $f['contas'] ? count($f['contas']) . ' conta(s)' : null,
+    $f['tolv'] ? 'tolerância de valor' : null, $f['told'] ? 'tolerância de data' : null, ($f['vmin'] !== '' || $f['vmax'] !== '') ? 'faixa de valor' : null,
+    $f['origem'] !== '' ? 'origem' : null, $f['internas'] ? 'mostrando transferências internas' : null, $f['anuladas'] ? 'mostrando anuladas' : null,
+    $f['pendentes'] ? 'só não conferidos' : null, $f['parcial'] ? 'nome parecido' : null, $f['agrupar'] ? 'agrupado por pessoa' : null,
+]));
+$temFiltro = $f['q'] !== '' || $filtrosAtivos;
 $qs = function (array $troca = []) { $g = array_merge($_GET, $troca); unset($g['p']); foreach ($g as $k => $v) if ($v === null || $v === '') unset($g[$k]); return '?' . http_build_query($g); };
 
 $m = BbBusca::montar($f);
@@ -64,7 +73,9 @@ bb_cabecalho('busca', $u);
   <div class="bb-q">
     <input type="search" name="q" value="<?= h($f['q']) ?>" placeholder="Nome, descrição, CPF/CNPJ, valor (1500 ou 1.500,00), data (15/03), nº da cobrança… pode misturar: daniela 2000" autofocus autocomplete="off" aria-label="O que procurar">
     <button class="bb-btn" type="submit">Buscar</button>
+    <?php if ($temFiltro): ?><a class="bb-btn bb-limpar" href="/busca-bancos/" title="Volta para a busca sem nenhum filtro">✕ Limpar filtros</a><?php endif; ?>
   </div>
+  <?php if ($temFiltro && $filtrosAtivos): ?><p class="bb-ativos">Filtros ativos: <?= implode(' · ', array_map('h', $filtrosAtivos)) ?></p><?php endif; ?>
   <?php if ($exp = BbBusca::explicar($m['interp'])): ?><p class="bb-entendi">Entendi: <?= implode(' · ', array_map(fn($x) => '<span>' . h($x) . '</span>', $exp)) ?></p><?php endif; ?>
   <div class="bb-filtros">
     <label>Período
@@ -156,7 +167,7 @@ bb_cabecalho('busca', $u);
         <td><?= bb_banco($l['banco']) ?> <span class="bb-conta"><?= h($l['apelido']) ?></span></td>
         <td><?php if ($l['contraparte'] !== ''): ?><b><?= h($l['contraparte']) ?></b> <?php endif; ?><span class="bb-memo"><?= h($l['memo']) ?></span>
           <?php if ($l['interna']): ?><span class="bb-tag">transferência interna</span><?php endif; ?><?php if ($l['anulada']): ?><span class="bb-tag">anulada</span><?php endif; ?><?php if ($l['origem'] === 'pdf'): ?><span class="bb-tag">PDF</span><?php endif; ?>
-          <?php if ($l['nota'] !== ''): ?><span class="bb-tag nota" title="<?= h($l['nota']) ?>">anotação</span><?php endif; ?></td>
+          <?php if ($l['nota'] !== ''): ?><br><span class="bb-nota-lin">✎ <?= h($l['nota']) ?></span><?php endif; ?></td>
         <td class="mono"><?= h(BbTexto::docFmt($l['doc'])) ?></td>
         <td class="num <?= $v >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl($v) ?></td>
         <td><input type="checkbox" class="bb-conf" aria-label="Conferido"<?= $l['conferido'] ? ' checked' : '' ?>></td>

@@ -5,8 +5,9 @@
    Listas 3C) e também por admin/migrar.php.
    ===================================================================== */
 declare(strict_types=1);
+require_once __DIR__ . '/lib/Ofx.php';   // BbTexto (normalização usada na migração)
 
-const BB_SCHEMA_VERSAO = 1;
+const BB_SCHEMA_VERSAO = 2;   // 2: bb_lanc.nota_busca (anotação entra na busca)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -88,10 +89,17 @@ function bb_migrar(PDO $pdo): array
             conferido_por INT UNSIGNED NULL,
             conferido_em DATETIME NULL,
             nota VARCHAR(500) NOT NULL DEFAULT '',
+            nota_busca VARCHAR(600) NOT NULL DEFAULT '',  -- anotação normalizada (entra na busca)
             UNIQUE KEY uq_bbl_fp (fp),
             KEY ix_bbl_conta_data (conta_id, data), KEY ix_bbl_data (data), KEY ix_bbl_valor (valor), KEY ix_bbl_doc (doc), KEY ix_bbl_arq (arquivo_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela bb_lanc';
+    }
+    $col = fn(string $t, string $c) => (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $pdo->quote($t) . " AND COLUMN_NAME = " . $pdo->quote($c))->fetchColumn() > 0;
+    if ($tem('bb_lanc') && !$col('bb_lanc', 'nota_busca')) {
+        $pdo->exec("ALTER TABLE bb_lanc ADD COLUMN nota_busca VARCHAR(600) NOT NULL DEFAULT '' AFTER nota");
+        if (class_exists('BbTexto')) { $up = $pdo->prepare('UPDATE bb_lanc SET nota_busca = ? WHERE id = ?'); foreach ($pdo->query("SELECT id, nota FROM bb_lanc WHERE nota <> ''") as $r) $up->execute([BbTexto::norm($r['nota']), $r['id']]); }
+        $feitos[] = 'bb_lanc.nota_busca';
     }
     if (!$tem('bb_config')) {
         $pdo->exec("CREATE TABLE bb_config (chave VARCHAR(60) PRIMARY KEY, valor MEDIUMTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
