@@ -22,7 +22,8 @@ main.wrap{max-width:1360px}
 
 /* selo do banco */
 .bb-banco{display:inline-flex;align-items:center;gap:6px;vertical-align:middle}
-.bb-logo{height:20px;width:auto;max-width:64px;object-fit:contain;display:block}
+.bb-logo{height:20px;width:auto;max-width:72px;object-fit:contain;display:block}
+.bb-logo.fundo{box-sizing:border-box;padding:4px 6px;border-radius:5px}
 .bb-mono{display:inline-grid;place-items:center;width:24px;height:20px;border-radius:5px;font-size:10.5px;font-weight:800;color:#fff;background:#6b7088;letter-spacing:.02em}
 .bb-mono-sicoob{background:#0b6e66}.bb-mono-sicredi{background:#3f8f2a}.bb-mono-caixa{background:#1a5fa8}.bb-mono-asaas{background:#2b4fd6}.bb-mono-inter{background:#d9660a}.bb-mono-omie-cash{background:#0a8fb0}
 

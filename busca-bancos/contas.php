@@ -21,11 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = 'Contas salvas.';
     } elseif ($acao === 'logo') {
         $b = (string)($_POST['banco'] ?? ''); $fl = $_FILES['logo'] ?? null;
+        $fundo = preg_match('/^#[0-9a-fA-F]{6}$/', (string)($_POST['fundo'] ?? '')) && empty($_POST['sem_fundo']) ? (string)$_POST['fundo'] : '';
         $tipos = ['image/png' => 1, 'image/jpeg' => 1, 'image/webp' => 1, 'image/svg+xml' => 1, 'image/gif' => 1];
         if (!array_key_exists($b, BbOfx::BANCOS)) $msg = 'Banco inválido.';
         elseif (!empty($_POST['remover'])) { $pdo->prepare('DELETE FROM bb_config WHERE chave = ?')->execute(['logo:' . $b]); $msg = 'Logo removida.'; }
         elseif (trim((string)($_POST['url'] ?? '')) !== '') {   // logo por link: o servidor baixa a imagem do site do banco
-            try { [$tipo, $dados] = bb_baixar_imagem(trim((string)$_POST['url'])); BbImportador::configSet($pdo, 'logo:' . $b, ['tipo' => $tipo, 'dados' => base64_encode($dados), 'fonte' => trim((string)$_POST['url'])]); $msg = 'Logo do ' . BbOfx::BANCOS[$b] . ' salva.'; }
+            try { [$tipo, $dados] = bb_baixar_imagem(trim((string)$_POST['url'])); BbImportador::configSet($pdo, 'logo:' . $b, ['tipo' => $tipo, 'dados' => base64_encode($dados), 'fonte' => trim((string)$_POST['url']), 'fundo' => $fundo]); $msg = 'Logo do ' . BbOfx::BANCOS[$b] . ' salva.'; }
             catch (RuntimeException $e) { $msg = 'Não consegui baixar a logo: ' . $e->getMessage(); }
         }
         elseif (!$fl || $fl['error'] !== UPLOAD_ERR_OK) $msg = 'Escolha o arquivo da logo.';
@@ -34,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tipo = (string)(new finfo(FILEINFO_MIME_TYPE))->file($fl['tmp_name']);
             if ($tipo === 'text/plain' || $tipo === 'text/xml' || $tipo === 'text/html') { if (preg_match('/<svg[\s>]/i', (string)file_get_contents($fl['tmp_name'], false, null, 0, 2000))) $tipo = 'image/svg+xml'; }
             if (!isset($tipos[$tipo])) $msg = 'Formato não aceito. Use PNG, JPG, WEBP ou SVG.';
-            else { BbImportador::configSet($pdo, 'logo:' . $b, ['tipo' => $tipo, 'dados' => base64_encode((string)file_get_contents($fl['tmp_name']))]); $msg = 'Logo do ' . BbOfx::BANCOS[$b] . ' salva.'; }
+            else { BbImportador::configSet($pdo, 'logo:' . $b, ['tipo' => $tipo, 'dados' => base64_encode((string)file_get_contents($fl['tmp_name'])), 'fundo' => $fundo]); $msg = 'Logo do ' . BbOfx::BANCOS[$b] . ' salva.'; }
         }
     } elseif ($acao === 'proprios') {
         $lista = array_values(array_filter(array_map('trim', preg_split('/[\r\n,;]+/', (string)($_POST['proprios'] ?? '')))));
@@ -111,7 +112,7 @@ bb_cabecalho('contas', $u);
   <?php foreach (BbOfx::BANCOS as $k => $t): if ($k === 'outro') continue; ?>
     <tr><td style="width:220px"><?= bb_banco($k, true) ?></td><td>
       <form method="post" enctype="multipart/form-data" class="bb-linha-form"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="logo"><input type="hidden" name="banco" value="<?= $k ?>">
-        <input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" aria-label="Logo do <?= h($t) ?>"><span>ou link</span><input class="bb-campo" type="url" name="url" placeholder="https://…/logo.svg" size="34" aria-label="Link da logo do <?= h($t) ?>"><button class="bb-btn sec" type="submit">Enviar</button>
+        <input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" aria-label="Logo do <?= h($t) ?>"><span>ou link</span><input class="bb-campo" type="url" name="url" placeholder="https://…/logo.svg" size="34" aria-label="Link da logo do <?= h($t) ?>"><label class="bb-chk" title="Para logos brancas (versão negativa): cor que fica atrás"><input type="checkbox" name="sem_fundo" value="1" checked> sem fundo</label><input type="color" name="fundo" value="#303682" aria-label="Cor de fundo da logo do <?= h($t) ?>"><button class="bb-btn sec" type="submit">Enviar</button>
         <?php if (isset($logos[$k])): ?><button class="bb-btn perigo" type="submit" name="remover" value="1" formnovalidate>Remover</button><?php endif; ?></form></td></tr>
   <?php endforeach; ?></tbody></table></div>
 </section>

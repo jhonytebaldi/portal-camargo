@@ -24,11 +24,11 @@ function bb_json(array $d, int $code = 200): void
 function bb_banco(string $slug, bool $comNome = false): string
 {
     static $logos = null;
-    if ($logos === null) { $logos = []; try { foreach (db()->query("SELECT chave, LENGTH(valor) n FROM bb_config WHERE chave LIKE 'logo:%'") as $r) $logos[substr($r['chave'], 5)] = (int)$r['n']; } catch (Throwable $e) {} }
+    if ($logos === null) { $logos = []; try { foreach (db()->query("SELECT chave, LENGTH(valor) n, JSON_UNQUOTE(JSON_EXTRACT(valor, '$.fundo')) f FROM bb_config WHERE chave LIKE 'logo:%'") as $r) $logos[substr($r['chave'], 5)] = [(int)$r['n'], preg_match('/^#[0-9a-fA-F]{6}$/', (string)$r['f']) ? (string)$r['f'] : '']; } catch (Throwable $e) {} }
     $nome = BbOfx::BANCOS[$slug] ?? $slug;
     $ini = ['sicoob' => 'Sb', 'sicredi' => 'Sd', 'caixa' => 'Cx', 'asaas' => 'As', 'inter' => 'In', 'omie-cash' => 'Om'][$slug] ?? '··';
     $selo = isset($logos[$slug])
-        ? '<img class="bb-logo" src="/busca-bancos/logo.php?b=' . h($slug) . '&v=' . $logos[$slug] . '" alt="' . h($nome) . '">'
+        ? '<img class="bb-logo' . ($logos[$slug][1] ? ' fundo" style="background:' . $logos[$slug][1] : '') . '" src="/busca-bancos/logo.php?b=' . h($slug) . '&v=' . $logos[$slug][0] . '" alt="' . h($nome) . '">'
         : '<span class="bb-mono bb-mono-' . h($slug) . '" aria-hidden="true">' . $ini . '</span>';
     return '<span class="bb-banco" title="' . h($nome) . '">' . $selo . ($comNome ? '<span>' . h($nome) . '</span>' : '') . '</span>';
 }
