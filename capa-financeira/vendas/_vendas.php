@@ -579,13 +579,22 @@ function cv_construtora_gravar(string $nome, ?string $modo, ?string $sinal, ?str
     if ($k === '') return;
     $r = cv_construtora($nome);
     $omie = $r['omie'] ?? [];
-    if ($empresa && $cad) $omie[$empresa] = ['codigo' => (int)$cad['codigo'], 'nome' => (string)$cad['nome'], 'doc' => (string)($cad['doc'] ?? '')];
+    // um cadastro só por construtora (Vertical e Camargo compartilham a base de clientes); na exportação ele é localizado pelo CNPJ
+    if ($cad) $omie = ['cad' => ['codigo' => (int)$cad['codigo'], 'nome' => (string)$cad['nome'], 'doc' => (string)($cad['doc'] ?? '')]];
     $nc = (int)($r['n_cliente'] ?? 0) + ($contar && $modo === 'cliente' ? 1 : 0);
     $nk = (int)($r['n_construtora'] ?? 0) + ($contar && $modo === 'construtora' ? 1 : 0);
     db()->prepare('INSERT INTO cv_construtoras (chave, nome, modo, sinal, omie, n_cliente, n_construtora, atualizado_por, atualizado_em) VALUES (?,?,?,?,?,?,?,?,NOW())
                    ON DUPLICATE KEY UPDATE nome = VALUES(nome), modo = VALUES(modo), sinal = VALUES(sinal), omie = VALUES(omie), n_cliente = VALUES(n_cliente),
                    n_construtora = VALUES(n_construtora), atualizado_por = VALUES(atualizado_por), atualizado_em = NOW()')
         ->execute([$k, mb_substr(trim($nome), 0, 200), $modo, $modo === 'construtora' ? $sinal : null, json_encode($omie, JSON_UNESCAPED_UNICODE), $nc, $nk, (int)$u['id']]);
+}
+
+/** cadastro do Omie guardado para a construtora (formato antigo, por empresa: pega o primeiro) */
+function cv_construtora_cad(?array $r): ?array
+{
+    $o = $r['omie'] ?? [];
+    if (!$o) return null;
+    return $o['cad'] ?? (array_values($o)[0] ?? null);
 }
 
 /** sugestão para a pergunta "quem paga as parcelas" — null se não há marcação nem histórico */
@@ -600,7 +609,7 @@ function cv_construtora_sugestao(string $nome, string $empresa): ?array
         default => 'varia de venda para venda',
     };
     $base = $n ? 'nas ' . $n . ' venda(s) confirmada(s) desta construtora (' . (int)$r['n_construtora'] . ' com repasse, ' . (int)$r['n_cliente'] . ' com o cliente pagando)' : 'marcado na tela de construtoras';
-    return ['modo' => $r['modo'], 'sinal' => $r['sinal'], 'cadastro' => $r['omie'][$empresa] ?? null, 'texto' => ucfirst($txt) . ' — ' . $base . '.'];
+    return ['modo' => $r['modo'], 'sinal' => $r['sinal'], 'cadastro' => cv_construtora_cad($r), 'texto' => ucfirst($txt) . ' — ' . $base . '.'];
 }
 
 Fluxo::$feriados = cv_feriados();   // repasse da construtora: próximo dia útil
