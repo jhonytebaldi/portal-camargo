@@ -195,7 +195,7 @@ final class BbBusca
         if (($f['tipo'] ?? '') === 'E') $w[] = 'l.valor > 0'; elseif (($f['tipo'] ?? '') === 'S') $w[] = 'l.valor < 0';
         if (($f['vmin'] ?? '') !== '') { $w[] = 'ABS(l.valor) >= ?'; $a[] = (float)$f['vmin']; }
         if (($f['vmax'] ?? '') !== '') { $w[] = 'ABS(l.valor) <= ?'; $a[] = (float)$f['vmax']; }
-        if (in_array($f['origem'] ?? '', ['upload', 'drive', 'pdf'], true)) { $w[] = 'ar.origem = ?'; $a[] = $f['origem']; }
+        if (in_array($f['origem'] ?? '', ['upload', 'drive', 'pdf', 'omie'], true)) { $w[] = 'ar.origem = ?'; $a[] = $f['origem']; }
         if (!empty($f['pendentes'])) $w[] = 'l.conferido = 0';
         $vis = [];
         if (empty($f['internas'])) $vis[] = 'l.interna = 0';

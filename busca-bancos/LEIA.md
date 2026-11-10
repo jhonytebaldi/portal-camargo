@@ -26,3 +26,7 @@ Formatos vistos (nov/2026):
 - Caixa: só PDF, e o PDF é uma imagem (pdfmake + JPEG do "Extrato por período"). `assets/pdf-caixa.js` extrai o JPEG, lê com
   tesseract.js (em `assets/ocr/`, local, sem CDN) e só importa se saldo anterior ± lançamentos = saldo impresso em cada linha;
   `BbImportador::importarCaixaPdf` confere de novo no servidor. Data do movimento = a do "SALDO DIA" do grupo (a hora impressa é a do processamento).
+- Omie Cash (450): não tem arquivo. `BbOmie::sincronizarCash` puxa `financas/extrato/ ListarExtrato` das 3 empresas e grava só os
+  movimentos "Conciliado" (os "Previsto" são contas a pagar em aberto). Impressão digital = código do lançamento no Omie.
+- `BbOmie::vincular` liga cada conta ao cadastro de contas correntes do Omie pelo número e corrige a empresa (a pasta do Drive
+  engana: o Sicoob 266.692-8 e o Asaas estão na pasta IMOBILIARIA mas são da Vertical).

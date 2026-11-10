@@ -236,6 +236,84 @@ final class BbOmie
         return ['mov' => $out, 'saldo' => $r['nSaldoAtual'] ?? null, 'conta' => (string)($r['cDescricao'] ?? '')];
     }
 
+    /** contas correntes cadastradas no Omie de uma empresa: [['id','nome','banco','agencia','conta','tipo','inativo']] */
+    public static function contasCorrentes(string $empresa): array
+    {
+        require_once __DIR__ . '/../../recibos-omie/lib/OmieApi.php';
+        $r = OmieApi::call($empresa, 'geral/contacorrente/', 'ListarContasCorrentes', ['pagina' => 1, 'registros_por_pagina' => 100, 'apenas_importado_api' => 'N']);
+        return array_map(fn($c) => ['id' => (string)$c['nCodCC'], 'nome' => (string)($c['descricao'] ?? ''), 'banco' => ltrim((string)($c['codigo_banco'] ?? ''), '0'), 'agencia' => (string)($c['codigo_agencia'] ?? ''),
+            'conta' => (string)($c['numero_conta_corrente'] ?? ''), 'tipo' => (string)($c['tipo_conta_corrente'] ?? ''), 'inativo' => ($c['inativo'] ?? 'N') === 'S'], $r['ListarContasCorrentes'] ?? []);
+    }
+
+    /**
+     * Liga cada conta bancária do Busca Bancos à conta corrente do Omie pelo número (mesmo banco, mesmos dígitos finais).
+     * O cadastro do Omie diz de qual empresa é a conta com mais certeza do que a pasta do Drive: quando acha, corrige a empresa.
+     * $porEmpresa = [empresa => contasCorrentes()]. Devolve as frases do que mudou.
+     */
+    public static function vincular(PDO $pdo, array $porEmpresa): array
+    {
+        $feito = []; $dig = fn(string $v) => ltrim(preg_replace('/\D+/', '', $v) ?? '', '0');
+        foreach ($pdo->query("SELECT * FROM bb_contas WHERE omie_cc IS NULL AND banco <> 'omie-cash'") as $c) {
+            $d = $dig($c['conta']); $achou = [];
+            foreach ($porEmpresa as $emp => $ccs) foreach ($ccs as $cc) {
+                $o = $dig($cc['conta']);
+                if (strlen($o) >= 5 && $cc['tipo'] === 'CC' && !$cc['inativo'] && $cc['banco'] === ltrim((string)$c['bank_id'], '0') && ($d === $o || str_ends_with($d, $o))) $achou[] = [$emp, $cc];
+            }
+            if (count($achou) !== 1) continue;   // nenhuma ou mais de uma: não arrisca
+            [$emp, $cc] = $achou[0];
+            $pdo->prepare('UPDATE bb_contas SET omie_cc = ?, empresa = ? WHERE id = ?')->execute([$cc['id'], $emp, $c['id']]);
+            $feito[] = $c['apelido'] . ' → ' . $cc['nome'] . ' da ' . (BbImportador::EMPRESAS[$emp] ?? $emp) . ($c['empresa'] !== '' && $c['empresa'] !== $emp ? ' (estava como ' . (BbImportador::EMPRESAS[$c['empresa']] ?? $c['empresa']) . ': corrigido pelo cadastro do Omie)' : '');
+        }
+        return $feito;
+    }
+
+    /**
+     * Puxa o Omie Cash de uma empresa direto do Omie (sem arquivo). Só entram os movimentos "Conciliado" — os que de fato
+     * passaram pela conta; os "Previsto" são contas a pagar ainda não pagas. Volta de 3 em 3 meses até não achar mais nada.
+     * Devolve os resultados de BbImportador::gravar (um por conta Omie Cash da empresa).
+     */
+    public static function sincronizarCash(PDO $pdo, string $empresa, array $ccs, ?int $usuario = null): array
+    {
+        require_once __DIR__ . '/../../recibos-omie/lib/OmieApi.php';
+        $res = []; $hoje = date('Y-m-d');
+        foreach ($ccs as $cc) {
+            if ($cc['banco'] !== '450' || $cc['tipo'] !== 'CC' || $cc['inativo'] || strlen(preg_replace('/\D+/', '', $cc['conta']) ?? '') < 6) continue;   // pula a conta "Recebíveis de Cartão"
+            $st = $pdo->prepare("SELECT c.id, (SELECT MAX(a.periodo_ate) FROM bb_arquivos a WHERE a.conta_id = c.id) ate FROM bb_contas c WHERE c.bank_id = '450' AND c.conta = ?"); $st->execute([$cc['conta']]);
+            $ja = $st->fetch(); $desde = $ja && $ja['ate'] ? date('Y-m-d', strtotime($ja['ate'] . ' -10 days')) : null;   // já sincronizado: só os últimos dias
+            $lanc = []; $saldo = null; $fim = $hoje; $primeira = null;
+            for ($i = 0; $i < 12; $i++) {
+                $ini = max($desde ?? '2000-01-01', date('Y-m-d', strtotime($fim . ' -89 days')));
+                $r = OmieApi::call($empresa, 'financas/extrato/', 'ListarExtrato', ['nCodCC' => (int)$cc['id'], 'dPeriodoInicial' => OmieApi::br($ini), 'dPeriodoFinal' => OmieApi::br($fim), 'cExibirApenasSaldo' => 'N']);
+                if ($i === 0) $saldo = isset($r['nSaldoAtual']) ? round((float)$r['nSaldoAtual'], 2) : null;
+                $n = 0;
+                foreach ($r['listaMovimentos'] ?? [] as $mv) {
+                    $d = OmieApi::iso((string)($mv['dDataLancamento'] ?? '')); $v = round((float)($mv['nValorDocumento'] ?? 0), 2);
+                    if (!$d || abs($v) < 0.005 || ($mv['cSituacao'] ?? '') !== 'Conciliado') continue;
+                    $obs = html_entity_decode((string)($mv['cObservacoes'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $obs = trim(preg_replace('/\s*\|\s*/', ' · ', preg_replace('/^Gerado automaticamente pelo Omie\.CASH\.\|?/u', '', $obs) ?? '') ?? '', ' ·');
+                    $nome = html_entity_decode(trim((string)($mv['cRazCliente'] ?? '') ?: (string)($mv['cDesCliente'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $cat = trim((string)($mv['cDesCategoria'] ?? ''));
+                    $lanc[] = ['data' => $d, 'valor' => $v, 'tipo' => $v > 0 ? 'CREDIT' : 'DEBIT', 'fitid' => (string)$mv['nCodLancamento'], 'fp_chave' => 'omie:' . $mv['nCodLancamento'],
+                        'checknum' => (string)($mv['cNumero'] ?? ''), 'refnum' => preg_match('/Transa[çc][ãa]o:\s*([A-Za-z0-9]{10,})/u', $obs, $m) ? $m[1] : '',
+                        'memo' => ($cat !== '' ? $cat . ' · ' : '') . $obs, 'nome' => $nome, 'doc' => (string)($mv['cDocCliente'] ?? '')];
+                    $n++; $primeira = $primeira === null ? $d : min($primeira, $d);
+                }
+                if ($desde !== null && $ini <= $desde) break;
+                if ($n === 0) break;                       // janela inteira sem nada: chegou antes da abertura da conta
+                $fim = date('Y-m-d', strtotime($ini . ' -1 day'));
+            }
+            $de = $desde ?? ($primeira ?? $hoje);
+            $ext = ['bank_id' => '450', 'org' => 'Omie.CASH', 'agencia' => $cc['agencia'], 'conta' => $cc['conta'], 'banco' => 'omie-cash', 'de' => $de, 'ate' => $hoje, 'saldo' => $saldo, 'saldo_data' => $hoje, 'lanc' => $lanc];
+            $r = BbImportador::gravar($pdo, $ext, sha1($empresa . '|' . $de . '|' . $hoje . '|' . implode(',', array_column($lanc, 'fitid'))),
+                ['nome' => 'Omie Cash pela API (' . BbTexto::dataBr($de) . ' a ' . BbTexto::dataBr($hoje) . ')', 'origem' => 'omie', 'formato' => 'api', 'usuario' => $usuario, 'empresa' => $empresa]);
+            $pdo->prepare("UPDATE bb_contas SET omie_cc = ?, empresa = ?, apelido = IF(apelido LIKE 'Omie Cash · %/%' OR apelido LIKE 'Omie Cash · 0001%', ?, apelido) WHERE id = ?")
+                ->execute([$cc['id'], $empresa, 'Omie Cash · ' . (BbImportador::EMPRESAS[$empresa] ?? $empresa), $r['conta']['id']]);
+            $r['conta']['empresa'] = $empresa; $r['avisos'] = array_values(array_filter($r['avisos'], fn($a) => !str_contains($a, 'mesmo arquivo')));
+            $res[] = $r + ['arquivo' => 'Omie Cash · ' . (BbImportador::EMPRESAS[$empresa] ?? $empresa)];
+        }
+        return $res;
+    }
+
     /** casa por valor exato e data mais próxima (até $told dias). Devolve ['pares'=>[[banco, omie]], 'so_banco'=>[], 'so_omie'=>[]] */
     public static function cruzar(array $banco, array $omie, int $told): array
     {
