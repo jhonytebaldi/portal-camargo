@@ -8,7 +8,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/schema.php';
-require_once __DIR__ . '/lib/Importador.php';
+require_once __DIR__ . '/lib/Busca.php';
 date_default_timezone_set('America/Sao_Paulo');
 $sai = function (array $d, int $c = 200): void { http_response_code($c); header('Content-Type: application/json; charset=utf-8'); echo json_encode($d, JSON_UNESCAPED_UNICODE); exit; };
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') $sai(['erro' => 'use POST'], 405);
@@ -26,6 +26,7 @@ try {
 } catch (RuntimeException $e) { $sai(['erro' => $e->getMessage()], 422); }
 catch (Throwable $e) { error_log('busca-bancos api: ' . $e->getMessage()); $sai(['erro' => 'falha interna'], 500); }
 BbImportador::configSet($pdo, 'drive_ultima', date('Y-m-d H:i:s'));
+try { $res = BbCobertura::anotarSilencios($pdo, $res); } catch (Throwable $e) { error_log('busca-bancos api silencios: ' . $e->getMessage()); }
 // conta nova: tenta ligar ao cadastro do Omie (corrige a empresa sugerida pela pasta)
 if (array_filter($res, fn($r) => $r['conta_nova'])) { require_once __DIR__ . '/lib/Conferencia.php'; try { BbOmie::vincularTudo($pdo); } catch (Throwable $e) { error_log('busca-bancos api vincular: ' . $e->getMessage()); } }
 $sai(['ok' => true, 'resultados' => array_map(fn($r) => ['status' => $r['status'], 'conta' => $r['conta']['apelido'], 'novos' => $r['novos'], 'repetidos' => $r['dup'], 'de' => $r['de'], 'ate' => $r['ate'], 'avisos' => $r['avisos']], $res)]);

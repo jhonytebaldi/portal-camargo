@@ -9,6 +9,7 @@ $g = BbCobertura::grade($pdo, $contas);
 $int = BbCobertura::intervalos($pdo);
 $saldos = BbCobertura::saldos($pdo);
 $cap = BbCobertura::capacidades($pdo);
+$sil = BbCobertura::silencios($pdo, $int);
 $mesNome = ['01' => 'jan', '02' => 'fev', '03' => 'mar', '04' => 'abr', '05' => 'mai', '06' => 'jun', '07' => 'jul', '08' => 'ago', '09' => 'set', '10' => 'out', '11' => 'nov', '12' => 'dez'];
 $rot = ['cheio' => 'mês completo', 'parcial' => 'faltam dias', 'falta' => 'mês faltando entre dois extratos', 'fora' => 'sem extrato'];
 bb_cabecalho('cobertura', $u);
@@ -22,10 +23,24 @@ if (!$contas) { echo '<div class="bb-vazio"><h2>Nenhum extrato importado ainda</
     <?php foreach ($contas as $cid => $c): ?>
       <tr><th class="c"><?= bb_banco($c['banco']) ?> <?= h($c['apelido']) ?> <small style="font-weight:400;color:#5d6278">· <?= h(bb_empresa($c['empresa'])) ?></small></th>
       <?php foreach ($g['meses'] as $m): $x = $g['linhas'][$cid][$m]; ?>
-        <td class="<?= $x['st'] ?>" title="<?= h($mesNome[substr($m, 5)] . '/' . substr($m, 0, 4) . ': ' . $rot[$x['st']] . ($x['st'] === 'parcial' ? ' (' . $x['dias'] . ')' : '') . ' · ' . $x['n'] . ' lançamento(s)') ?>"><?= $x['st'] === 'fora' || $x['st'] === 'falta' ? '—' : $x['n'] ?><span class="sr" style="position:absolute;left:-9999px"> <?= $rot[$x['st']] ?></span></td>
+        <td class="<?= $x['st'] ?><?= $x['sil'] !== '' ? ' sil' : '' ?>" title="<?= h($mesNome[substr($m, 5)] . '/' . substr($m, 0, 4) . ': ' . $rot[$x['st']] . ($x['st'] === 'parcial' ? ' (' . $x['dias'] . ')' : '') . ' · ' . $x['n'] . ' lançamento(s)' . ($x['sil'] !== '' ? ' · ⚠ coberto mas sem nenhum lançamento em ' . $x['sil'] . ' (fora do normal desta conta)' : '')) ?>"><?= $x['st'] === 'fora' || $x['st'] === 'falta' ? '—' : $x['n'] ?><?= $x['sil'] !== '' ? '<b class="bb-sil-m">!</b>' : '' ?><span class="sr" style="position:absolute;left:-9999px"> <?= $rot[$x['st']] ?><?= $x['sil'] !== '' ? ', dias sem lançamento fora do normal' : '' ?></span></td>
       <?php endforeach; ?></tr>
     <?php endforeach; ?></tbody></table></div>
-  <div class="bb-legenda"><span><i style="background:#bfe3cd"></i>mês completo</span><span><i style="background:#ffe08a"></i>faltam dias</span><span><i style="background:#f3b1a7"></i>mês faltando entre dois extratos</span><span><i style="background:#eff0f5"></i>sem extrato (antes do primeiro ou depois do último)</span></div>
+  <div class="bb-legenda"><span><i style="background:#bfe3cd"></i>mês completo</span><span><i style="background:#ffe08a"></i>faltam dias</span><span><i style="background:#f3b1a7"></i>mês faltando entre dois extratos</span><span><i style="background:#eff0f5"></i>sem extrato (antes do primeiro ou depois do último)</span><span><b class="bb-sil-m" style="position:static">!</b> coberto, mas com dias sem nenhum lançamento fora do normal</span></div>
+</section>
+
+<?php $temSil = array_filter($sil, fn($x) => $x['trechos']); ?>
+<section class="bb-card">
+  <h2>Dias cobertos, mas sem nenhum lançamento</h2>
+  <p>O extrato diz que cobre esses dias, mas não traz nada neles — e isso é fora do normal para a conta. Para cada conta medimos em quantos % dos dias úteis cobertos ela tem movimento; uma sequência de dias úteis vazios só aparece aqui quando a chance de ser por acaso é menor que 1%. Costuma ser extrato baixado antes do fim do período (o banco escreve o período pedido, não o que já tinha caído) ou exportado com a data errada. Confira no banco e, se faltar, baixe de novo esse trecho.</p>
+  <?php if (!$temSil): ?><p><span class="bb-tag ok">nenhum trecho suspeito</span></p><?php else: ?>
+  <div class="bb-tab-wrap"><table class="bb-tab">
+    <thead><tr><th>Conta</th><th>Movimento normal</th><th>Sem nenhum lançamento</th></tr></thead><tbody>
+    <?php foreach ($temSil as $cid => $x): $c = $contas[$cid] ?? null; if (!$c) continue; ?>
+      <tr><td><?= bb_banco($c['banco']) ?> <b><?= h($c['apelido']) ?></b><br><small><?= h(bb_empresa($c['empresa'])) ?></small></td>
+        <td><small>movimento em <?= (int)round(100 * $x['p']) ?>% dos dias úteis · suspeito a partir de <?= $x['k'] ?> dias úteis vazios</small></td>
+        <td class="mono"><?php foreach ($x['trechos'] as $t): ?><?= BbTexto::dataBr($t['de']) ?> a <?= BbTexto::dataBr($t['ate']) ?> <small>(<?= $t['uteis'] ?> dias úteis) — <?= h(BbCobertura::motivoSilencio($t)) ?></small><br><?php endforeach; ?></td></tr>
+    <?php endforeach; ?></tbody></table></div><?php endif; ?>
 </section>
 
 <section class="bb-card">

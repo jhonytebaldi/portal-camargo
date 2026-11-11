@@ -63,6 +63,7 @@ final class BbCobertura
     {
         $int = self::intervalos($pdo);
         if (!$int) return ['meses' => [], 'linhas' => []];
+        $sil = self::silencios($pdo, $int);
         $min = min(array_map(fn($i) => $i[0][0], $int)); $hoje = date('Y-m-d', strtotime('-1 day'));
         $meses = []; for ($m = substr($min, 0, 7); $m <= substr($hoje, 0, 7); $m = date('Y-m', strtotime($m . '-01 +1 month'))) $meses[] = $m;
         $n = [];
@@ -75,7 +76,9 @@ final class BbCobertura
                 $f = $i ? self::buracos($i, $a, $b) : [[$a, $b]];
                 $st = !$f ? 'cheio' : ((count($f) === 1 && $f[0][0] === $a && $f[0][1] === $b) ? ($ini !== null && $a > $ini && $b < $fim ? 'falta' : 'fora') : 'parcial');
                 $dias = implode(', ', array_map(fn($x) => $x[0] === $x[1] ? substr(BbTexto::dataBr($x[0]), 0, 5) : substr(BbTexto::dataBr($x[0]), 0, 5) . ' a ' . substr(BbTexto::dataBr($x[1]), 0, 5), $f));
-                $linhas[$cid][$m] = ['st' => $st, 'n' => $n[$cid][$m] ?? 0, 'dias' => $dias];
+                $sv = array_filter($sil[$cid]['trechos'] ?? [], fn($t) => $t['ate'] >= $a && $t['de'] <= $b);
+                $silTxt = implode(', ', array_map(fn($t) => substr(BbTexto::dataBr(max($t['de'], $a)), 0, 5) . ' a ' . substr(BbTexto::dataBr(min($t['ate'], $b)), 0, 5), $sv));
+                $linhas[$cid][$m] = ['st' => $st, 'n' => $n[$cid][$m] ?? 0, 'dias' => $dias, 'sil' => $silTxt];
             }
         }
         return ['meses' => $meses, 'linhas' => $linhas];
@@ -100,6 +103,97 @@ final class BbCobertura
             if (!$p || $a['ref'] >= $p['ref']) $ant[$cid] = $a;
         }
         return $out;
+    }
+
+    /** feriados nacionais em que banco não compensa (fixos + Carnaval, Sexta-feira Santa e Corpus Christi) */
+    public static function feriados(int $ano): array
+    {
+        static $cache = [];
+        if (isset($cache[$ano])) return $cache[$ano];
+        $f = array_map(fn($d) => "$ano-$d", ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25']);
+        $a = $ano % 19; $b = intdiv($ano, 100); $c = $ano % 100; $d = intdiv($b, 4); $e = $b % 4; $g = intdiv(8 * $b + 13, 25);
+        $h = (19 * $a + $b - $d - $g + 15) % 30; $j = intdiv($c, 4); $k = $c % 4; $l = (2 * $e + 2 * $j - $k - $h + 32) % 7; $m = intdiv($a + 11 * $h + 19 * $l, 433);
+        $mes = intdiv($h + $l - 7 * $m + 90, 25); $dia = ($h + $l - 7 * $m + 33 * $mes + 19) % 32;
+        $pascoa = strtotime(sprintf('%04d-%02d-%02d', $ano, $mes, $dia));
+        foreach ([-48, -47, -2, 60] as $off) $f[] = date('Y-m-d', strtotime("$off days", $pascoa));
+        return $cache[$ano] = array_flip($f);
+    }
+    public static function util(string $d): bool
+    {
+        return (int)date('N', strtotime($d)) <= 5 && !isset(self::feriados((int)substr($d, 0, 4))[$d]);
+    }
+
+    /**
+     * Dias úteis seguidos SEM NENHUM lançamento dentro do período que os extratos dizem cobrir, quando isso é fora do normal
+     * para a conta. O normal de cada conta = em quantos % dos dias úteis cobertos ela tem movimento (p, medido fora do próprio
+     * trecho). Uma sequência de k dias úteis vazios é suspeita quando a chance de acontecer por acaso, (1-p)^k, fica abaixo de 1% (e k >= 3).
+     * Pega o arquivo baixado antes do fim do período que ele declara, mesmo quando o banco não informa a data de geração.
+     * [conta_id => ['p' => 0..1, 'k' => mínimo de dias úteis, 'trechos' => [['de','ate','uteis','fim'=>bool], …]]]
+     */
+    public static function silencios(PDO $pdo, ?array $int = null): array
+    {
+        $int ??= self::intervalos($pdo);
+        $datas = [];
+        foreach ($pdo->query('SELECT DISTINCT conta_id, data FROM bb_lanc') as $r) $datas[(int)$r['conta_id']][$r['data']] = 1;
+        $out = [];
+        foreach ($int as $cid => $is) {
+            $tem = $datas[$cid] ?? [];
+            $uteis = 0; $ativos = 0;
+            foreach ($is as [$a, $b]) for ($d = $a; $d <= $b; $d = date('Y-m-d', strtotime($d . ' +1 day'))) if (self::util($d)) { $uteis++; if (isset($tem[$d])) $ativos++; }
+            if ($uteis < 20 || $ativos < 3) continue;   // pouca história para saber o que é normal
+            $p = $ativos / $uteis;
+            $kDe = fn(float $q) => $q >= 0.999 ? 3 : max(3, (int)ceil(log(0.01) / log(1 - $q)));
+            $k = $kDe($p);
+            $trechos = [];
+            foreach ($is as [$a, $b]) {
+                $ini = null; $n = 0;
+                for ($d = $a; ; $d = date('Y-m-d', strtotime($d . ' +1 day'))) {
+                    $acabou = $d > $b;
+                    if (!$acabou && !isset($tem[$d])) { $ini ??= $d; if (self::util($d)) $n++; continue; }
+                    // o normal é medido SEM o próprio trecho (senão um buraco grande baixa a média e se esconde)
+                    if ($ini !== null && $n >= 3 && $uteis - $n >= 20 && $n >= $kDe($ativos / ($uteis - $n))) $trechos[] = ['de' => $ini, 'ate' => date('Y-m-d', strtotime($d . ' -1 day')), 'uteis' => $n, 'fim' => $acabou, 'inicio' => $ini === $is[0][0]];
+                    $ini = null; $n = 0;
+                    if ($acabou) break;
+                }
+            }
+            $out[$cid] = ['p' => $p, 'k' => $k, 'trechos' => $trechos];
+        }
+        return $out;
+    }
+
+    /** trechos suspeitos que encostam em [de, ate] (null = tudo) */
+    public static function silenciosNoPeriodo(array $sil, array $contas, ?string $de, ?string $ate): array
+    {
+        $out = [];
+        foreach ($contas as $cid => $c) foreach ($sil[$cid]['trechos'] ?? [] as $t)
+            if ((!$de || $t['ate'] >= $de) && (!$ate || $t['de'] <= $ate)) $out[] = $t + ['conta' => $c, 'p' => $sil[$cid]['p']];
+        return $out;
+    }
+
+    /** acrescenta aos resultados de uma importação o aviso de dias sem lançamento fora do normal no período de cada arquivo */
+    public static function anotarSilencios(PDO $pdo, array $resultados): array
+    {
+        if (!$resultados) return $resultados;
+        $sil = self::silencios($pdo);
+        foreach ($resultados as &$r) {
+            if (!isset($r['conta']['id'], $r['de'], $r['ate']) || $r['ate'] < $r['de']) continue;
+            $cid = (int)$r['conta']['id'];
+            foreach ($sil[$cid]['trechos'] ?? [] as $t) if ($t['ate'] >= $r['de'] && $t['de'] <= $r['ate'])
+                $r['avisos'][] = self::textoSilencio($t, $sil[$cid]['p']);
+        }
+        return $resultados;
+    }
+    public static function textoSilencio(array $t, float $p): string
+    {
+        return 'Nenhum lançamento de ' . BbTexto::dataBr($t['de']) . ' a ' . BbTexto::dataBr($t['ate']) . ' (' . $t['uteis'] . ' dias úteis), embora o extrato diga cobrir esses dias — '
+            . 'esta conta costuma ter movimento em ' . (int)round(100 * $p) . '% dos dias úteis. '
+            . self::motivoSilencio($t);
+    }
+    public static function motivoSilencio(array $t): string
+    {
+        if (!empty($t['inicio'])) return 'É antes do primeiro lançamento da conta: confira se ela já existia (pode ter sido aberta depois) ou se o extrato veio incompleto.';
+        if (!empty($t['fim'])) return 'Fica no fim do período coberto: o extrato pode ter sido baixado antes do fim.';
+        return 'Confira no banco se o extrato veio completo (ou se foi exportado com o período errado).';
     }
 
     /** o que cada conta informa: % de lançamentos com CPF/CNPJ, com nome e com nº de referência */
