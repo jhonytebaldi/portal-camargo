@@ -77,6 +77,7 @@ if ($token === '') { $token = bin2hex(random_bytes(24)); BbImportador::configSet
 $pasta = (string)BbImportador::config($pdo, 'drive_pasta', BB_PASTA_PADRAO);
 $ultima = BbImportador::config($pdo, 'drive_ultima');
 $host = (!empty($_SERVER['HTTPS']) || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https' ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'portal.imobcamargo.com.br');
+$envios = $pdo->query('SELECT e.*, c.banco, c.apelido, us.nome AS por FROM bb_envios e LEFT JOIN bb_contas c ON c.id = e.conta_id LEFT JOIN users us ON us.id = e.usuario ORDER BY e.id DESC LIMIT 100')->fetchAll();
 $hist = $pdo->query('SELECT a.*, c.banco, c.apelido, c.empresa, us.nome AS por FROM bb_arquivos a JOIN bb_contas c ON c.id = a.conta_id LEFT JOIN users us ON us.id = a.enviado_por ORDER BY a.id DESC LIMIT 300')->fetchAll();
 
 $script = <<<JS
@@ -185,6 +186,20 @@ bb_cabecalho('importar', $u);
       <label>Pasta do Drive (link ou código) <input class="bb-campo" type="text" name="pasta" value="<?= h($pasta) ?>" size="44"></label><button class="bb-btn sec" type="submit">Trocar pasta</button></form>
     <form method="post" onsubmit="return confirm('Gerar um código novo? O script instalado no Google para de funcionar até você colar o novo.')"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="novo_token"><button class="bb-btn perigo" type="submit">Gerar código novo</button></form>
   </div>
+</section>
+
+<section class="bb-card">
+  <h2>Todas as tentativas de envio</h2>
+  <p>Cada vez que um arquivo .ofx é enviado (pelo portal ou pela pasta do Drive), inclusive quando ele já tinha sido importado ou deu erro. Registro a partir de 11/11/2026, 20h.</p>
+  <?php if (!$envios): ?><p>Nenhuma ainda.</p><?php else: ?>
+  <div class="bb-tab-wrap"><table class="bb-tab">
+    <thead><tr><th>Quando</th><th>Quem</th><th>Arquivo</th><th>Conta</th><th>Resultado</th><th class="num">Novos</th><th class="num">Já existiam</th><th class="num">Tempo</th></tr></thead><tbody>
+    <?php foreach ($envios as $e): ?>
+      <tr><td class="mono"><?= h(date('d/m/Y H:i:s', strtotime($e['inicio']))) ?></td><td><?= $e['origem'] === 'drive' ? 'Drive' : h($e['por'] ?? '—') ?></td><td><?= h($e['nome']) ?></td>
+        <td><?= $e['banco'] ? bb_banco($e['banco']) . ' ' . h($e['apelido']) : '—' ?></td>
+        <td><?= ['ok' => '<span class="bb-tag ok">importado</span>', 'repetido' => '<span class="bb-tag">já tinha sido importado</span>', 'erro' => '<span class="bb-tag nao">erro</span>'][$e['status']] ?? h($e['status']) ?><?= $e['erro'] ? ' <small>' . h($e['erro']) . '</small>' : '' ?></td>
+        <td class="num"><?= (int)$e['novos'] ?></td><td class="num"><?= (int)$e['dup'] ?></td><td class="num"><?= h(number_format((float)$e['segundos'], 1, ',', '')) ?> s</td></tr>
+    <?php endforeach; ?></tbody></table></div><?php endif; ?>
 </section>
 
 <section class="bb-card">

@@ -45,9 +45,26 @@ final class BbImportador
      */
     public static function importarOfx(PDO $pdo, string $bruto, array $meta = []): array
     {
-        $res = [];
-        foreach (BbOfx::ler($bruto) as $ext) $res[] = self::gravar($pdo, $ext, sha1($bruto), $meta + ['formato' => 'ofx']);
+        $res = []; $t0 = microtime(true); $inicio = date('Y-m-d H:i:s');
+        try {
+            foreach (BbOfx::ler($bruto) as $ext) $res[] = self::gravar($pdo, $ext, sha1($bruto), $meta + ['formato' => 'ofx']);
+        } catch (Throwable $e) {
+            self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, null, $e instanceof RuntimeException ? $e->getMessage() : 'erro interno: ' . $e->getMessage());
+            throw $e;
+        }
+        foreach ($res as $r) self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, $r, null);
         return $res;
+    }
+
+    /** registro de TODA tentativa de importação (inclusive arquivo repetido e erro), para auditoria */
+    public static function registrarEnvio(PDO $pdo, array $meta, string $sha1, string $inicio, float $t0, ?array $r, ?string $erro): void
+    {
+        try {
+            $pdo->prepare('INSERT INTO bb_envios (inicio, segundos, usuario, origem, nome, sha1, conta_id, arquivo_id, status, novos, dup, erro) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+                ->execute([$inicio, round(microtime(true) - $t0, 2), $meta['usuario'] ?? null, (string)($meta['origem'] ?? 'upload'),
+                    mb_substr((string)($meta['nome'] ?? ''), 0, 200), $sha1, $r ? (int)$r['conta']['id'] : null, $r['arquivo_id'] ?? null,
+                    $r ? $r['status'] : 'erro', $r['novos'] ?? 0, $r['dup'] ?? 0, $erro !== null ? mb_substr($erro, 0, 300) : null]);
+        } catch (Throwable $e) { error_log('busca-bancos envio: ' . $e->getMessage()); }
     }
 
     /** $ext no formato de BbOfx::ler (também usado para extratos convertidos de PDF) */
@@ -85,12 +102,15 @@ final class BbImportador
         }
         $base = ['conta' => $conta, 'conta_nova' => $nova, 'de' => $ext['de'], 'ate' => $ext['ate'], 'total' => count($ext['lanc'])];
 
-        $st = $pdo->prepare('SELECT id FROM bb_arquivos WHERE conta_id = ? AND sha1 = ?'); $st->execute([$cid, $sha1]);
-        if ($rid = (int)$st->fetchColumn()) {
+        $st = $pdo->prepare('SELECT a.id, a.enviado_em, a.origem, us.nome AS por FROM bb_arquivos a LEFT JOIN users us ON us.id = a.enviado_por WHERE a.conta_id = ? AND a.sha1 = ?'); $st->execute([$cid, $sha1]);
+        $ant = $st->fetch();
+        if ($rid = (int)($ant['id'] ?? 0)) {
             // o mesmo arquivo de novo: aproveita para acertar a cobertura dele com a regra atual (data de geração)
             $pdo->prepare('UPDATE bb_arquivos SET periodo_ate = LEAST(?, DATE_SUB(DATE(enviado_em), INTERVAL 1 DAY)), periodo_declarado_ate = ?, gerado_em = ? WHERE id = ?')
                 ->execute([$ext['ate'], $ext['ate_declarado'], $ext['gerado'] ?? null, $rid]);
-            return $base + ['status' => 'repetido', 'novos' => 0, 'dup' => count($ext['lanc']), 'avisos' => ['Este mesmo arquivo já tinha sido importado — nada mudou.']];
+            $quando = date('d/m/Y \à\s H:i', strtotime($ant['enviado_em'])) . ($ant['por'] ? ' por ' . $ant['por'] : ($ant['origem'] === 'drive' ? ' pela pasta do Drive' : ''));
+            return $base + ['status' => 'repetido', 'novos' => 0, 'dup' => count($ext['lanc']), 'arquivo_id' => $rid,
+                'avisos' => ['Este mesmo arquivo já tinha sido importado em ' . $quando . ' — os lançamentos dele já estão na busca; nada mudou.']];
         }
 
         $pdo->beginTransaction();

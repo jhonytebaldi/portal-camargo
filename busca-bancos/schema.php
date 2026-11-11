@@ -7,7 +7,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/lib/Importador.php';   // BbTexto e BbImportador (usados na migração)
 
-const BB_SCHEMA_VERSAO = 5;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4/5: cobertura limitada à data de geração do arquivo (11/11/2026)
+const BB_SCHEMA_VERSAO = 6;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4/5: cobertura limitada à data de geração do arquivo · 6: bb_envios (11/11/2026)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -103,6 +103,25 @@ function bb_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE bb_lanc ADD COLUMN nota_busca VARCHAR(600) NOT NULL DEFAULT '' AFTER nota");
         if (class_exists('BbTexto')) { $up = $pdo->prepare('UPDATE bb_lanc SET nota_busca = ? WHERE id = ?'); foreach ($pdo->query("SELECT id, nota FROM bb_lanc WHERE nota <> ''") as $r) $up->execute([BbTexto::norm($r['nota']), $r['id']]); }
         $feitos[] = 'bb_lanc.nota_busca';
+    }
+    if (!$tem('bb_envios')) {
+        $pdo->exec("CREATE TABLE bb_envios (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            inicio DATETIME NOT NULL,                    -- quando o processamento do arquivo começou
+            segundos DECIMAL(8,2) NOT NULL DEFAULT 0,    -- quanto levou
+            usuario INT UNSIGNED NULL,
+            origem VARCHAR(10) NOT NULL DEFAULT 'upload',
+            nome VARCHAR(200) NOT NULL DEFAULT '',
+            sha1 CHAR(40) NOT NULL DEFAULT '',
+            conta_id INT UNSIGNED NULL,
+            arquivo_id INT UNSIGNED NULL,                -- registro em bb_arquivos (o original, quando repetido)
+            status VARCHAR(10) NOT NULL,                 -- ok | repetido | erro
+            novos INT UNSIGNED NOT NULL DEFAULT 0,
+            dup INT UNSIGNED NOT NULL DEFAULT 0,
+            erro VARCHAR(300) NULL,
+            KEY ix_bbe (inicio)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela bb_envios';
     }
     if (!$tem('bb_config')) {
         $pdo->exec("CREATE TABLE bb_config (chave VARCHAR(60) PRIMARY KEY, valor MEDIUMTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
