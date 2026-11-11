@@ -164,7 +164,7 @@ final class BbBusca
     }
 
     /**
-     * Monta o WHERE. $f: q, de, ate, empresas[], contas[], tipo (E|S|''), vmin, vmax, tolv, told, internas, anuladas, origem, pendentes, parcial
+     * Monta o WHERE. $f: q, de, ate, empresas[], contas[], tipo (E|S|''), vmin, vmax, tolv, told, ocultar_internas, ocultar_anuladas, origem, pendentes, parcial
      * Devolve ['where'=>sql, 'args'=>[], 'ordem'=>sql, 'interp'=>…, 'ocultos'=>[where,args] (o mesmo filtro, só os escondidos)]
      */
     public static function montar(array $f): array
@@ -201,8 +201,8 @@ final class BbBusca
         if (in_array($f['origem'] ?? '', ['upload', 'drive', 'pdf', 'omie'], true)) { $w[] = 'ar.origem = ?'; $a[] = $f['origem']; }
         if (!empty($f['pendentes'])) $w[] = 'l.conferido = 0';
         $vis = [];
-        if (empty($f['internas'])) $vis[] = 'l.interna = 0';
-        if (empty($f['anuladas'])) $vis[] = 'l.anulada = 0';
+        if (!empty($f['ocultar_internas'])) $vis[] = 'l.interna = 0';   // padrão: mostra tudo (marcação é automática; só some se a pessoa pedir)
+        if (!empty($f['ocultar_anuladas'])) $vis[] = 'l.anulada = 0';
         $base = $w ? implode(' AND ', $w) : '1=1';
         return [
             'where' => $base . ($vis ? ' AND ' . implode(' AND ', $vis) : ''), 'args' => $a, 'ordem' => $ordem, 'ordem_args' => $ordemArgs ?? [], 'interp' => $i,

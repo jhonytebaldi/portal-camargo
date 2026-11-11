@@ -55,7 +55,7 @@ if ($a === 'nota') {
 }
 if ($a === 'desparear') {   // "não é transferência interna" / "não se anulam"
     $st = $pdo->prepare('SELECT par_id FROM bb_lanc WHERE id = ?'); $st->execute([$id]); $par = (int)$st->fetchColumn();
-    $pdo->prepare('UPDATE bb_lanc SET interna = 0, anulada = 0, par_id = NULL WHERE id IN (?, ?)')->execute([$id, $par ?: $id]);
+    $pdo->prepare('UPDATE bb_lanc SET interna = 0, anulada = 0, par_id = NULL, sem_par = 1 WHERE id IN (?, ?)')->execute([$id, $par ?: $id]);
     bb_json(['ok' => true]);
 }
 bb_json(['erro' => 'ação desconhecida'], 400);

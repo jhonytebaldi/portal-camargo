@@ -67,7 +67,8 @@ function bb_filtros(): array
         'contas' => array_values(array_filter(array_map('intval', (array)($g['conta'] ?? [])))),
         'tipo' => in_array($g['tipo'] ?? '', ['E', 'S'], true) ? $g['tipo'] : '',
         'vmin' => $num('vmin'), 'vmax' => $num('vmax'), 'tolv' => $num('tolv') === '' ? 0 : (float)$num('tolv'), 'told' => max(0, min(60, (int)($g['told'] ?? 0))),
-        'internas' => !empty($g['internas']), 'anuladas' => !empty($g['anuladas']), 'pendentes' => !empty($g['pendentes']), 'parcial' => !empty($g['parcial']),
+        'ocultar_internas' => !empty($g['oi']), 'ocultar_anuladas' => !empty($g['oa']),   // padrão: mostra tudo
+        'pendentes' => !empty($g['pendentes']), 'parcial' => !empty($g['parcial']),
         'origem' => (string)($g['origem'] ?? ''), 'agrupar' => !empty($g['agrupar']), 'per' => (string)($g['per'] ?? '')];
     // atalhos de período
     $hoje = date('Y-m-d');

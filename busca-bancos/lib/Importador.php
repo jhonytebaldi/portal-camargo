@@ -150,7 +150,7 @@ final class BbImportador
     /** tarifa + "desconto na taxa", pix + "estorno": mesmo dia, mesma conta, mesmo valor com sinal trocado */
     public static function marcarAnuladas(PDO $pdo, int $contaId, string $de, string $ate): int
     {
-        $st = $pdo->prepare("SELECT id, data, valor, busca FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ? AND par_id IS NULL ORDER BY data, id");
+        $st = $pdo->prepare("SELECT id, data, valor, busca FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ? AND par_id IS NULL AND sem_par = 0 ORDER BY data, id");
         $st->execute([$contaId, $de, $ate]);
         $rows = $st->fetchAll(); $usado = []; $n = 0;
         $upd = $pdo->prepare('UPDATE bb_lanc SET anulada = 1, par_id = ? WHERE id = ?');
@@ -168,34 +168,64 @@ final class BbImportador
         return $n;
     }
 
-    /** saída numa conta própria + entrada de mesmo valor em outra conta própria (até 3 dias), com indício de mesma titularidade */
+    /** CNPJs das três empresas: CPF/CNPJ diferente destes no lançamento = é de terceiro, nunca transferência interna */
+    public const DOCS_PROPRIOS = ['28987418000153', '41679475000133', '60575171000170'];
+    /** razões sociais completas: o Sicoob corta o nome ("IMOBILIARIA CAMA"), então um nome cortado que é começo de uma delas também vale */
+    public const NOMES_PROPRIOS = ['imobiliaria camargo', 'michael bruno da cruz camargo gestao administrativa', 'mz7 empreendimentos imobiliarios'];
+
+    /** 'proprio' (o lançamento mostra que o outro lado é uma conta das empresas), 'terceiro' (mostra que é outra pessoa/empresa) ou '' (não diz) */
+    public static function indicioProprio(array $r, array $proprios): string
+    {
+        $doc = (string)($r['doc'] ?? '');
+        if ($doc !== '') return in_array($doc, self::DOCS_PROPRIOS, true) ? 'proprio' : 'terceiro';
+        $b = ' ' . (string)$r['busca'] . ' ';
+        foreach ($proprios as $p) if ($p !== '' && str_contains($b, ' ' . $p)) return 'proprio';
+        $cp = BbTexto::norm((string)($r['contraparte'] ?? ''));
+        if (strlen($cp) >= 10) foreach (self::NOMES_PROPRIOS as $n) if (str_starts_with($n, $cp)) return 'proprio';
+        return $cp !== '' ? 'terceiro' : '';
+    }
+
+    /**
+     * Transferência entre contas próprias. Só marca quando é inequívoco:
+     *  - mesmo valor exato, saída numa conta e entrada em OUTRA conta, entrada de 1 dia antes até 3 dias depois;
+     *  - OS DOIS LADOS mostram que a outra ponta é uma das empresas (nome, CNPJ próprio ou "mesma titularidade");
+     *    lado com CPF/CNPJ ou nome de terceiro nunca entra;
+     *  - um único par possível na menor distância de dias (empate = não marca);
+     *  - lançamentos que alguém já marcou como "não é transferência interna" (sem_par = 1) ficam de fora.
+     * (Até 11/11/2026 bastava um dos lados ter o nome próprio: uma saída para a Vertical casava com a entrada de um
+     *  cliente do mesmo valor no mesmo dia — caso Olavo Beck Duart, Sicoob 07/07/2026.)
+     */
     public static function marcarInternas(PDO $pdo, string $de, string $ate): int
     {
         $proprios = array_values(array_filter(array_map([BbTexto::class, 'norm'], (array)self::config($pdo, 'proprios', self::PROPRIOS_PADRAO))));
-        if (!$proprios) return 0;
-        $ehProprio = function (string $busca) use ($proprios): bool { foreach ($proprios as $p) if ($p !== '' && str_contains($busca, $p)) return true; return false; };
         $ini = date('Y-m-d', strtotime($de . ' -4 days')); $fim = date('Y-m-d', strtotime($ate . ' +4 days'));
-        $st = $pdo->prepare("SELECT id, conta_id, data, valor, busca FROM bb_lanc WHERE data BETWEEN ? AND ? AND par_id IS NULL AND categoria <> 'tarifa' ORDER BY data, id");
+        $st = $pdo->prepare("SELECT id, conta_id, data, valor, busca, doc, contraparte FROM bb_lanc WHERE data BETWEEN ? AND ? AND par_id IS NULL AND sem_par = 0 AND categoria <> 'tarifa' ORDER BY data, id");
         $st->execute([$ini, $fim]);
         $porValor = [];
-        foreach ($st->fetchAll() as $r) $porValor[number_format(abs((float)$r['valor']), 2, '.', '')][] = $r;
+        foreach ($st->fetchAll() as $r) { $r['ind'] = self::indicioProprio($r, $proprios); if ($r['ind'] === 'proprio') $porValor[number_format(abs((float)$r['valor']), 2, '.', '')][] = $r; }
         $upd = $pdo->prepare('UPDATE bb_lanc SET interna = 1, par_id = ? WHERE id = ?'); $n = 0;
         foreach ($porValor as $grupo) {
             if (count($grupo) < 2) continue;
-            $usado = [];
+            // todos os pares possíveis, do mais próximo ao mais distante
+            $pares = [];
             foreach ($grupo as $d) {
-                if ((float)$d['valor'] >= 0 || isset($usado[$d['id']])) continue;
-                $melhor = null; $melhorDist = 99;
+                if ((float)$d['valor'] >= 0) continue;
                 foreach ($grupo as $c) {
-                    if ((float)$c['valor'] <= 0 || isset($usado[$c['id']]) || $c['conta_id'] === $d['conta_id']) continue;
-                    $dist = (strtotime($c['data']) - strtotime($d['data'])) / 86400;
+                    if ((float)$c['valor'] <= 0 || $c['conta_id'] === $d['conta_id']) continue;
+                    $dist = (int)round((strtotime($c['data']) - strtotime($d['data'])) / 86400);
                     if ($dist < -1 || $dist > 3) continue;
-                    if (!$ehProprio($d['busca']) && !$ehProprio($c['busca'])) continue;
-                    if (abs($dist) < $melhorDist) { $melhor = $c; $melhorDist = abs($dist); }
+                    $pares[] = [abs($dist), $d['id'], $c['id']];
                 }
-                if (!$melhor) continue;
-                $usado[$d['id']] = $usado[$melhor['id']] = 1;
-                $upd->execute([$melhor['id'], $d['id']]); $upd->execute([$d['id'], $melhor['id']]); $n++;
+            }
+            usort($pares, fn($x, $y) => $x[0] <=> $y[0] ?: $x[1] <=> $y[1]);
+            $usado = [];
+            foreach ($pares as [$dist, $di, $ci]) {
+                if (isset($usado[$di]) || isset($usado[$ci])) continue;
+                // ambiguidade: outro par livre, com a mesma distância, disputando a saída ou a entrada → não marca nenhum dos dois
+                $rivais = array_filter($pares, fn($p) => $p[0] === $dist && ($p[1] === $di) !== ($p[2] === $ci) && ($p[1] === $di || $p[2] === $ci) && !isset($usado[$p[1]]) && !isset($usado[$p[2]]));
+                if ($rivais) { $usado[$di] = $usado[$ci] = 1; foreach ($rivais as $p) $usado[$p[1]] = $usado[$p[2]] = 1; continue; }
+                $usado[$di] = $usado[$ci] = 1;
+                $upd->execute([$ci, $di]); $upd->execute([$di, $ci]); $n++;
             }
         }
         return $n;
@@ -204,7 +234,7 @@ final class BbImportador
     /** refaz as marcações de transferência interna (depois de mudar a lista de nomes próprios) */
     public static function refazerInternas(PDO $pdo): int
     {
-        $pdo->exec('UPDATE bb_lanc SET interna = 0, par_id = NULL WHERE interna = 1');
+        $pdo->exec('UPDATE bb_lanc SET interna = 0, par_id = NULL WHERE interna = 1');   // as anuladas (tarifa/estorno) não mudam
         $r = $pdo->query('SELECT MIN(data) a, MAX(data) b FROM bb_lanc')->fetch();
         return $r && $r['a'] ? self::marcarInternas($pdo, $r['a'], $r['b']) : 0;
     }

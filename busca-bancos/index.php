@@ -16,7 +16,7 @@ $filtrosAtivos = array_values(array_filter([
     $f['per'] !== 'tudo' ? 'período' : null, $f['tipo'] !== '' ? ($f['tipo'] === 'E' ? 'só entradas' : 'só saídas') : null,
     $f['empresas'] ? 'empresa' : null, $f['contas'] ? count($f['contas']) . ' conta(s)' : null,
     $f['tolv'] ? 'tolerância de valor' : null, $f['told'] ? 'tolerância de data' : null, ($f['vmin'] !== '' || $f['vmax'] !== '') ? 'faixa de valor' : null,
-    $f['origem'] !== '' ? 'origem' : null, $f['internas'] ? 'mostrando transferências internas' : null, $f['anuladas'] ? 'mostrando anuladas' : null,
+    $f['origem'] !== '' ? 'origem' : null, $f['ocultar_internas'] ? 'ocultando transferências internas' : null, $f['ocultar_anuladas'] ? 'ocultando estornos/tarifas anuladas' : null,
     $f['pendentes'] ? 'só não conferidos' : null, $f['parcial'] ? 'nome parecido' : null, $f['agrupar'] ? 'agrupado por pessoa' : null,
 ]));
 $temFiltro = $f['q'] !== '' || $filtrosAtivos;
@@ -102,7 +102,7 @@ bb_cabecalho('busca', $u);
       <?php endforeach; ?>
     </fieldset>
   </div>
-  <?php $avAberto = $f['tolv'] || $f['told'] || $f['vmin'] !== '' || $f['vmax'] !== '' || $f['internas'] || $f['anuladas'] || $f['pendentes'] || $f['origem'] !== '' || $f['agrupar'] || $f['parcial']; ?>
+  <?php $avAberto = $f['tolv'] || $f['told'] || $f['vmin'] !== '' || $f['vmax'] !== '' || $f['ocultar_internas'] || $f['ocultar_anuladas'] || $f['pendentes'] || $f['origem'] !== '' || $f['agrupar'] || $f['parcial']; ?>
   <details class="bb-avancado"<?= $avAberto ? ' open' : '' ?>>
     <summary>Mais opções</summary>
     <div class="bb-filtros">
@@ -110,8 +110,8 @@ bb_cabecalho('busca', $u);
       <label>Tolerância na data (± dias) <input type="number" name="told" min="0" max="60" value="<?= $f['told'] ?: '' ?>" placeholder="0" style="width:5em"></label>
       <label>Valor de <input type="text" inputmode="decimal" name="vmin" value="<?= $f['vmin'] !== '' ? h(number_format((float)$f['vmin'], 2, ',', '')) : '' ?>" size="8"> até <input type="text" inputmode="decimal" name="vmax" value="<?= $f['vmax'] !== '' ? h(number_format((float)$f['vmax'], 2, ',', '')) : '' ?>" size="8"></label>
       <label>Origem <select name="origem" data-auto><option value="">Qualquer</option><?php foreach (['upload' => 'Enviado na ferramenta', 'drive' => 'Pasta do Drive', 'pdf' => 'PDF da Caixa', 'omie' => 'Omie (API)'] as $k => $t): ?><option value="<?= $k ?>"<?= $f['origem'] === $k ? ' selected' : '' ?>><?= $t ?></option><?php endforeach; ?></select></label>
-      <label class="bb-chk"><input type="checkbox" name="internas" value="1"<?= $f['internas'] ? ' checked' : '' ?> data-auto> Mostrar transferências entre contas próprias</label>
-      <label class="bb-chk"><input type="checkbox" name="anuladas" value="1"<?= $f['anuladas'] ? ' checked' : '' ?> data-auto> Mostrar tarifas e estornos que se anulam</label>
+      <label class="bb-chk"><input type="checkbox" name="oi" value="1"<?= $f['ocultar_internas'] ? ' checked' : '' ?> data-auto> Ocultar transferências entre contas próprias <small>(marcação automática: confira antes de confiar)</small></label>
+      <label class="bb-chk"><input type="checkbox" name="oa" value="1"<?= $f['ocultar_anuladas'] ? ' checked' : '' ?> data-auto> Ocultar estornos e tarifas que se anulam</label>
       <label class="bb-chk"><input type="checkbox" name="pendentes" value="1"<?= $f['pendentes'] ? ' checked' : '' ?> data-auto> Só o que ainda não foi conferido</label>
       <label class="bb-chk"><input type="checkbox" name="parcial" value="1"<?= $f['parcial'] ? ' checked' : '' ?> data-auto> Aceitar nome parecido (parte das palavras)</label>
       <label class="bb-chk"><input type="checkbox" name="agrupar" value="1"<?= $f['agrupar'] ? ' checked' : '' ?> data-auto> Agrupar por pessoa / empresa</label>
@@ -136,7 +136,7 @@ bb_cabecalho('busca', $u);
 <?php if ($restrito && !$ignorar): $bs = []; foreach ($noFiltro as $cid => $c) if (isset($cap[$cid])) $bs[] = '<b>' . h($c['apelido']) . '</b> informa ' . implode(', ', array_filter([$cap[$cid]['nome'] >= 3 ? 'nome (' . $cap[$cid]['nome'] . '% dos lançamentos)' : null, $cap[$cid]['doc'] >= 3 ? 'CPF/CNPJ (' . $cap[$cid]['doc'] . '%)' : null, $cap[$cid]['ref'] >= 3 ? 'nº de cobrança/documento (' . $cap[$cid]['ref'] . '%)' : null, 'valor e data'])) . '; não informa ' . (implode(', ', array_filter([$cap[$cid]['nome'] < 3 ? 'nome' : null, $cap[$cid]['doc'] < 3 ? 'CPF/CNPJ' : null, 'chave Pix'])));
   if ($bs): ?><div class="bb-nota">Busca limitada a <?= count($noFiltro) ?> conta(s). <?= implode('. ', $bs) ?>. <a href="<?= h($qs(['conta' => null])) ?>">Buscar em todas</a> · <a href="<?= h($qs(['ig' => 1])) ?>">Ignorar</a></div><?php endif; endif; ?>
 <?php if ($parcialAuto): ?><div class="bb-nota">Nenhum lançamento tem <b>todas</b> as palavras. Mostrando os que têm <b>parte delas</b> (os bancos cortam e mascaram nomes), os mais parecidos primeiro.</div><?php endif; ?>
-<?php if ($ocultos): ?><div class="bb-nota"><?= $ocultos ?> lançamento(s) que batem com a busca estão ocultos (transferências entre contas próprias ou tarifas/estornos que se anulam). <a href="<?= h($qs(['internas' => 1, 'anuladas' => 1])) ?>">Mostrar</a></div><?php endif; ?>
+<?php if ($ocultos): ?><div class="bb-nota"><?= $ocultos ?> lançamento(s) que batem com a busca estão ocultos porque você marcou "ocultar" em Mais opções. <a href="<?= h($qs(['oi' => null, 'oa' => null])) ?>">Mostrar tudo</a></div><?php endif; ?>
 
 <?php /* ---------- totais ---------- */ ?>
 <div class="bb-totais">

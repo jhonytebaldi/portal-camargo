@@ -5,9 +5,9 @@
    Listas 3C) e também por admin/migrar.php.
    ===================================================================== */
 declare(strict_types=1);
-require_once __DIR__ . '/lib/Ofx.php';   // BbTexto (normalização usada na migração)
+require_once __DIR__ . '/lib/Importador.php';   // BbTexto e BbImportador (usados na migração)
 
-const BB_SCHEMA_VERSAO = 2;   // 2: bb_lanc.nota_busca (anotação entra na busca)
+const BB_SCHEMA_VERSAO = 3;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna (11/11/2026)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -90,6 +90,7 @@ function bb_migrar(PDO $pdo): array
             conferido_em DATETIME NULL,
             nota VARCHAR(500) NOT NULL DEFAULT '',
             nota_busca VARCHAR(600) NOT NULL DEFAULT '',  -- anotação normalizada (entra na busca)
+            sem_par TINYINT(1) NOT NULL DEFAULT 0,       -- alguém marcou que não é transferência interna nem par que se anula: nunca parear de novo
             UNIQUE KEY uq_bbl_fp (fp),
             KEY ix_bbl_conta_data (conta_id, data), KEY ix_bbl_data (data), KEY ix_bbl_valor (valor), KEY ix_bbl_doc (doc), KEY ix_bbl_arq (arquivo_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -131,6 +132,17 @@ function bb_migrar(PDO $pdo): array
             KEY ix_bbcl (conf_id, status), KEY ix_bbcl_g (conf_id, grupo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabelas bb_conf/bb_conf_linhas';
+    }
+    if ($tem('bb_lanc') && !$col('bb_lanc', 'sem_par')) {
+        $pdo->exec("ALTER TABLE bb_lanc ADD COLUMN sem_par TINYINT(1) NOT NULL DEFAULT 0 AFTER par_id");
+        $feitos[] = 'bb_lanc.sem_par';
+    }
+    // regra 2 de transferência interna (os dois lados precisam mostrar que são contas próprias): refaz as marcações uma vez
+    if ($tem('bb_lanc') && $tem('bb_config') && (int)BbImportador::config($pdo, 'internas_regra', 1) < 2) {
+        $antes = (int)$pdo->query('SELECT COUNT(*) FROM bb_lanc WHERE interna = 1')->fetchColumn();
+        $n = BbImportador::refazerInternas($pdo);
+        BbImportador::configSet($pdo, 'internas_regra', 2);
+        $feitos[] = "transferências internas refeitas com a regra nova ($antes lançamentos marcados antes, " . (2 * $n) . " agora)";
     }
     if (!(int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='busca-bancos'")->fetchColumn()) {
         $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem) VALUES ('busca-bancos','Busca Bancos','Busca unificada nos extratos de todas as contas (entradas e saídas)','🏦','/busca-bancos/',1,33)")->execute();
