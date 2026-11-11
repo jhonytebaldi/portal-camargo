@@ -46,7 +46,16 @@ csrf_check();
 if ($a === 'conferir') {
     $v = !empty($_POST['v']) ? 1 : 0;
     $pdo->prepare('UPDATE bb_lanc SET conferido = ?, conferido_por = ?, conferido_em = ? WHERE id = ?')->execute([$v, $v ? $u['id'] : null, $v ? date('Y-m-d H:i:s') : null, $id]);
-    bb_json(['ok' => true, 'conferido' => (bool)$v, 'por' => $u['nome']]);
+    bb_json(['ok' => true, 'conferido' => (bool)$v, 'por' => $u['nome'], 'em' => date('d/m/Y H:i')]);
+}
+if ($a === 'conferir_todos') {   // todos os resultados da busca (mesmos filtros da tela, reenviados no POST)
+    parse_str((string)($_POST['filtros'] ?? ''), $g);
+    $f = bb_filtros(is_array($g) ? $g : []);
+    $m = BbBusca::montar($f);
+    $total = BbBusca::contar($pdo, $m['where'], $m['args'])['n'];
+    if ((int)($_POST['esperado'] ?? -1) !== $total) bb_json(['erro' => 'A busca mudou desde que a página abriu (agora são ' . $total . ' lançamentos). Recarregue e tente de novo.'], 409);
+    $n = BbBusca::conferirTodos($pdo, $m, !empty($_POST['v']), (int)$u['id']);
+    bb_json(['ok' => true, 'mudaram' => $n, 'total' => $total]);
 }
 if ($a === 'nota') {
     $nota = mb_substr(trim((string)($_POST['nota'] ?? '')), 0, 500);

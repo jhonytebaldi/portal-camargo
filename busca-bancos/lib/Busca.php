@@ -214,17 +214,26 @@ final class BbBusca
 
     public static function contar(PDO $pdo, string $where, array $args): array
     {
-        $st = $pdo->prepare('SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN l.valor > 0 THEN l.valor END), 0) ent, COALESCE(SUM(CASE WHEN l.valor < 0 THEN l.valor END), 0) sai ' . self::FROM . ' WHERE ' . $where);
+        $st = $pdo->prepare('SELECT COUNT(*) n, COALESCE(SUM(l.conferido), 0) conf, COALESCE(SUM(CASE WHEN l.valor > 0 THEN l.valor END), 0) ent, COALESCE(SUM(CASE WHEN l.valor < 0 THEN l.valor END), 0) sai ' . self::FROM . ' WHERE ' . $where);
         $st->execute($args);
         $r = $st->fetch();
-        return ['n' => (int)$r['n'], 'ent' => (float)$r['ent'], 'sai' => (float)$r['sai']];
+        return ['n' => (int)$r['n'], 'conf' => (int)$r['conf'], 'ent' => (float)$r['ent'], 'sai' => (float)$r['sai']];
     }
 
     public static function linhas(PDO $pdo, array $m, int $limite, int $pular = 0): array
     {
-        $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem ' . self::FROM . ' WHERE ' . $m['where'] . ' ORDER BY ' . $m['ordem'] . ' LIMIT ' . (int)$limite . ' OFFSET ' . (int)$pular);
+        $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem, cu.nome AS conferido_nome ' . self::FROM . ' LEFT JOIN users cu ON cu.id = l.conferido_por WHERE ' . $m['where'] . ' ORDER BY ' . $m['ordem'] . ' LIMIT ' . (int)$limite . ' OFFSET ' . (int)$pular);
         $st->execute(array_merge($m['args'], $m['ordem_args']));
         return $st->fetchAll();
+    }
+
+    /** marca (ou desmarca) como conferidos TODOS os lançamentos da busca, não só a página aberta. Devolve quantos mudaram. */
+    public static function conferirTodos(PDO $pdo, array $m, bool $v, int $usuario): int
+    {
+        $st = $pdo->prepare('UPDATE bb_lanc l JOIN bb_contas c ON c.id = l.conta_id JOIN bb_arquivos ar ON ar.id = l.arquivo_id
+            SET l.conferido = ?, l.conferido_por = ?, l.conferido_em = ? WHERE l.conferido = ? AND (' . $m['where'] . ')');
+        $st->execute(array_merge([$v ? 1 : 0, $v ? $usuario : null, $v ? date('Y-m-d H:i:s') : null, $v ? 0 : 1], $m['args']));
+        return $st->rowCount();
     }
 
     /** agrupado por pessoa/empresa (CPF/CNPJ quando existe; senão o nome) */

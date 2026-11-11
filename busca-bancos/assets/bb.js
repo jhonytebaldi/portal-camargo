@@ -54,9 +54,29 @@
   document.querySelectorAll('.bb-lin').forEach(tr => {
     tr.addEventListener('click', e => { if (e.target.closest('input,a,button,textarea')) return; detalhe(tr); });
     tr.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === tr) { e.preventDefault(); detalhe(tr); } });
-    const c = tr.querySelector('.bb-conf');
-    if (c) c.addEventListener('change', () => post('conferir', {id: tr.dataset.id, v: c.checked ? 1 : ''}).catch(() => { c.checked = !c.checked; }));
+    const c = tr.querySelector('.bb-confpill');
+    if (c) c.addEventListener('click', () => {
+      const on = !c.classList.contains('on'); c.disabled = true;
+      post('conferir', {id: tr.dataset.id, v: on ? 1 : ''}).then(d => {
+        if (!d || !d.ok) throw new Error();
+        c.classList.toggle('on', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); c.textContent = on ? '✓ Conferido' : 'Conferir';
+        c.title = on ? 'Conferido por ' + d.por + ' em ' + d.em + '. Clique para desmarcar.' : 'Clique quando tiver checado este lançamento (bateu com a planilha, o Omie ou o comprovante).';
+      }).catch(() => alert('Não consegui salvar. Recarregue a página e tente de novo.')).finally(() => { c.disabled = false; });
+    });
   });
+
+  // marcar/desmarcar TODOS os resultados da busca
+  document.querySelectorAll('[data-conf-todos]').forEach(b => b.addEventListener('click', () => {
+    const box = b.closest('.bb-conf-acoes'), on = b.dataset.confTodos === '1', total = +box.dataset.total;
+    const msg = on ? 'Marcar como CONFERIDOS todos os ' + total.toLocaleString('pt-BR') + ' lançamentos desta busca (não só os da página)?'
+                   : 'DESMARCAR a conferência de todos os lançamentos desta busca que estão marcados?';
+    if (!confirm(msg + (total > 300 ? '\n\nAtenção: são muitos lançamentos. Confira os filtros antes.' : ''))) return;
+    b.disabled = true;
+    post('conferir_todos', {filtros: box.dataset.filtros, esperado: total, v: on ? 1 : ''}).then(d => {
+      if (d.erro) { alert(d.erro); b.disabled = false; return; }
+      location.reload();
+    }).catch(() => { alert('Não consegui salvar. Recarregue a página e tente de novo.'); b.disabled = false; });
+  }));
 
   // área de soltar arquivos
   document.querySelectorAll('.bb-solta').forEach(z => {

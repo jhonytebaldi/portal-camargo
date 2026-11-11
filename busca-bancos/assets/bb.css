@@ -133,3 +133,20 @@ main.wrap{max-width:1360px}
 .bb-limpar:hover{background:#b23a2a!important;color:#fff!important}
 .bb-ativos{margin:6px 2px 0;font-size:12.5px;color:#8a5a00;font-weight:600}
 .bb-nota-lin{display:inline-block;margin-top:3px;font-size:12.5px;color:#8a5a00;background:#fff6df;border-radius:4px;padding:1px 7px}
+
+/* conferência */
+.bb-confpill{font:inherit;font-size:12.5px;font-weight:700;white-space:nowrap;border-radius:20px;padding:4px 11px;cursor:pointer;border:1.5px dashed #b9bdd3;background:#fff;color:#5d6278}
+.bb-confpill:hover{border-style:solid;border-color:#12734a;color:#12734a}
+.bb-confpill.on{border:1.5px solid #12734a;background:#12734a;color:#fff}
+.bb-confpill.on:hover{background:#0e5c3b}
+.bb-confpill:disabled{opacity:.6;cursor:wait}
+p .bb-confpill{cursor:default;padding:1px 8px;font-size:11.5px}
+.bb-conf-box{display:flex;flex-direction:column;gap:3px;min-width:240px}
+.bb-conf-box b span{font-size:13px;font-weight:600;color:#5d6278}
+.bb-conf-barra{display:block;height:6px;border-radius:4px;background:#e6e8f1;overflow:hidden}
+.bb-conf-barra i{display:block;height:100%;background:#12734a}
+.bb-conf-acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.bb-conf-acoes .bb-btn{padding:4px 10px;font-size:12.5px}
+.bb-conf-acoes .bb-btn:not(.bb-desm){border-color:#12734a;color:#12734a!important}
+.bb-desm{color:#b23a2a!important}
+.bb-conf-ajuda{margin-top:0}

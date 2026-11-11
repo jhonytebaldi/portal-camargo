@@ -57,9 +57,10 @@ function bb_rodape(): void
 }
 
 /** lê os filtros da busca a partir do GET (usado pela tela e pela exportação) */
-function bb_filtros(): array
+/** filtros da busca: do GET (tela e exportação) ou de um array (ação "marcar todos os resultados", que reenvia a mesma busca) */
+function bb_filtros(?array $g = null): array
 {
-    $g = $_GET;
+    $g = $g ?? $_GET;
     $data = fn($k) => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($g[$k] ?? '')) ? (string)$g[$k] : '';
     $num = fn($k) => ($g[$k] ?? '') === '' ? '' : (string)(float)str_replace(',', '.', str_replace('.', '', (string)$g[$k]));
     $f = ['q' => trim((string)($g['q'] ?? '')), 'de' => $data('de'), 'ate' => $data('ate'),

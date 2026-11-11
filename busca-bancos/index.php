@@ -144,9 +144,17 @@ bb_cabecalho('busca', $u);
   <div class="ent"><small>Entradas</small><b><?= BbTexto::brl($tot['ent']) ?></b></div>
   <div class="sai"><small>Saídas</small><b><?= BbTexto::brl($tot['sai']) ?></b></div>
   <div><small>Saldo do resultado</small><b><?= BbTexto::brl($tot['ent'] + $tot['sai']) ?></b></div>
+  <?php if ($tot['n'] && !$f['agrupar']): $pct = (int)floor(100 * $tot['conf'] / $tot['n']); ?>
+  <div class="bb-conf-box"><small>Conferidos</small><b><?= number_format($tot['conf'], 0, ',', '.') ?> <span>de <?= number_format($tot['n'], 0, ',', '.') ?></span></b>
+    <span class="bb-conf-barra" aria-hidden="true"><i style="width:<?= $pct ?>%"></i></span>
+    <span class="bb-conf-acoes" data-filtros="<?= h(http_build_query(array_diff_key($_GET, ['p' => 1]))) ?>" data-total="<?= $tot['n'] ?>">
+      <?php if ($tot['conf'] < $tot['n']): ?><button type="button" class="bb-btn sec" data-conf-todos="1">✓ Marcar <?= $tot['n'] > 1 ? 'os ' . number_format($tot['n'], 0, ',', '.') : 'o' ?> como conferido<?= $tot['n'] > 1 ? 's' : '' ?></button><?php endif; ?>
+      <?php if ($tot['conf']): ?><button type="button" class="bb-btn sec bb-desm" data-conf-todos="0">Desmarcar <?= $tot['conf'] > 1 ? 'os ' . number_format($tot['conf'], 0, ',', '.') : 'o' ?></button><?php endif; ?></span></div>
+  <?php endif; ?>
   <span class="bb-totais-acoes"><?php if ($tot['n']): ?><a class="bb-btn sec" href="/busca-bancos/exportar.php<?= h($qs(['fmt' => 'xlsx'])) ?>">Baixar Excel</a> <a class="bb-btn sec" href="/busca-bancos/exportar.php<?= h($qs(['fmt' => 'csv'])) ?>">CSV</a><?php endif; ?></span>
 </div>
 
+<?php if ($tot['n'] && !$f['agrupar']): ?><p class="bb-nota bb-conf-ajuda"><b>Conferência:</b> marque <span class="bb-confpill on" aria-hidden="true">✓ Conferido</span> quando alguém já tiver checado o lançamento (bateu com a planilha, com o Omie ou com o comprovante). Fica registrado quem marcou e quando, e em <i>Mais opções → Só o que ainda não foi conferido</i> aparece só o que falta. "Marcar os … como conferidos" vale para <b>todos os resultados desta busca</b>, não só os da página.</p><?php endif; ?>
 <?php if (!$tot['n']): ?>
   <div class="bb-vazio"><h2>Nada encontrado</h2><p>Confira os avisos de cobertura acima: se o período não tem extrato, o lançamento pode existir e só não estar aqui. Você também pode aumentar a tolerância de valor/data em "Mais opções".</p></div>
 <?php elseif ($f['agrupar']): ?>
@@ -160,7 +168,7 @@ bb_cabecalho('busca', $u);
     <?php endforeach; ?></tbody></table></div>
 <?php else: ?>
   <div class="bb-tab-wrap"><table class="bb-tab bb-res">
-    <thead><tr><th>Data</th><th>Conta</th><th>Quem / descrição</th><th>CPF/CNPJ</th><th class="num">Valor</th><th title="Conferido">✓</th></tr></thead><tbody>
+    <thead><tr><th>Data</th><th>Conta</th><th>Quem / descrição</th><th>CPF/CNPJ</th><th class="num">Valor</th><th>Conferência</th></tr></thead><tbody>
     <?php foreach ($linhas as $l): $v = (float)$l['valor']; ?>
       <tr class="bb-lin<?= $l['anulada'] || $l['interna'] ? ' apagado' : '' ?>" data-id="<?= (int)$l['id'] ?>" tabindex="0" role="button" aria-expanded="false">
         <td class="mono"><?= BbTexto::dataBr($l['data']) ?></td>
@@ -170,7 +178,8 @@ bb_cabecalho('busca', $u);
           <?php if ($l['nota'] !== ''): ?><br><span class="bb-nota-lin">✎ <?= h($l['nota']) ?></span><?php endif; ?></td>
         <td class="mono"><?= h(BbTexto::docFmt($l['doc'])) ?></td>
         <td class="num <?= $v >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl($v) ?></td>
-        <td><input type="checkbox" class="bb-conf" aria-label="Conferido"<?= $l['conferido'] ? ' checked' : '' ?>></td>
+        <td><?php $quem = $l['conferido'] ? trim('Conferido' . ($l['conferido_nome'] ? ' por ' . $l['conferido_nome'] : '') . ($l['conferido_em'] ? ' em ' . date('d/m/Y H:i', strtotime($l['conferido_em'])) : '')) . '. Clique para desmarcar.' : 'Clique quando tiver checado este lançamento (bateu com a planilha, o Omie ou o comprovante).'; ?>
+          <button type="button" class="bb-confpill<?= $l['conferido'] ? ' on' : '' ?>" aria-pressed="<?= $l['conferido'] ? 'true' : 'false' ?>" title="<?= h($quem) ?>"><?= $l['conferido'] ? '✓ Conferido' : 'Conferir' ?></button></td>
       </tr>
     <?php endforeach; ?></tbody></table></div>
   <?php $paginas = (int)ceil($tot['n'] / $porPagina); if ($paginas > 1): ?>
