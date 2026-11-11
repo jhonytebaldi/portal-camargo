@@ -7,7 +7,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/lib/Importador.php';   // BbTexto e BbImportador (usados na migração)
 
-const BB_SCHEMA_VERSAO = 4;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4: cobertura limitada à data de geração do arquivo (11/11/2026)
+const BB_SCHEMA_VERSAO = 5;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4/5: cobertura limitada à data de geração do arquivo (11/11/2026)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -147,14 +147,24 @@ function bb_migrar(PDO $pdo): array
     // outubro baixado em 14/10 com DTEND 31/10): a cobertura passa a ir só até a véspera — uma vez
     if ($tem('bb_arquivos') && $tem('bb_config') && (int)BbImportador::config($pdo, 'corte_geracao', 0) < 1) {
         $pdo->exec("UPDATE bb_arquivos SET periodo_declarado_ate = periodo_ate WHERE periodo_declarado_ate IS NULL");
-        // pela data do saldo informado (o Sicoob põe a data em que o arquivo foi baixado), se não for anterior ao último lançamento
-        $n1 = $pdo->exec("UPDATE bb_arquivos a SET a.gerado_em = a.saldo_data, a.periodo_ate = LEAST(a.periodo_ate, DATE_SUB(a.saldo_data, INTERVAL 1 DAY))
-            WHERE a.formato = 'ofx' AND a.saldo_data IS NOT NULL AND a.saldo_data < a.periodo_declarado_ate
-              AND a.saldo_data >= COALESCE((SELECT MAX(l.data) FROM bb_lanc l WHERE l.arquivo_id = a.id), a.saldo_data)");
-        // e nunca além da véspera do dia em que o arquivo chegou aqui
+        // nunca além da véspera do dia em que o arquivo chegou aqui
         $n2 = $pdo->exec("UPDATE bb_arquivos SET periodo_ate = DATE_SUB(DATE(enviado_em), INTERVAL 1 DAY) WHERE periodo_ate >= DATE(enviado_em)");
-        BbImportador::configSet($pdo, 'corte_geracao', 1);
-        $feitos[] = "cobertura limitada à data de geração: $n1 arquivo(s) pela data do saldo, $n2 pela data de envio";
+        BbImportador::configSet($pdo, 'corte_geracao', 2);
+        $feitos[] = "cobertura limitada à data de envio: $n2 arquivo(s)";
+    }
+    if ($tem('bb_arquivos') && $tem('bb_config') && (int)BbImportador::config($pdo, 'corte_geracao', 0) < 2) {
+        // a versão 4 (11/11/2026, ~16h) usou a data do saldo como data de geração — errado: o Sicoob põe ali o dia do último
+        // lançamento. Desfaz, mantendo só o limite da data de envio.
+        $n1 = $pdo->exec("UPDATE bb_arquivos SET periodo_ate = LEAST(COALESCE(periodo_declarado_ate, periodo_ate), DATE_SUB(DATE(enviado_em), INTERVAL 1 DAY)), gerado_em = NULL
+            WHERE gerado_em IS NOT NULL AND gerado_em = saldo_data AND enviado_em < '2026-11-11 15:50:00'");
+        // arquivos da pasta do Drive exportados em 14/10/2026 (conferido no Drive: DTSERVER 14/10 nos OFX do Sicoob, modificação
+        // 14/10 no do Asaas) que declaram ir além disso — Sicoob outubro (Imobiliária, MZ7, Vertical) e Asaas outubro
+        $ids = ['159eA1McYlFIhAb8rW-nSuUjcs-vdZidk', '1HTq22y_UthCwYjjOi93zO5zdrYXTwUnK', '1MdWPZOl3vfpILo5Qk4wGMvorS8miGp5O', '1S9GwSGvj7-2ZJMCUC9vB3MYeVt_nDA1J'];
+        $st = $pdo->prepare("UPDATE bb_arquivos SET gerado_em = '2026-10-14', periodo_ate = LEAST(periodo_ate, '2026-10-13')
+            WHERE drive_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") AND COALESCE(periodo_declarado_ate, periodo_ate) >= '2026-10-14'");
+        $st->execute($ids);
+        BbImportador::configSet($pdo, 'corte_geracao', 2);
+        $feitos[] = "cobertura: desfeito o corte pela data do saldo em $n1 arquivo(s); " . $st->rowCount() . ' arquivo(s) de outubro exportados em 14/10 limitados a 13/10';
     }
     // regra 2 de transferência interna (os dois lados precisam mostrar que são contas próprias): refaz as marcações uma vez
     if ($tem('bb_lanc') && $tem('bb_config') && (int)BbImportador::config($pdo, 'internas_regra', 1) < 2) {

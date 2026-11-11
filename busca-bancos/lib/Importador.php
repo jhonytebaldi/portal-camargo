@@ -86,7 +86,12 @@ final class BbImportador
         $base = ['conta' => $conta, 'conta_nova' => $nova, 'de' => $ext['de'], 'ate' => $ext['ate'], 'total' => count($ext['lanc'])];
 
         $st = $pdo->prepare('SELECT id FROM bb_arquivos WHERE conta_id = ? AND sha1 = ?'); $st->execute([$cid, $sha1]);
-        if ($st->fetchColumn()) return $base + ['status' => 'repetido', 'novos' => 0, 'dup' => count($ext['lanc']), 'avisos' => ['Este mesmo arquivo já tinha sido importado — nada mudou.']];
+        if ($rid = (int)$st->fetchColumn()) {
+            // o mesmo arquivo de novo: aproveita para acertar a cobertura dele com a regra atual (data de geração)
+            $pdo->prepare('UPDATE bb_arquivos SET periodo_ate = LEAST(?, DATE_SUB(DATE(enviado_em), INTERVAL 1 DAY)), periodo_declarado_ate = ?, gerado_em = ? WHERE id = ?')
+                ->execute([$ext['ate'], $ext['ate_declarado'], $ext['gerado'] ?? null, $rid]);
+            return $base + ['status' => 'repetido', 'novos' => 0, 'dup' => count($ext['lanc']), 'avisos' => ['Este mesmo arquivo já tinha sido importado — nada mudou.']];
+        }
 
         $pdo->beginTransaction();
         try {
