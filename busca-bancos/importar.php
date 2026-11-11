@@ -68,7 +68,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         catch (Throwable $e) { $erros[] = h(($dm['caminho'] ?? '') !== '' ? $dm['caminho'] . '/' . $nome : $nome) . ': ' . h($e instanceof RuntimeException ? $e->getMessage() : 'não foi possível ler o arquivo'); if (!$e instanceof RuntimeException) error_log('busca-bancos upload: ' . $e->getMessage()); }
         if (!empty($ent['zip'])) @unlink($ent['tmp']);
     }
-    $resultados = BbCobertura::anotarSilencios($pdo, $resultados);
     }
     }
 }

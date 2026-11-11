@@ -39,7 +39,6 @@ $dePer = $f['de']; $atePer = $f['ate'];
 if ($m['interp']['datas']) { $dePer = min($m['interp']['datas']); $atePer = max($m['interp']['datas']); }
 $avisos = BbCobertura::avisos($pdo, $noFiltro, $dePer ?: null, $atePer ?: null);
 $int = BbCobertura::intervalos($pdo);
-$silencios = BbCobertura::silenciosNoPeriodo(BbCobertura::silencios($pdo, $int), $noFiltro, $dePer ?: null, $atePer ?: null);
 $cap = BbCobertura::capacidades($pdo);
 $semDoc = []; $semNome = [];
 foreach ($noFiltro as $cid => $c) {
@@ -125,12 +124,6 @@ bb_cabecalho('busca', $u);
   <div class="bb-alerta" role="status"><b>Atenção: faltam extratos<?= ($dePer || $atePer) ? ' no período escolhido' : '' ?>.</b> O que aconteceu nesses dias <b>não aparece</b> na busca. <a href="/busca-bancos/importar.php">Enviar extratos</a>
     <ul><?php foreach ($avisos as $av): $c = $av['conta']; ?>
       <li><?= bb_banco($c['banco']) ?> <b><?= h($c['apelido']) ?></b>: <?= $av['tudo'] ? 'nenhum extrato' . (($dePer || $atePer) ? ' neste período' : '') : 'sem extrato de ' . h($fmtFaltas($av['faltas'])) ?></li>
-    <?php endforeach; ?></ul></div>
-<?php endif; ?>
-<?php if ($silencios): ?>
-  <div class="bb-alerta" role="status"><b>Atenção: dias cobertos pelo extrato, mas sem nenhum lançamento<?= ($dePer || $atePer) ? ' no período escolhido' : '' ?>.</b> Fora do normal para a conta — o extrato pode ter vindo incompleto. <a href="/busca-bancos/cobertura.php">Ver cobertura</a>
-    <ul><?php foreach ($silencios as $t): $c = $t['conta']; ?>
-      <li><?= bb_banco($c['banco']) ?> <b><?= h($c['apelido']) ?></b>: nada de <?= BbTexto::dataBr($t['de']) ?> a <?= BbTexto::dataBr($t['ate']) ?> (<?= $t['uteis'] ?> dias úteis; costuma ter movimento em <?= (int)round(100 * $t['p']) ?>% deles). <?= h(BbCobertura::motivoSilencio($t)) ?></li>
     <?php endforeach; ?></ul></div>
 <?php endif; ?>
 <?php if (!$ignorar && $m['interp']['docs'] && $semDoc): ?>
