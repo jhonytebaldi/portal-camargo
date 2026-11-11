@@ -72,6 +72,17 @@ final class BbImportador
         $cid = (int)$conta['id'];
         // o Inter informa o saldo do dia em que o arquivo foi baixado, não o do fim do período: esse saldo não serve para conferir
         if ($ext['saldo'] !== null && $ext['saldo_data'] !== null && $ext['saldo_data'] > date('Y-m-d', strtotime($ext['ate'] . ' +1 day'))) { $ext['saldo'] = null; $ext['saldo_data'] = null; }
+        // nenhum arquivo cobre um dia que ainda não acabou quando ele chegou aqui (o banco pode ter declarado o mês inteiro)
+        $ext['ate_declarado'] = $ext['ate_declarado'] ?? $ext['ate'];
+        $ontem = date('Y-m-d', strtotime('-1 day'));
+        if ($ext['ate'] > $ontem) $ext['ate'] = $ontem;
+        $avisoCorte = null;
+        if ($ext['ate'] < $ext['ate_declarado']) {
+            $ini = max($ext['de'], date('Y-m-d', strtotime($ext['ate'] . ' +1 day')));
+            $avisoCorte = 'O arquivo diz cobrir até ' . BbTexto::dataBr($ext['ate_declarado']) . ', mas foi gerado antes disso'
+                . (!empty($ext['gerado']) ? ' (em ' . BbTexto::dataBr($ext['gerado']) . ')' : '') . ': de ' . BbTexto::dataBr($ini) . ' a '
+                . BbTexto::dataBr($ext['ate_declarado']) . ' NÃO está coberto por ele. Baixe de novo o extrato desse trecho depois que ele fechar.';
+        }
         $base = ['conta' => $conta, 'conta_nova' => $nova, 'de' => $ext['de'], 'ate' => $ext['ate'], 'total' => count($ext['lanc'])];
 
         $st = $pdo->prepare('SELECT id FROM bb_arquivos WHERE conta_id = ? AND sha1 = ?'); $st->execute([$cid, $sha1]);
@@ -79,13 +90,14 @@ final class BbImportador
 
         $pdo->beginTransaction();
         try {
-            $pdo->prepare('INSERT INTO bb_arquivos (conta_id, sha1, nome, origem, formato, drive_id, drive_caminho, periodo_de, periodo_ate, saldo_final, saldo_data, n_total, enviado_por, enviado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+            $pdo->prepare('INSERT INTO bb_arquivos (conta_id, sha1, nome, origem, formato, drive_id, drive_caminho, periodo_de, periodo_ate, periodo_declarado_ate, gerado_em, saldo_final, saldo_data, n_total, enviado_por, enviado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                 ->execute([$cid, $sha1, mb_substr((string)($meta['nome'] ?? ''), 0, 200), (string)($meta['origem'] ?? 'upload'), (string)($meta['formato'] ?? 'ofx'),
                     $meta['drive_id'] ?? null, isset($meta['drive_caminho']) ? mb_substr((string)$meta['drive_caminho'], 0, 300) : null,
-                    $ext['de'], $ext['ate'], $ext['saldo'], $ext['saldo_data'], count($ext['lanc']), $meta['usuario'] ?? null, date('Y-m-d H:i:s')]);
+                    $ext['de'], $ext['ate'], $ext['ate_declarado'], $ext['gerado'] ?? null, $ext['saldo'], $ext['saldo_data'], count($ext['lanc']), $meta['usuario'] ?? null, date('Y-m-d H:i:s')]);
             $aid = (int)$pdo->lastInsertId();
 
-            $st = $pdo->prepare('SELECT fp FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ?'); $st->execute([$cid, $ext['de'], $ext['ate']]);
+            $st = $pdo->prepare('SELECT fp FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ?'); $dts = array_column($ext['lanc'], 'data');   // o período coberto pode terminar antes do último lançamento (dia parcial)
+            $st->execute([$cid, min([$ext['de'], ...$dts]), max([$ext['ate'], ...$dts])]);
             $existe = array_flip($st->fetchAll(PDO::FETCH_COLUMN));
             $ins = $pdo->prepare('INSERT INTO bb_lanc (conta_id, arquivo_id, data, valor, tipo_ofx, categoria, fitid, checknum, refnum, memo, nome, doc, contraparte, busca, fp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
             $ordem = []; $novos = 0; $dup = 0;
@@ -113,7 +125,9 @@ final class BbImportador
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
 
-        if ($novos) { self::marcarAnuladas($pdo, $cid, $ext['de'], $ext['ate']); self::marcarInternas($pdo, $ext['de'], $ext['ate']); }
+        $fimL = max([$ext['ate'], ...array_column($ext['lanc'], 'data')]);
+        if ($novos) { self::marcarAnuladas($pdo, $cid, $ext['de'], $fimL); self::marcarInternas($pdo, $ext['de'], $fimL); }
+        if ($avisoCorte) $avisos[] = $avisoCorte;
         if (!$ext['lanc']) $avisos[] = 'O extrato veio sem nenhum lançamento no período (o período conta como coberto).';
         return $base + ['status' => 'ok', 'novos' => $novos, 'dup' => $dup, 'avisos' => $avisos, 'arquivo_id' => $aid];
     }

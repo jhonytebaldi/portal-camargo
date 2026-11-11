@@ -195,7 +195,8 @@ bb_cabecalho('importar', $u);
     <?php foreach ($hist as $a): ?>
       <tr><td class="mono"><?= h(date('d/m/Y H:i', strtotime($a['enviado_em']))) ?></td><td><?= bb_banco($a['banco']) ?> <?= h($a['apelido']) ?></td>
         <td><?= h(($a['drive_caminho'] ? $a['drive_caminho'] . '/' : '') . $a['nome']) ?><?php if ($a['drive_id']): ?> <a href="https://drive.google.com/file/d/<?= h(rawurlencode($a['drive_id'])) ?>/view" target="_blank" rel="noopener">abrir</a><?php endif; ?></td>
-        <td class="mono"><?= BbTexto::dataBr($a['periodo_de']) ?> a <?= BbTexto::dataBr($a['periodo_ate']) ?></td><td class="num"><?= (int)$a['n_novos'] ?></td><td class="num"><?= (int)$a['n_dup'] ?></td>
+        <td class="mono"><?php if ($a['periodo_ate'] < $a['periodo_de']): ?>nada fechado ainda<?php else: ?><?= BbTexto::dataBr($a['periodo_de']) ?> a <?= BbTexto::dataBr($a['periodo_ate']) ?><?php endif; ?>
+          <?php if (!empty($a['periodo_declarado_ate']) && $a['periodo_declarado_ate'] > $a['periodo_ate']): ?><br><span class="bb-incompleto" title="O banco escreveu no arquivo que ele ia até <?= BbTexto::dataBr($a['periodo_declarado_ate']) ?>, mas ele foi gerado<?= $a['gerado_em'] ? ' em ' . BbTexto::dataBr($a['gerado_em']) : ' antes disso' ?>. Os dias depois disso não estão nele.">⚠ incompleto: dizia até <?= BbTexto::dataBr($a['periodo_declarado_ate']) ?></span><?php endif; ?></td><td class="num"><?= (int)$a['n_novos'] ?></td><td class="num"><?= (int)$a['n_dup'] ?></td>
         <td><?= ['upload' => 'enviado por ' . h($a['por'] ?? '—'), 'drive' => 'Drive', 'pdf' => 'PDF da Caixa', 'omie' => 'Omie (API)'][$a['origem']] ?? h($a['origem']) ?></td></tr>
     <?php endforeach; ?></tbody></table></div><?php endif; ?>
 </section>

@@ -7,7 +7,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/lib/Importador.php';   // BbTexto e BbImportador (usados na migração)
 
-const BB_SCHEMA_VERSAO = 3;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna (11/11/2026)
+const BB_SCHEMA_VERSAO = 4;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4: cobertura limitada à data de geração do arquivo (11/11/2026)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -52,7 +52,9 @@ function bb_migrar(PDO $pdo): array
             drive_id VARCHAR(80) NULL,
             drive_caminho VARCHAR(300) NULL,
             periodo_de DATE NOT NULL,
-            periodo_ate DATE NOT NULL,
+            periodo_ate DATE NOT NULL,                   -- até onde o arquivo cobre DE VERDADE (véspera da geração, se ele foi gerado antes do fim)
+            periodo_declarado_ate DATE NULL,             -- o fim que o banco escreveu no arquivo (DTEND)
+            gerado_em DATE NULL,                         -- data de geração informada pelo banco (DTSERVER)
             saldo_final DECIMAL(14,2) NULL,
             saldo_data DATE NULL,
             n_total INT UNSIGNED NOT NULL DEFAULT 0,
@@ -136,6 +138,23 @@ function bb_migrar(PDO $pdo): array
     if ($tem('bb_lanc') && !$col('bb_lanc', 'sem_par')) {
         $pdo->exec("ALTER TABLE bb_lanc ADD COLUMN sem_par TINYINT(1) NOT NULL DEFAULT 0 AFTER par_id");
         $feitos[] = 'bb_lanc.sem_par';
+    }
+    if ($tem('bb_arquivos') && !$col('bb_arquivos', 'periodo_declarado_ate')) {
+        $pdo->exec("ALTER TABLE bb_arquivos ADD COLUMN periodo_declarado_ate DATE NULL AFTER periodo_ate, ADD COLUMN gerado_em DATE NULL AFTER periodo_declarado_ate");
+        $feitos[] = 'bb_arquivos.periodo_declarado_ate/gerado_em';
+    }
+    // arquivos já importados que diziam cobrir dias que ainda não tinham acabado quando foram gerados (ex.: extrato de
+    // outubro baixado em 14/10 com DTEND 31/10): a cobertura passa a ir só até a véspera — uma vez
+    if ($tem('bb_arquivos') && $tem('bb_config') && (int)BbImportador::config($pdo, 'corte_geracao', 0) < 1) {
+        $pdo->exec("UPDATE bb_arquivos SET periodo_declarado_ate = periodo_ate WHERE periodo_declarado_ate IS NULL");
+        // pela data do saldo informado (o Sicoob põe a data em que o arquivo foi baixado), se não for anterior ao último lançamento
+        $n1 = $pdo->exec("UPDATE bb_arquivos a SET a.gerado_em = a.saldo_data, a.periodo_ate = LEAST(a.periodo_ate, DATE_SUB(a.saldo_data, INTERVAL 1 DAY))
+            WHERE a.formato = 'ofx' AND a.saldo_data IS NOT NULL AND a.saldo_data < a.periodo_declarado_ate
+              AND a.saldo_data >= COALESCE((SELECT MAX(l.data) FROM bb_lanc l WHERE l.arquivo_id = a.id), a.saldo_data)");
+        // e nunca além da véspera do dia em que o arquivo chegou aqui
+        $n2 = $pdo->exec("UPDATE bb_arquivos SET periodo_ate = DATE_SUB(DATE(enviado_em), INTERVAL 1 DAY) WHERE periodo_ate >= DATE(enviado_em)");
+        BbImportador::configSet($pdo, 'corte_geracao', 1);
+        $feitos[] = "cobertura limitada à data de geração: $n1 arquivo(s) pela data do saldo, $n2 pela data de envio";
     }
     // regra 2 de transferência interna (os dois lados precisam mostrar que são contas próprias): refaz as marcações uma vez
     if ($tem('bb_lanc') && $tem('bb_config') && (int)BbImportador::config($pdo, 'internas_regra', 1) < 2) {

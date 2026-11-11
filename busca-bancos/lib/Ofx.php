@@ -142,8 +142,18 @@ final class BbOfx
                 $s = self::tag($lb[1], 'BALAMT');
                 if ($s !== '') { $saldo = round((float)str_replace(',', '.', $s), 2); $saldoData = self::data(self::tag($lb[1], 'DTASOF')); }
             }
+            // Arquivo gerado ANTES do fim do período que ele declara (ex.: extrato de outubro baixado em 14/10, com DTEND 31/10):
+            // o banco escreve o mês inteiro no cabeçalho, mas só tem o que já tinha caído. A cobertura vale até a véspera da
+            // geração — o próprio dia da geração fica parcial. Data de geração = DTSERVER; sem ele, a data do saldo (LEDGERBAL).
+            // Só confia nessas datas se não forem anteriores ao último lançamento do arquivo.
+            $maxL = $datas ? max($datas) : null; $gerado = null;
+            $dtServer = self::data(self::tag($bruto, 'DTSERVER'));
+            if ($dtServer !== null && $dtServer <= $ate && ($maxL === null || $dtServer >= $maxL)) $gerado = $dtServer;
+            elseif ($saldoData !== null && $saldoData < $ate && ($maxL === null || $saldoData >= $maxL)) $gerado = $saldoData;
+            $ateDecl = $ate;
+            if ($gerado !== null) $ate = date('Y-m-d', strtotime($gerado . ' -1 day'));
             $out[] = ['bank_id' => $bankId, 'org' => $org, 'agencia' => self::tag($b, 'BRANCHID'), 'conta' => $conta, 'banco' => self::bancoDe($bankId, $org),
-                      'de' => $de, 'ate' => $ate, 'saldo' => $saldo, 'saldo_data' => $saldoData, 'lanc' => $lanc];
+                      'de' => $de, 'ate' => $ate, 'ate_declarado' => $ateDecl, 'gerado' => $dtServer, 'saldo' => $saldo, 'saldo_data' => $saldoData, 'lanc' => $lanc];
         }
         return $out;
     }

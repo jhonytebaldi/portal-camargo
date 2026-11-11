@@ -20,6 +20,7 @@ final class BbCobertura
     {
         $out = [];
         foreach ($pdo->query('SELECT conta_id, periodo_de, periodo_ate FROM bb_arquivos ORDER BY conta_id, periodo_de, periodo_ate') as $a) {
+            if ($a['periodo_ate'] < $a['periodo_de']) continue;   // gerado no 1º dia do período: não cobre nada ainda
             $cid = (int)$a['conta_id']; $n = count($out[$cid] ?? []);
             if ($n && $a['periodo_de'] <= date('Y-m-d', strtotime($out[$cid][$n - 1][1] . ' +1 day'))) $out[$cid][$n - 1][1] = max($out[$cid][$n - 1][1], $a['periodo_ate']);
             else $out[$cid][] = [$a['periodo_de'], $a['periodo_ate']];
@@ -45,7 +46,7 @@ final class BbCobertura
     /** avisos de falta de dados para o período pedido: [['conta'=>…, 'faltas'=>[[de,ate]], 'tudo'=>bool]] */
     public static function avisos(PDO $pdo, array $contas, ?string $de, ?string $ate): array
     {
-        $int = self::intervalos($pdo); $out = []; $hoje = date('Y-m-d');
+        $int = self::intervalos($pdo); $out = []; $hoje = date('Y-m-d', strtotime('-1 day'));   // hoje ainda não fechou em nenhum banco
         foreach ($contas as $cid => $c) {
             $i = $int[$cid] ?? [];
             if (!$i) { $out[] = ['conta' => $c, 'faltas' => [], 'tudo' => true]; continue; }
@@ -62,7 +63,7 @@ final class BbCobertura
     {
         $int = self::intervalos($pdo);
         if (!$int) return ['meses' => [], 'linhas' => []];
-        $min = min(array_map(fn($i) => $i[0][0], $int)); $hoje = date('Y-m-d');
+        $min = min(array_map(fn($i) => $i[0][0], $int)); $hoje = date('Y-m-d', strtotime('-1 day'));
         $meses = []; for ($m = substr($min, 0, 7); $m <= substr($hoje, 0, 7); $m = date('Y-m', strtotime($m . '-01 +1 month'))) $meses[] = $m;
         $n = [];
         foreach ($pdo->query("SELECT conta_id, DATE_FORMAT(data, '%Y-%m') m, COUNT(*) n FROM bb_lanc GROUP BY conta_id, m") as $r) $n[(int)$r['conta_id']][$r['m']] = (int)$r['n'];
