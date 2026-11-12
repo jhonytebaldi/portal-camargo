@@ -32,6 +32,7 @@ if (!$tot['n'] && !$f['parcial'] && count($m['interp']['palavras']) > 1) {
 $ocultos = $m['ocultos'] ? BbBusca::contar($pdo, $m['ocultos'][0], $m['ocultos'][1])['n'] : 0;
 $linhas = $f['agrupar'] ? [] : BbBusca::linhas($pdo, $m, $porPagina, ($pag - 1) * $porPagina);
 $grupos = $f['agrupar'] ? BbBusca::agrupar($pdo, $m) : [];
+$parecidos = !$f['agrupar'] && !$f['parcial'] ? BbBusca::parecidos($pdo, $f, $m, $tot['n'], $parcialAuto) : [];
 
 // contas dentro do filtro (para os avisos de cobertura e do que cada banco informa)
 $noFiltro = array_filter($contas, fn($c) => (!$f['contas'] || in_array((int)$c['id'], $f['contas'], true)) && (!$f['empresas'] || in_array($c['empresa'], $f['empresas'], true)));
@@ -155,6 +156,20 @@ bb_cabecalho('busca', $u);
 </div>
 
 <?php if ($tot['n'] && !$f['agrupar']): ?><p class="bb-nota bb-conf-ajuda"><b>Conferência:</b> marque <span class="bb-confpill on" aria-hidden="true">✓ Conferido</span> quando alguém já tiver checado o lançamento (bateu com a planilha, com o Omie ou com o comprovante). Fica registrado quem marcou e quando, e em <i>Mais opções → Só o que ainda não foi conferido</i> aparece só o que falta. "Marcar os … como conferidos" vale para <b>todos os resultados desta busca</b>, não só os da página.</p><?php endif; ?>
+<?php $linhaRes = function (array $l) { $v = (float)$l['valor']; ?>
+      <tr class="bb-lin<?= $l['anulada'] || $l['interna'] ? ' apagado' : '' ?>" data-id="<?= (int)$l['id'] ?>" tabindex="0" role="button" aria-expanded="false">
+        <td class="mono"><?= BbTexto::dataBr($l['data']) ?></td>
+        <td><?= bb_banco($l['banco']) ?> <span class="bb-conta"><?= h($l['apelido']) ?></span></td>
+        <td><?php if ($l['contraparte'] !== ''): ?><b><?= h($l['contraparte']) ?></b> <?php endif; ?><span class="bb-memo"><?= h($l['memo']) ?></span>
+          <?php if ($l['interna']): ?><span class="bb-tag">transferência interna</span><?php endif; ?><?php if ($l['anulada']): ?><span class="bb-tag">anulada</span><?php endif; ?><?php if ($l['origem'] === 'pdf'): ?><span class="bb-tag">PDF</span><?php endif; ?>
+          <?php if (!empty($l['motivo'])): ?><br><span class="bb-motivo">≈ <?= h($l['motivo']) ?></span><?php endif; ?>
+          <?php if ($l['nota'] !== ''): ?><br><span class="bb-nota-lin">✎ <?= h($l['nota']) ?></span><?php endif; ?></td>
+        <td class="mono"><?= h(BbTexto::docFmt($l['doc'])) ?></td>
+        <td class="num <?= $v >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl($v) ?></td>
+        <td><?php $quem = $l['conferido'] ? trim('Conferido' . ($l['conferido_nome'] ? ' por ' . $l['conferido_nome'] : '') . ($l['conferido_em'] ? ' em ' . date('d/m/Y H:i', strtotime($l['conferido_em'])) : '')) . '. Clique para desmarcar.' : 'Clique quando tiver checado este lançamento (bateu com a planilha, o Omie ou o comprovante).'; ?>
+          <button type="button" class="bb-confpill<?= $l['conferido'] ? ' on' : '' ?>" aria-pressed="<?= $l['conferido'] ? 'true' : 'false' ?>" title="<?= h($quem) ?>"><?= $l['conferido'] ? '✓ Conferido' : 'Conferir' ?></button></td>
+      </tr>
+<?php }; ?>
 <?php if (!$tot['n']): ?>
   <div class="bb-vazio"><h2>Nada encontrado</h2><p>Confira os avisos de cobertura acima: se o período não tem extrato, o lançamento pode existir e só não estar aqui. Você também pode aumentar a tolerância de valor/data em "Mais opções".</p></div>
 <?php elseif ($f['agrupar']): ?>
@@ -169,24 +184,21 @@ bb_cabecalho('busca', $u);
 <?php else: ?>
   <div class="bb-tab-wrap"><table class="bb-tab bb-res">
     <thead><tr><th>Data</th><th>Conta</th><th>Quem / descrição</th><th>CPF/CNPJ</th><th class="num">Valor</th><th>Conferência</th></tr></thead><tbody>
-    <?php foreach ($linhas as $l): $v = (float)$l['valor']; ?>
-      <tr class="bb-lin<?= $l['anulada'] || $l['interna'] ? ' apagado' : '' ?>" data-id="<?= (int)$l['id'] ?>" tabindex="0" role="button" aria-expanded="false">
-        <td class="mono"><?= BbTexto::dataBr($l['data']) ?></td>
-        <td><?= bb_banco($l['banco']) ?> <span class="bb-conta"><?= h($l['apelido']) ?></span></td>
-        <td><?php if ($l['contraparte'] !== ''): ?><b><?= h($l['contraparte']) ?></b> <?php endif; ?><span class="bb-memo"><?= h($l['memo']) ?></span>
-          <?php if ($l['interna']): ?><span class="bb-tag">transferência interna</span><?php endif; ?><?php if ($l['anulada']): ?><span class="bb-tag">anulada</span><?php endif; ?><?php if ($l['origem'] === 'pdf'): ?><span class="bb-tag">PDF</span><?php endif; ?>
-          <?php if ($l['nota'] !== ''): ?><br><span class="bb-nota-lin">✎ <?= h($l['nota']) ?></span><?php endif; ?></td>
-        <td class="mono"><?= h(BbTexto::docFmt($l['doc'])) ?></td>
-        <td class="num <?= $v >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl($v) ?></td>
-        <td><?php $quem = $l['conferido'] ? trim('Conferido' . ($l['conferido_nome'] ? ' por ' . $l['conferido_nome'] : '') . ($l['conferido_em'] ? ' em ' . date('d/m/Y H:i', strtotime($l['conferido_em'])) : '')) . '. Clique para desmarcar.' : 'Clique quando tiver checado este lançamento (bateu com a planilha, o Omie ou o comprovante).'; ?>
-          <button type="button" class="bb-confpill<?= $l['conferido'] ? ' on' : '' ?>" aria-pressed="<?= $l['conferido'] ? 'true' : 'false' ?>" title="<?= h($quem) ?>"><?= $l['conferido'] ? '✓ Conferido' : 'Conferir' ?></button></td>
-      </tr>
-    <?php endforeach; ?></tbody></table></div>
+    <?php foreach ($linhas as $l) $linhaRes($l); ?>
+    </tbody></table></div>
   <?php $paginas = (int)ceil($tot['n'] / $porPagina); if ($paginas > 1): ?>
     <nav class="bb-pag">Página <?= $pag ?> de <?= $paginas ?>
       <?php if ($pag > 1): ?><a class="bb-btn sec" href="<?= h($qs() . '&p=' . ($pag - 1)) ?>">← Anterior</a><?php endif; ?>
       <?php if ($pag < $paginas): ?><a class="bb-btn sec" href="<?= h($qs() . '&p=' . ($pag + 1)) ?>">Próxima →</a><?php endif; ?></nav>
   <?php endif; ?>
+<?php endif; ?>
+<?php if ($parecidos): ?>
+  <details class="bb-parecidos" open>
+    <summary><b>Pode ser a mesma pessoa (<?= count($parecidos) ?><?= count($parecidos) >= 200 ? '+' : '' ?>)</b> — não entram nos totais acima nem no "Marcar como conferidos". Nome que é parte do nome completo de quem foi encontrado (outro banco manda o nome mais curto ou cortado) ou mesmo CPF/CNPJ. Confira um a um.</summary>
+    <div class="bb-tab-wrap"><table class="bb-tab bb-res">
+      <thead><tr><th>Data</th><th>Conta</th><th>Quem / descrição</th><th>CPF/CNPJ</th><th class="num">Valor</th><th>Conferência</th></tr></thead><tbody>
+      <?php foreach ($parecidos as $l) $linhaRes($l); ?></tbody></table></div>
+  </details>
 <?php endif; ?>
 <?php
 bb_rodape();

@@ -179,7 +179,7 @@ final class BbBusca
         foreach ($i['docs'] as $d) { $w[] = '(l.doc = ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = $d; $a[] = '%' . $d . '%'; }
         foreach ($i['datas'] as $d) { $w[] = 'l.data BETWEEN ? AND ?'; $a[] = date('Y-m-d', strtotime("$d -$told days")); $a[] = date('Y-m-d', strtotime("$d +$told days")); }
         $ordem = 'l.data DESC, l.id DESC';
-        if ($i['palavras']) {
+        if ($i['palavras'] && empty($f['sem_palavras'])) {
             $conds = array_fill(0, count($i['palavras']), self::TEXTO . ' LIKE ?'); $likes = array_map(fn($p) => '%' . $p . '%', $i['palavras']);
             if (empty($f['parcial']) || count($conds) === 1) { $w[] = '(' . implode(' AND ', $conds) . ')'; $a = array_merge($a, $likes); }
             else {
@@ -226,6 +226,73 @@ final class BbBusca
         $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem, cu.nome AS conferido_nome ' . self::FROM . ' LEFT JOIN users cu ON cu.id = l.conferido_por WHERE ' . $m['where'] . ' ORDER BY ' . $m['ordem'] . ' LIMIT ' . (int)$limite . ' OFFSET ' . (int)$pular);
         $st->execute(array_merge($m['args'], $m['ordem_args']));
         return $st->fetchAll();
+    }
+
+    /**
+     * "Pode ser a mesma pessoa": lançamentos que NÃO estão no resultado, mas cujo nome é parte do nome completo de quem está
+     * (ex.: busca "matheus felipe" acha MATHEUS FELIPE DOS REIS FERREIRA; outro banco mandou só MATHEUS FERREIRA), ou têm o mesmo
+     * CPF/CNPJ. O nome digitado também vale como nome completo, para pegar nome cortado pelo banco (Sicoob: MILENA JAKOPITSC).
+     * Regra do nome: mesmo primeiro nome; as demais palavras aparecem no nome completo na mesma ordem (inicial "F" vale por
+     * "Felipe"; a última pode estar cortada); pelo menos 2 palavras de verdade em comum. Devolve linhas + 'motivo'.
+     */
+    public static function parecidos(PDO $pdo, array $f, array $m, int $n, bool $soDigitado = false, int $limite = 200): array
+    {
+        $pal = $m['interp']['palavras'];
+        if (!$pal || $n > 500) return [];
+        $tk = fn(string $s) => array_values(array_filter(explode(' ', BbTexto::norm($s)), fn($w) => $w !== '' && !in_array($w, self::VAZIAS, true) && !ctype_digit($w)));
+        $refs = []; $docs = []; $ja = [];
+        $st = $pdo->prepare('SELECT l.id, l.contraparte, l.doc ' . self::FROM . ' WHERE ' . $m['where']); $st->execute($m['args']);
+        foreach ($st as $r) {
+            $ja[(int)$r['id']] = 1;
+            if ($soDigitado) continue;
+            if ($r['doc'] !== '') $docs[$r['doc']] = $r['contraparte'];
+            $t = $tk($r['contraparte']);
+            if (count($t) >= 2 && count(array_intersect($pal, $t)) === count($pal)) $refs[implode(' ', $t)] = [$t, $r['contraparte']];
+        }
+        $dig = array_values(array_filter($pal, fn($w) => strlen($w) > 1));
+        if (count($dig) >= 2) $refs[implode(' ', $dig)] ??= [$dig, implode(' ', $dig)];
+        if (!$refs && !$docs) return [];
+        $m2 = self::montar(['sem_palavras' => 1] + $f);
+        $or = []; $a = [];
+        foreach (array_unique(array_map(fn($x) => $x[0][0], $refs)) as $p1) { $or[] = self::TEXTO . ' LIKE ?'; $a[] = '%' . $p1 . '%'; }
+        if ($docs) { $or[] = 'l.doc IN (' . implode(',', array_fill(0, count($docs), '?')) . ')'; $a = array_merge($a, array_map('strval', array_keys($docs))); }
+        $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem, cu.nome AS conferido_nome ' . self::FROM . ' LEFT JOIN users cu ON cu.id = l.conferido_por WHERE '
+            . $m2['where'] . ' AND (' . implode(' OR ', $or) . ') ORDER BY l.data DESC, l.id DESC LIMIT 5000');
+        $st->execute(array_merge($m2['args'], $a));
+        $out = [];
+        foreach ($st as $r) {
+            if (isset($ja[(int)$r['id']])) continue;
+            $motivo = null;
+            if ($r['doc'] !== '' && isset($docs[$r['doc']])) $motivo = 'mesmo CPF/CNPJ de ' . $docs[$r['doc']];
+            else {
+                $t = $tk($r['contraparte'] !== '' ? $r['contraparte'] : $r['nome']);
+                if (count($t) >= 2) foreach ($refs as [$ref, $rotulo]) if (self::parteDoNome($t, $ref)) { $motivo = 'o nome pode ser parte de ' . mb_strtoupper($rotulo); break; }
+            }
+            if ($motivo === null) continue;
+            $out[] = $r + ['motivo' => $motivo];
+            if (count($out) >= $limite) break;
+        }
+        return $out;
+    }
+
+    /** as palavras de $t são o começo e um pedaço, na ordem, do nome completo $ref */
+    public static function parteDoNome(array $t, array $ref): bool
+    {
+        if ($t[0] !== $ref[0]) return false;
+        $j = 1; $boas = 1; $ult = count($t) - 1;
+        for ($i = 1; $i <= $ult; $i++) {
+            $w = $t[$i]; $achou = false;
+            for (; $j < count($ref); $j++) {
+                $r = $ref[$j];
+                if ($w === $r) { $boas++; $achou = true; }
+                elseif ($i === $ult && strlen($w) >= 3 && str_starts_with($r, $w)) { $boas++; $achou = true; }   // cortado pelo banco
+                elseif (strlen($w) === 1 && $r[0] === $w) $achou = true;                                          // inicial
+                elseif ($i === $ult && str_starts_with($r, $w)) $achou = true;                                     // corte bem no começo
+                if ($achou) { $j++; break; }
+            }
+            if (!$achou) return false;
+        }
+        return $boas >= 2;
     }
 
     /** marca (ou desmarca) como conferidos TODOS os lançamentos da busca, não só a página aberta. Devolve quantos mudaram. */

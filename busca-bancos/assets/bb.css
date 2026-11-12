@@ -152,3 +152,6 @@ p .bb-confpill{cursor:default;padding:1px 8px;font-size:11.5px}
 .bb-conf-ajuda{margin-top:0}
 
 .bb-incompleto{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:999px;background:#fdecea;color:#a3271b;font-size:.78em;font-weight:600;white-space:nowrap}
+.bb-parecidos{margin-top:14px;border:1px solid #ecd28a;border-left:5px solid #d9a300;border-radius:8px;background:#fffaeb;padding:8px 10px}
+.bb-parecidos summary{cursor:pointer;font-size:14px;line-height:1.4}.bb-parecidos .bb-tab-wrap{margin-top:8px}.bb-parecidos .bb-lin{background:#fff6d6}
+.bb-motivo{display:inline-block;margin-top:2px;font-size:.82em;color:#6b4700;background:#ffe08a;border-radius:999px;padding:1px 8px}
