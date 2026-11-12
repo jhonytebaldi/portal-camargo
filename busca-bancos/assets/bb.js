@@ -46,11 +46,45 @@
         (d.pessoa.n > 1 ? '<a class="bb-btn sec" href="/busca-bancos/?q=' + encodeURIComponent(d.pessoa.busca) + '">Ver os ' + d.pessoa.n + ' lançamentos desta pessoa</a>' : '') +
         (d.conferido ? '<small>Conferido' + (d.conferido_por ? ' por ' + esc(d.conferido_por) : '') + (d.conferido_em ? ' em ' + esc(d.conferido_em) : '') + '</small>' : '') + '</div></div></div>';
       const bn = det.querySelector('[data-nota]');
-      bn.addEventListener('click', () => post('nota', {id: d.id, nota: det.querySelector('textarea').value}).then(() => { bn.textContent = 'Anotação salva'; setTimeout(() => bn.textContent = 'Salvar anotação', 1800); }));
+      bn.addEventListener('click', () => salvarNota(det, bn, d.id));
       const bd = det.querySelector('[data-despar]');
       if (bd) bd.addEventListener('click', () => post('desparear', {id: d.id}).then(() => location.reload()));
     }).catch(() => { det.firstChild.textContent = 'Não foi possível carregar os detalhes. Tente de novo.'; });
   }
+  // anotação: se a busca aberta tem outros lançamentos com exatamente o mesmo nome, pergunta se repete neles
+  const filtrosDaTela = () => { const q = new URLSearchParams(location.search); q.delete('p'); return q.toString(); };
+  function mostrarNota(ids, nota) {
+    ids.forEach(i => document.querySelectorAll('.bb-lin[data-id="' + i + '"]').forEach(tr => {
+      const td = tr.children[2]; let s = td.querySelector('.bb-nota-lin');
+      if (!nota) { if (s) { const br = s.previousElementSibling; if (br && br.tagName === 'BR') br.remove(); s.remove(); } return; }
+      if (!s) { td.appendChild(document.createElement('br')); s = document.createElement('span'); s.className = 'bb-nota-lin'; td.appendChild(s); }
+      s.textContent = '✎ ' + nota;
+    }));
+  }
+  function salvarNota(det, bn, id) {
+    const nota = det.querySelector('textarea').value, acoes = bn.parentNode, filtros = filtrosDaTela();
+    const gravar = todos => post('nota', {id: id, nota: nota, filtros: filtros, todos: todos ? 1 : ''}).then(r => {
+      if (!r || !r.ok) throw new Error();
+      mostrarNota(r.ids, r.nota);
+      const p = acoes.querySelector('.bb-nota-pergunta'); if (p) p.remove();
+      bn.style.display = ''; bn.textContent = r.ids.length > 1 ? 'Anotação salva em ' + r.ids.length + ' lançamentos' : 'Anotação salva';
+      setTimeout(() => bn.textContent = 'Salvar anotação', 2500);
+    }).catch(() => { bn.style.display = ''; alert('Não consegui salvar. Recarregue a página e tente de novo.'); });
+    bn.disabled = true;
+    post('nota_iguais', {id: id, filtros: filtros}).then(r => {
+      bn.disabled = false;
+      if (!r || !r.ok || !r.n) return gravar(false);
+      bn.style.display = 'none';
+      const p = document.createElement('div'); p.className = 'bb-nota-pergunta';
+      p.innerHTML = '<p>Há mais <b>' + r.n + '</b> lançamento' + (r.n > 1 ? 's' : '') + ' nesta busca com o nome exato <b>' + esc(r.nome) + '</b>. Repetir a mesma anotação ' + (r.n > 1 ? 'neles' : 'nele') + '?' +
+        (r.com_nota ? ' <small>(' + r.com_nota + (r.com_nota > 1 ? ' deles já têm outra anotação, que será substituída' : ' deles já tem outra anotação, que será substituída') + ')</small>' : '') + '</p>' +
+        '<button type="button" class="bb-btn" data-todos>Sim, em todos os ' + (r.n + 1) + '</button> <button type="button" class="bb-btn sec" data-so>Só neste</button>';
+      acoes.prepend(p);
+      p.querySelector('[data-todos]').addEventListener('click', () => gravar(true));
+      p.querySelector('[data-so]').addEventListener('click', () => gravar(false));
+    }).catch(() => { bn.disabled = false; gravar(false); });
+  }
+
   document.querySelectorAll('.bb-lin').forEach(tr => {
     tr.addEventListener('click', e => { if (e.target.closest('input,a,button,textarea')) return; detalhe(tr); });
     tr.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === tr) { e.preventDefault(); detalhe(tr); } });

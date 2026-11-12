@@ -127,7 +127,7 @@ final class BbBusca
      */
     public static function interpretar(string $q, ?int $anoPadrao = null): array
     {
-        $r = ['valores' => [], 'cheios' => [], 'docs' => [], 'datas' => [], 'refs' => [], 'palavras' => [], 'sinal' => 0];   // cheios = índices de valores digitados sem centavos
+        $r = ['valores' => [], 'cheios' => [], 'soltos' => [], 'docs' => [], 'datas' => [], 'refs' => [], 'palavras' => [], 'sinal' => 0];   // cheios = índices de valores digitados sem centavos
         $q = trim(preg_replace('/r\$\s*/iu', 'R$', $q) ?? '');
         // CPF/CNPJ digitado com pontuação
         $q = preg_replace_callback('/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}/', fn($m) => preg_replace('/\D+/', '', $m[0]), $q) ?? $q;
@@ -142,7 +142,11 @@ final class BbBusca
                 $int = str_replace('.', '', $m[4]); $temMoeda = ($m[2] ?? '') !== '' || isset($m[5]) || str_contains($m[4], '.');
                 $v = (float)($int . '.' . str_pad($m[5] ?? '0', 2, '0'));
                 if (($m[1] ?? '') === '-' || ($m[3] ?? '') === '-') $r['sinal'] = -1; elseif (($m[1] ?? '') === '+') $r['sinal'] = 1;
-                if ($temMoeda || strlen($int) <= 4) { if (!isset($m[5])) $r['cheios'][] = count($r['valores']); $r['valores'][] = $v; continue; }
+                if ($temMoeda || strlen($int) <= 4) {
+                    if (!isset($m[5])) $r['cheios'][] = count($r['valores']);
+                    if (!$temMoeda && ($m[1] ?? '') === '' && ($m[3] ?? '') === '') $r['soltos'][] = count($r['valores']);   // "101" pode ser valor ou nº escrito (apto 101)
+                    $r['valores'][] = $v; continue;
+                }
                 if (strlen($int) <= 10) { $r['refs'][] = $int; continue; }
             }
             if (preg_match('/^\d+\.\d{1,2}$/', $t)) { $r['valores'][] = (float)$t; continue; }
@@ -156,7 +160,8 @@ final class BbBusca
     public static function explicar(array $i): array
     {
         $p = [];
-        foreach ($i['valores'] as $k => $v) $p[] = in_array($k, $i['cheios'] ?? [], true) ? 'valor de ' . BbTexto::brl($v) . ' a ' . BbTexto::brl($v + 0.99) : 'valor ' . BbTexto::brl($v);
+        foreach ($i['valores'] as $k => $v) $p[] = (in_array($k, $i['cheios'] ?? [], true) ? 'valor de ' . BbTexto::brl($v) . ' a ' . BbTexto::brl($v + 0.99) : 'valor ' . BbTexto::brl($v))
+            . (in_array($k, $i['soltos'] ?? [], true) ? ' (ou "' . (int)$v . '" escrito na descrição ou na anotação)' : '');
         foreach ($i['docs'] as $d) $p[] = (strlen($d) === 11 ? 'CPF ' : 'CNPJ ') . BbTexto::docFmt($d);
         foreach ($i['datas'] as $d) $p[] = 'data ' . BbTexto::dataBr($d);
         foreach ($i['refs'] as $d) $p[] = strlen($d) <= 7 ? 'valor de ' . BbTexto::brl((float)$d) . ' a ' . BbTexto::brl((float)$d + 0.99) . ' (ou nº ' . $d . ')' : 'nº ' . $d . ' (ou valor ' . BbTexto::brl((float)$d) . ')';
@@ -174,7 +179,12 @@ final class BbBusca
         $w = []; $a = [];
         $tolv = max(0.0, (float)($f['tolv'] ?? 0)); $told = max(0, (int)($f['told'] ?? 0));
         // valor digitado sem centavos (2394, R$ 2.394) vale para qualquer centavo: 2394,00 até 2394,99
-        foreach ($i['valores'] as $k => $v) { $cheio = in_array($k, $i['cheios'] ?? [], true); $w[] = 'ABS(l.valor) BETWEEN ? AND ?'; $a[] = $v - $tolv - 0.004; $a[] = $v + ($cheio ? 0.99 : 0) + $tolv + 0.004; }
+        foreach ($i['valores'] as $k => $v) {
+            $cheio = in_array($k, $i['cheios'] ?? [], true); $solto = in_array($k, $i['soltos'] ?? [], true);
+            $w[] = $solto ? "(ABS(l.valor) BETWEEN ? AND ? OR CONCAT(' ', " . self::TEXTO . ", ' ') LIKE ?)" : 'ABS(l.valor) BETWEEN ? AND ?';
+            $a[] = $v - $tolv - 0.004; $a[] = $v + ($cheio ? 0.99 : 0) + $tolv + 0.004;
+            if ($solto) $a[] = '% ' . (int)$v . ' %';
+        }
         foreach ($i['refs'] as $d) { $w[] = '(ABS(l.valor) BETWEEN ? AND ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = (float)$d - $tolv - 0.004; $a[] = (float)$d + 0.99 + $tolv + 0.004; $a[] = '%' . $d . '%'; }
         foreach ($i['docs'] as $d) { $w[] = '(l.doc = ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = $d; $a[] = '%' . $d . '%'; }
         foreach ($i['datas'] as $d) { $w[] = 'l.data BETWEEN ? AND ?'; $a[] = date('Y-m-d', strtotime("$d -$told days")); $a[] = date('Y-m-d', strtotime("$d +$told days")); }

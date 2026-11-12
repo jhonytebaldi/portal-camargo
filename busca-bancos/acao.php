@@ -57,10 +57,30 @@ if ($a === 'conferir_todos') {   // todos os resultados da busca (mesmos filtros
     $n = BbBusca::conferirTodos($pdo, $m, !empty($_POST['v']), (int)$u['id']);
     bb_json(['ok' => true, 'mudaram' => $n, 'total' => $total]);
 }
+/* outros lançamentos DA BUSCA ABERTA com exatamente o mesmo nome (sem diferença de maiúsculas/acentos) que o lançamento $id */
+$iguais = function (int $id) use ($pdo): array {
+    $st = $pdo->prepare('SELECT contraparte FROM bb_lanc WHERE id = ?'); $st->execute([$id]);
+    $rotulo = (string)$st->fetchColumn(); $nome = BbTexto::norm($rotulo);
+    if ($nome === '') return ['nome' => '', 'ids' => [], 'com_nota' => 0];
+    parse_str((string)($_POST['filtros'] ?? ''), $g);
+    $m = BbBusca::montar(bb_filtros(is_array($g) ? $g : []));
+    $st = $pdo->prepare('SELECT l.id, l.contraparte, l.nota ' . BbBusca::FROM . ' WHERE (' . $m['where'] . ') AND l.id <> ? AND l.contraparte <> \'\' LIMIT 20000');
+    $st->execute(array_merge($m['args'], [$id]));
+    $ids = []; $comNota = 0;
+    foreach ($st as $r) if (BbTexto::norm($r['contraparte']) === $nome) { $ids[] = (int)$r['id']; if (trim($r['nota']) !== '') $comNota++; }
+    return ['nome' => $rotulo, 'ids' => $ids, 'com_nota' => $comNota];
+};
+if ($a === 'nota_iguais') {
+    $x = $iguais($id);
+    bb_json(['ok' => true, 'n' => count($x['ids']), 'nome' => $x['nome'], 'com_nota' => $x['com_nota']]);
+}
 if ($a === 'nota') {
     $nota = mb_substr(trim((string)($_POST['nota'] ?? '')), 0, 500);
-    $pdo->prepare('UPDATE bb_lanc SET nota = ?, nota_busca = ? WHERE id = ?')->execute([$nota, BbTexto::norm($nota), $id]);
-    bb_json(['ok' => true]);
+    $ids = [$id];
+    if (!empty($_POST['todos'])) $ids = array_merge($ids, $iguais($id)['ids']);
+    $up = $pdo->prepare('UPDATE bb_lanc SET nota = ?, nota_busca = ? WHERE id = ?');
+    foreach ($ids as $i) $up->execute([$nota, BbTexto::norm($nota), $i]);
+    bb_json(['ok' => true, 'ids' => $ids, 'nota' => $nota]);
 }
 if ($a === 'desparear') {   // "não é transferência interna" / "não se anulam"
     $st = $pdo->prepare('SELECT par_id FROM bb_lanc WHERE id = ?'); $st->execute([$id]); $par = (int)$st->fetchColumn();

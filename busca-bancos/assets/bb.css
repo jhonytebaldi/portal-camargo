@@ -155,3 +155,4 @@ p .bb-confpill{cursor:default;padding:1px 8px;font-size:11.5px}
 .bb-parecidos{margin-top:14px;border:1px solid #ecd28a;border-left:5px solid #d9a300;border-radius:8px;background:#fffaeb;padding:8px 10px}
 .bb-parecidos summary{cursor:pointer;font-size:14px;line-height:1.4}.bb-parecidos .bb-tab-wrap{margin-top:8px}.bb-parecidos .bb-lin{background:#fff6d6}
 .bb-motivo{display:inline-block;margin-top:2px;font-size:.82em;color:#6b4700;background:#ffe08a;border-radius:999px;padding:1px 8px}
+.bb-nota-pergunta{flex-basis:100%;background:#fff6df;border:1px solid #ecd28a;border-radius:8px;padding:8px 10px}.bb-nota-pergunta p{margin:0 0 8px;font-size:14px}
