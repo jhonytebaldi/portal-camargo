@@ -229,13 +229,15 @@ final class BbBusca
     }
 
     /**
-     * "Pode ser a mesma pessoa": lançamentos que NÃO estão no resultado, mas cujo nome é parte do nome completo de quem está
-     * (ex.: busca "matheus felipe" acha MATHEUS FELIPE DOS REIS FERREIRA; outro banco mandou só MATHEUS FERREIRA), ou têm o mesmo
-     * CPF/CNPJ. O nome digitado também vale como nome completo, para pegar nome cortado pelo banco (Sicoob: MILENA JAKOPITSC).
-     * Regra do nome: mesmo primeiro nome; as demais palavras aparecem no nome completo na mesma ordem (inicial "F" vale por
-     * "Felipe"; a última pode estar cortada); pelo menos 2 palavras de verdade em comum. Devolve linhas + 'motivo'.
+     * "Pode ser a mesma pessoa": lançamentos que NÃO estão no resultado, mas cujo nome parece ser o da mesma pessoa:
+     *  - é parte do nome completo de quem a busca achou (MATHEUS FERREIRA ⊂ MATHEUS FELIPE DOS REIS FERREIRA), ou do nome
+     *    digitado (pega nome cortado pelo banco: MILENA JAKOPITSC);
+     *  - grafia diferente conta como o mesmo nome (Mateus/Matheus, Luis/Luiz, Sousa/Souza, Felipe/Filipe — ver mesmoNome);
+     *  - ou tem o mesmo CPF/CNPJ de quem a busca achou.
+     * Regra do nome: mesmo primeiro nome; as demais palavras aparecem no nome completo na mesma ordem (inicial vale; a última
+     * pode estar cortada); pelo menos 2 nomes de verdade em comum. Devolve as linhas + 'motivo'.
      */
-    public static function parecidos(PDO $pdo, array $f, array $m, int $n, bool $soDigitado = false, int $limite = 200): array
+    public static function parecidos(PDO $pdo, array $f, array $m, int $n, int $limite = 200): array
     {
         $pal = $m['interp']['palavras'];
         if (!$pal || $n > 500) return [];
@@ -244,55 +246,77 @@ final class BbBusca
         $st = $pdo->prepare('SELECT l.id, l.contraparte, l.doc ' . self::FROM . ' WHERE ' . $m['where']); $st->execute($m['args']);
         foreach ($st as $r) {
             $ja[(int)$r['id']] = 1;
-            if ($soDigitado) continue;
             if ($r['doc'] !== '') $docs[$r['doc']] = $r['contraparte'];
             $t = $tk($r['contraparte']);
-            if (count($t) >= 2 && count(array_intersect($pal, $t)) === count($pal)) $refs[implode(' ', $t)] = [$t, $r['contraparte']];
+            if (count($t) >= 2 && count(array_intersect($pal, $t)) === count($pal)) $refs[implode(' ', $t)] = [$t, $r['contraparte'], false];
         }
-        $dig = array_values(array_filter($pal, fn($w) => strlen($w) > 1));
-        if (count($dig) >= 2) $refs[implode(' ', $dig)] ??= [$dig, implode(' ', $dig)];
+        $dig = array_values(array_filter($pal, fn($w) => strlen($w) > 1 && !ctype_digit($w)));
+        if (count($dig) >= 2) $refs[implode(' ', $dig)] ??= [$dig, implode(' ', $dig), true];   // digitado: vale também ao contrário (o digitado é parte do nome do banco)
         if (!$refs && !$docs) return [];
+        // mesmos filtros da busca (período, contas, tipo…), sem as palavras; o nome é comparado aqui em PHP
         $m2 = self::montar(['sem_palavras' => 1] + $f);
-        $or = []; $a = [];
-        foreach (array_unique(array_map(fn($x) => $x[0][0], $refs)) as $p1) { $or[] = self::TEXTO . ' LIKE ?'; $a[] = '%' . $p1 . '%'; }
-        if ($docs) { $or[] = 'l.doc IN (' . implode(',', array_fill(0, count($docs), '?')) . ')'; $a = array_merge($a, array_map('strval', array_keys($docs))); }
-        $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem, cu.nome AS conferido_nome ' . self::FROM . ' LEFT JOIN users cu ON cu.id = l.conferido_por WHERE '
-            . $m2['where'] . ' AND (' . implode(' OR ', $or) . ') ORDER BY l.data DESC, l.id DESC LIMIT 5000');
-        $st->execute(array_merge($m2['args'], $a));
-        $out = [];
+        $st = $pdo->prepare('SELECT l.id, l.contraparte, l.nome, l.doc ' . self::FROM . ' WHERE ' . $m2['where'] . ' ORDER BY l.data DESC, l.id DESC LIMIT 50000');
+        $st->execute($m2['args']);
+        $achou = [];
         foreach ($st as $r) {
-            if (isset($ja[(int)$r['id']])) continue;
-            $motivo = null;
-            if ($r['doc'] !== '' && isset($docs[$r['doc']])) $motivo = 'mesmo CPF/CNPJ de ' . $docs[$r['doc']];
+            $id = (int)$r['id'];
+            if (isset($ja[$id])) continue;
+            if ($r['doc'] !== '' && isset($docs[$r['doc']])) { $achou[$id] = 'mesmo CPF/CNPJ de ' . $docs[$r['doc']]; }
             else {
                 $t = $tk($r['contraparte'] !== '' ? $r['contraparte'] : $r['nome']);
-                if (count($t) >= 2) foreach ($refs as [$ref, $rotulo]) if (self::parteDoNome($t, $ref)) { $motivo = 'o nome pode ser parte de ' . mb_strtoupper($rotulo); break; }
+                if (count($t) < 2) continue;
+                foreach ($refs as [$ref, $rotulo, $digitado]) {
+                    if ($como = self::parteDoNome($t, $ref)) { $achou[$id] = ($como === 'grafia' ? 'nome com grafia parecida com ' : 'o nome pode ser parte de ') . mb_strtoupper($rotulo); break; }
+                    if ($digitado && ($como = self::parteDoNome($ref, $t))) { $achou[$id] = $como === 'grafia' ? 'nome com grafia parecida com o digitado' : 'o nome digitado pode ser parte deste'; break; }
+                }
             }
-            if ($motivo === null) continue;
-            $out[] = $r + ['motivo' => $motivo];
-            if (count($out) >= $limite) break;
+            if (count($achou) >= $limite) break;
         }
-        return $out;
+        if (!$achou) return [];
+        $st = $pdo->prepare('SELECT l.*, c.banco, c.apelido, c.empresa, ar.origem, cu.nome AS conferido_nome ' . self::FROM . ' LEFT JOIN users cu ON cu.id = l.conferido_por WHERE l.id IN ('
+            . implode(',', array_map('intval', array_keys($achou))) . ') ORDER BY l.data DESC, l.id DESC');
+        $st->execute();
+        return array_map(fn($r) => $r + ['motivo' => $achou[(int)$r['id']]], $st->fetchAll());
     }
 
-    /** as palavras de $t são o começo e um pedaço, na ordem, do nome completo $ref */
-    public static function parteDoNome(array $t, array $ref): bool
+    /** forma "simplificada" de um nome para comparar grafias: th→t, ph→f, ct→t, y→i, z→s, k→c, w→v, h mudo fora de ch/lh/nh, letras dobradas */
+    public static function chave(string $w): string
     {
-        if ($t[0] !== $ref[0]) return false;
-        $j = 1; $boas = 1; $ult = count($t) - 1;
+        $w = strtr($w, ['ph' => 'f', 'th' => 't', 'ck' => 'c', 'ct' => 't', 'y' => 'i', 'z' => 's', 'k' => 'c', 'w' => 'v']);
+        $w = preg_replace('/(?<![cln])h/', '', $w) ?? $w;
+        return preg_replace('/(.)\1+/', '$1', $w) ?? $w;
+    }
+    /** 0 = diferente, 1 = igual, 2 = mesma pessoa com grafia diferente */
+    public static function mesmoNome(string $a, string $b): int
+    {
+        if ($a === $b) return 1;
+        $ca = self::chave($a); $cb = self::chave($b);
+        if ($ca === $cb) return 2;
+        // Felipe/Filipe: uma letra trocada no meio, em nome de 5+ letras (nunca a primeira nem a última: Paulo/Paula, Mariano/Mariana são outros)
+        $n = strlen($ca);
+        if ($n >= 5 && $n === strlen($cb) && $ca[0] === $cb[0] && $ca[$n - 1] === $cb[$n - 1] && levenshtein($ca, $cb) === 1) return 2;
+        return 0;
+    }
+
+    /** as palavras de $t são o começo e um pedaço, na ordem, do nome completo $ref. Devolve false, 'igual' ou 'grafia' */
+    public static function parteDoNome(array $t, array $ref)
+    {
+        $g = self::mesmoNome($t[0], $ref[0]);
+        if (!$g) return false;
+        $grafia = $g === 2; $j = 1; $boas = 1; $ult = count($t) - 1;
         for ($i = 1; $i <= $ult; $i++) {
             $w = $t[$i]; $achou = false;
             for (; $j < count($ref); $j++) {
                 $r = $ref[$j];
-                if ($w === $r) { $boas++; $achou = true; }
-                elseif ($i === $ult && strlen($w) >= 3 && str_starts_with($r, $w)) { $boas++; $achou = true; }   // cortado pelo banco
+                if ($x = self::mesmoNome($w, $r)) { $boas++; $achou = true; if ($x === 2) $grafia = true; }
+                elseif ($i === $ult && strlen($w) >= 3 && (str_starts_with($r, $w) || str_starts_with(self::chave($r), self::chave($w)))) { $boas++; $achou = true; }   // cortado pelo banco
                 elseif (strlen($w) === 1 && $r[0] === $w) $achou = true;                                          // inicial
                 elseif ($i === $ult && str_starts_with($r, $w)) $achou = true;                                     // corte bem no começo
                 if ($achou) { $j++; break; }
             }
             if (!$achou) return false;
         }
-        return $boas >= 2;
+        return $boas >= 2 ? ($grafia ? 'grafia' : 'igual') : false;
     }
 
     /** marca (ou desmarca) como conferidos TODOS os lançamentos da busca, não só a página aberta. Devolve quantos mudaram. */

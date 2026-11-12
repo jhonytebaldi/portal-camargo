@@ -24,15 +24,11 @@ $qs = function (array $troca = []) { $g = array_merge($_GET, $troca); unset($g['
 
 $m = BbBusca::montar($f);
 $tot = BbBusca::contar($pdo, $m['where'], $m['args']);
-$parcialAuto = false;
-if (!$tot['n'] && !$f['parcial'] && count($m['interp']['palavras']) > 1) {
-    $m2 = BbBusca::montar(['parcial' => 1] + $f); $t2 = BbBusca::contar($pdo, $m2['where'], $m2['args']);
-    if ($t2['n']) { $m = $m2; $tot = $t2; $parcialAuto = true; }
-}
+
 $ocultos = $m['ocultos'] ? BbBusca::contar($pdo, $m['ocultos'][0], $m['ocultos'][1])['n'] : 0;
 $linhas = $f['agrupar'] ? [] : BbBusca::linhas($pdo, $m, $porPagina, ($pag - 1) * $porPagina);
 $grupos = $f['agrupar'] ? BbBusca::agrupar($pdo, $m) : [];
-$parecidos = !$f['agrupar'] && !$f['parcial'] ? BbBusca::parecidos($pdo, $f, $m, $tot['n'], $parcialAuto) : [];
+$parecidos = !$f['agrupar'] && !$f['parcial'] ? BbBusca::parecidos($pdo, $f, $m, $tot['n']) : [];
 
 // contas dentro do filtro (para os avisos de cobertura e do que cada banco informa)
 $noFiltro = array_filter($contas, fn($c) => (!$f['contas'] || in_array((int)$c['id'], $f['contas'], true)) && (!$f['empresas'] || in_array($c['empresa'], $f['empresas'], true)));
@@ -136,7 +132,7 @@ bb_cabecalho('busca', $u);
 <?php endif; ?>
 <?php if ($restrito && !$ignorar): $bs = []; foreach ($noFiltro as $cid => $c) if (isset($cap[$cid])) $bs[] = '<b>' . h($c['apelido']) . '</b> informa ' . implode(', ', array_filter([$cap[$cid]['nome'] >= 3 ? 'nome (' . $cap[$cid]['nome'] . '% dos lançamentos)' : null, $cap[$cid]['doc'] >= 3 ? 'CPF/CNPJ (' . $cap[$cid]['doc'] . '%)' : null, $cap[$cid]['ref'] >= 3 ? 'nº de cobrança/documento (' . $cap[$cid]['ref'] . '%)' : null, 'valor e data'])) . '; não informa ' . (implode(', ', array_filter([$cap[$cid]['nome'] < 3 ? 'nome' : null, $cap[$cid]['doc'] < 3 ? 'CPF/CNPJ' : null, 'chave Pix'])));
   if ($bs): ?><div class="bb-nota">Busca limitada a <?= count($noFiltro) ?> conta(s). <?= implode('. ', $bs) ?>. <a href="<?= h($qs(['conta' => null])) ?>">Buscar em todas</a> · <a href="<?= h($qs(['ig' => 1])) ?>">Ignorar</a></div><?php endif; endif; ?>
-<?php if ($parcialAuto): ?><div class="bb-nota">Nenhum lançamento tem <b>todas</b> as palavras. Mostrando os que têm <b>parte delas</b> (os bancos cortam e mascaram nomes), os mais parecidos primeiro.</div><?php endif; ?>
+
 <?php if ($ocultos): ?><div class="bb-nota"><?= $ocultos ?> lançamento(s) que batem com a busca estão ocultos porque você marcou "ocultar" em Mais opções. <a href="<?= h($qs(['oi' => null, 'oa' => null])) ?>">Mostrar tudo</a></div><?php endif; ?>
 
 <?php /* ---------- totais ---------- */ ?>
@@ -171,7 +167,7 @@ bb_cabecalho('busca', $u);
       </tr>
 <?php }; ?>
 <?php if (!$tot['n']): ?>
-  <div class="bb-vazio"><h2>Nada encontrado</h2><p>Confira os avisos de cobertura acima: se o período não tem extrato, o lançamento pode existir e só não estar aqui. Você também pode aumentar a tolerância de valor/data em "Mais opções".</p></div>
+  <div class="bb-vazio"><h2>Nada encontrado</h2><p><?= $parecidos ? 'Nenhum lançamento tem todas as palavras digitadas — veja abaixo os nomes parecidos. ' : '' ?>Confira os avisos de cobertura acima: se o período não tem extrato, o lançamento pode existir e só não estar aqui. Você também pode aumentar a tolerância de valor/data em "Mais opções".</p></div>
 <?php elseif ($f['agrupar']): ?>
   <div class="bb-tab-wrap"><table class="bb-tab">
     <thead><tr><th>Pessoa / empresa</th><th>CPF/CNPJ</th><th class="num">Lanç.</th><th class="num">Entradas</th><th class="num">Saídas</th><th>Período</th><th class="num">Contas</th></tr></thead><tbody>
