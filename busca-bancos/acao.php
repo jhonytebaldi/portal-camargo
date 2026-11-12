@@ -60,14 +60,17 @@ if ($a === 'conferir_todos') {   // todos os resultados da busca (mesmos filtros
 /* outros lançamentos DA BUSCA ABERTA com exatamente o mesmo nome (sem diferença de maiúsculas/acentos) que o lançamento $id */
 $iguais = function (int $id) use ($pdo): array {
     $st = $pdo->prepare('SELECT contraparte FROM bb_lanc WHERE id = ?'); $st->execute([$id]);
-    $rotulo = (string)$st->fetchColumn(); $nome = BbTexto::norm($rotulo);
+    // compara só as letras: o banco às vezes põe a raiz do CNPJ do MEI na frente do nome (54.899.958 MATHEUS FELIPE…)
+    $soNome = fn(string $s) => trim(preg_replace('/\s+/', ' ', preg_replace('/\d+/', ' ', BbTexto::norm($s)) ?? '') ?? '');
+    $rotulo = (string)$st->fetchColumn(); $nome = $soNome($rotulo);
     if ($nome === '') return ['nome' => '', 'ids' => [], 'com_nota' => 0];
+    $rotulo = $soNome($rotulo) !== '' ? trim(preg_replace('/^[\d.\/\-\s]+/', '', $rotulo) ?? $rotulo) : $rotulo;
     parse_str((string)($_POST['filtros'] ?? ''), $g);
     $m = BbBusca::montar(bb_filtros(is_array($g) ? $g : []));
     $st = $pdo->prepare('SELECT l.id, l.contraparte, l.nota ' . BbBusca::FROM . ' WHERE (' . $m['where'] . ') AND l.id <> ? AND l.contraparte <> \'\' LIMIT 20000');
     $st->execute(array_merge($m['args'], [$id]));
     $ids = []; $comNota = 0;
-    foreach ($st as $r) if (BbTexto::norm($r['contraparte']) === $nome) { $ids[] = (int)$r['id']; if (trim($r['nota']) !== '') $comNota++; }
+    foreach ($st as $r) if ($soNome($r['contraparte']) === $nome) { $ids[] = (int)$r['id']; if (trim($r['nota']) !== '') $comNota++; }
     return ['nome' => $rotulo, 'ids' => $ids, 'com_nota' => $comNota];
 };
 if ($a === 'nota_iguais') {
