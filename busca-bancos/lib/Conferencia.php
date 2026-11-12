@@ -8,8 +8,7 @@ require_once __DIR__ . '/Busca.php';
 
 final class BbConferencia
 {
-    public const MAX_LINHAS = 60000;      // linhas lidas da planilha
-    public const MAX_CONFERIR = 20000;    // linhas efetivamente conferidas
+    public const MAX_LINHAS = 500000;     // trava só contra arquivo absurdo; o Livro Diário inteiro cabe com folga
     public const STATUS = ['ok' => 'Encontrada', 'ambigua' => 'Várias possíveis', 'nao' => 'Não encontrada', 'sem_dados' => 'Sem extrato na data',
         'pend_achou' => 'Pendente na planilha, mas está no banco', 'pendente' => 'Pendente (nada no banco)'];
 
@@ -133,7 +132,6 @@ final class BbConferencia
         // pendentes com data futura ainda não podem ter acontecido: ficam de fora
         $linhas = array_values(array_filter($linhas, fn($l) => !$l['prev'] || ($l['data'] && $l['data'] <= $hoje)));
         if (!$linhas) throw new RuntimeException('Não achei nenhuma linha para conferir com as colunas e o escopo indicados.');
-        if (count($linhas) > self::MAX_CONFERIR) throw new RuntimeException('São ' . count($linhas) . ' linhas para conferir; o limite é ' . self::MAX_CONFERIR . '. Divida a planilha (por ano, por exemplo).');
 
         // 2) lançamentos do banco em memória, por valor em centavos
         $porValor = []; $L = [];
