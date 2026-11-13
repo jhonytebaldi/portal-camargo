@@ -7,7 +7,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/lib/Importador.php';   // BbTexto e BbImportador (usados na migração)
 
-const BB_SCHEMA_VERSAO = 6;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4/5: cobertura limitada à data de geração do arquivo · 6: bb_envios (11/11/2026)
+const BB_SCHEMA_VERSAO = 7;   // 2: bb_lanc.nota_busca · 3: bb_lanc.sem_par + regra nova de transferência interna · 4/5: cobertura limitada à data de geração do arquivo · 6: bb_envios (11/11/2026) · 7: bb_arquivo_bruto (13/11/2026)
 
 function bb_instalar_se_preciso(): bool
 {
@@ -122,6 +122,10 @@ function bb_migrar(PDO $pdo): array
             KEY ix_bbe (inicio)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela bb_envios';
+    }
+    if (!$tem('bb_arquivo_bruto')) {   // o arquivo original enviado (gzip), para poder baixar de volta
+        $pdo->exec("CREATE TABLE bb_arquivo_bruto (arquivo_id INT UNSIGNED PRIMARY KEY, conteudo MEDIUMBLOB NOT NULL) ENGINE=InnoDB");
+        $feitos[] = 'tabela bb_arquivo_bruto';
     }
     if (!$tem('bb_config')) {
         $pdo->exec("CREATE TABLE bb_config (chave VARCHAR(60) PRIMARY KEY, valor MEDIUMTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");

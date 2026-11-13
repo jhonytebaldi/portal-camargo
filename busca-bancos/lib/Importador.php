@@ -52,7 +52,13 @@ final class BbImportador
             self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, null, $e instanceof RuntimeException ? $e->getMessage() : 'erro interno: ' . $e->getMessage());
             throw $e;
         }
-        foreach ($res as $r) self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, $r, null);
+        foreach ($res as $r) {
+            self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, $r, null);
+            if (($r['status'] ?? '') === 'ok' && !empty($r['arquivo_id'])) {
+                try { $pdo->prepare('INSERT IGNORE INTO bb_arquivo_bruto (arquivo_id, conteudo) VALUES (?, ?)')->execute([(int)$r['arquivo_id'], gzencode($bruto, 6)]); }
+                catch (Throwable $e) { error_log('busca-bancos bruto: ' . $e->getMessage()); }
+            }
+        }
         return $res;
     }
 

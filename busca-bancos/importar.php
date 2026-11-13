@@ -78,7 +78,7 @@ $pasta = (string)BbImportador::config($pdo, 'drive_pasta', BB_PASTA_PADRAO);
 $ultima = BbImportador::config($pdo, 'drive_ultima');
 $host = (!empty($_SERVER['HTTPS']) || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https' ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'portal.imobcamargo.com.br');
 $envios = $pdo->query('SELECT e.*, c.banco, c.apelido, us.nome AS por FROM bb_envios e LEFT JOIN bb_contas c ON c.id = e.conta_id LEFT JOIN users us ON us.id = e.usuario ORDER BY e.id DESC LIMIT 100')->fetchAll();
-$hist = $pdo->query('SELECT a.*, c.banco, c.apelido, c.empresa, us.nome AS por FROM bb_arquivos a JOIN bb_contas c ON c.id = a.conta_id LEFT JOIN users us ON us.id = a.enviado_por ORDER BY a.id DESC LIMIT 300')->fetchAll();
+$hist = $pdo->query('SELECT a.*, (SELECT 1 FROM bb_arquivo_bruto b WHERE b.arquivo_id = a.id) AS tem_bruto, c.banco, c.apelido, c.empresa, us.nome AS por FROM bb_arquivos a JOIN bb_contas c ON c.id = a.conta_id LEFT JOIN users us ON us.id = a.enviado_por ORDER BY a.id DESC LIMIT 300')->fetchAll();
 
 $script = <<<JS
 // Busca Bancos: manda para o portal os .ofx novos (ou alterados) da pasta do Drive.
@@ -209,7 +209,7 @@ bb_cabecalho('importar', $u);
     <thead><tr><th>Quando</th><th>Conta</th><th>Arquivo</th><th>Período</th><th class="num">Novos</th><th class="num">Repetidos</th><th>Origem</th></tr></thead><tbody>
     <?php foreach ($hist as $a): ?>
       <tr><td class="mono"><?= h(date('d/m/Y H:i', strtotime($a['enviado_em']))) ?></td><td><?= bb_banco($a['banco']) ?> <?= h($a['apelido']) ?></td>
-        <td><?= h(($a['drive_caminho'] ? $a['drive_caminho'] . '/' : '') . $a['nome']) ?><?php if ($a['drive_id']): ?> <a href="https://drive.google.com/file/d/<?= h(rawurlencode($a['drive_id'])) ?>/view" target="_blank" rel="noopener">abrir</a><?php endif; ?></td>
+        <td><?= h(($a['drive_caminho'] ? $a['drive_caminho'] . '/' : '') . $a['nome']) ?><?php if ($a['drive_id']): ?> <a href="https://drive.google.com/file/d/<?= h(rawurlencode($a['drive_id'])) ?>/view" target="_blank" rel="noopener">abrir</a><?php endif; ?><?php if (!empty($a['tem_bruto'])): ?> <a href="/busca-bancos/exportar-ofx.php?original=<?= (int)$a['id'] ?>">baixar</a><?php endif; ?></td>
         <td class="mono"><?php if ($a['periodo_ate'] < $a['periodo_de']): ?>nada fechado ainda<?php else: ?><?= BbTexto::dataBr($a['periodo_de']) ?> a <?= BbTexto::dataBr($a['periodo_ate']) ?><?php endif; ?>
           <?php if (!empty($a['periodo_declarado_ate']) && $a['periodo_declarado_ate'] > $a['periodo_ate']): ?><br><span class="bb-incompleto" title="O banco escreveu no arquivo que ele ia até <?= BbTexto::dataBr($a['periodo_declarado_ate']) ?>, mas ele foi gerado<?= $a['gerado_em'] ? ' em ' . BbTexto::dataBr($a['gerado_em']) : ' antes disso' ?>. Os dias depois disso não estão nele.">⚠ incompleto: dizia até <?= BbTexto::dataBr($a['periodo_declarado_ate']) ?></span><?php endif; ?></td><td class="num"><?= (int)$a['n_novos'] ?></td><td class="num"><?= (int)$a['n_dup'] ?></td>
         <td><?= ['upload' => 'enviado por ' . h($a['por'] ?? '—'), 'drive' => 'Drive', 'pdf' => 'PDF da Caixa', 'omie' => 'Omie (API)'][$a['origem']] ?? h($a['origem']) ?></td></tr>
