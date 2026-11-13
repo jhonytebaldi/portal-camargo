@@ -16,8 +16,9 @@ if (isset($_GET['original'])) {
 @set_time_limit(300); @ini_set('memory_limit', '512M');
 $emp = array_values(array_intersect((array)($_GET['emp'] ?? []), ['camargo', 'vertical', 'mz7']));
 $tmp = tempnam(sys_get_temp_dir(), 'bbofx');
-BbOfxExport::zip($pdo, $tmp, $emp ?: null);
+$soOrig = ($_GET['so'] ?? '') === 'originais';
+$soOrig ? BbOfxExport::zipOriginais($pdo, $tmp, $emp ?: null) : BbOfxExport::zip($pdo, $tmp, $emp ?: null);
 header('Content-Type: application/zip');
-header('Content-Disposition: attachment; filename="extratos-ofx-' . date('Y-m-d') . '.zip"');
+header('Content-Disposition: attachment; filename="extratos-ofx-' . ($soOrig ? 'originais-' : '') . date('Y-m-d') . '.zip"');
 header('Content-Length: ' . filesize($tmp));
 readfile($tmp); @unlink($tmp);

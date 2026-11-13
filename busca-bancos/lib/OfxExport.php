@@ -105,6 +105,45 @@ final class BbOfxExport
     }
 
     /**
+     * Só os arquivos ORIGINAIS guardados, sem nenhuma mudança: ANO/MM - MÊS/EMPRESA - BANCO CONTA.ofx pelo período que o
+     * próprio arquivo declara. Arquivo que cobre mais de um mês vai para ANO/VARIOS MESES com o período no nome.
+     * Arquivos idênticos entram uma vez só; dois diferentes da mesma conta e mês ganham (2), (3)…
+     */
+    public static function zipOriginais(PDO $pdo, string $destino, ?array $soEmpresas = null): array
+    {
+        $z = new ZipArchive();
+        if ($z->open($destino, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('não foi possível criar o .zip');
+        $raiz = 'EXTRATOS OFX ORIGINAIS - BUSCA BANCOS';
+        $contas = BbCobertura::contas($pdo);
+        $q = $pdo->query("SELECT a.id, a.conta_id, a.nome, a.periodo_de, COALESCE(a.periodo_declarado_ate, a.periodo_ate) AS ate, a.enviado_em, b.conteudo
+            FROM bb_arquivo_bruto b JOIN bb_arquivos a ON a.id = b.arquivo_id WHERE a.formato = 'ofx' ORDER BY a.periodo_de, a.id");
+        $vistos = []; $usados = []; $lista = []; $n = 0;
+        foreach ($q as $r) {
+            $c = $contas[(int)$r['conta_id']] ?? null; if (!$c) continue;
+            if ($soEmpresas && !in_array($c['empresa'], $soEmpresas, true)) continue;
+            $raw = (string)gzdecode((string)$r['conteudo']); $h = sha1($raw) . $r['conta_id'];
+            if (isset($vistos[$h])) continue; $vistos[$h] = 1;
+            $emp = self::EMP[$c['empresa']] ?? 'EMPRESA NAO INFORMADA';
+            $base = self::seguro($emp . ' - ' . strtoupper(self::seguro(BbOfx::BANCOS[$c['banco']] ?? 'Banco')) . ' ' . $c['conta']);
+            $de = $r['periodo_de']; $ate = $r['ate'];
+            if (substr($de, 0, 7) === substr($ate, 0, 7)) $pasta = substr($de, 0, 4) . '/' . substr($de, 5, 2) . ' - ' . self::seguro(self::MESES[substr($de, 5, 2)]);
+            else { $pasta = substr($de, 0, 4) . '/VARIOS MESES'; $base .= ' (' . date('d-m-Y', strtotime($de)) . ' a ' . date('d-m-Y', strtotime($ate)) . ')'; }
+            $caminho = $raiz . '/' . $pasta . '/' . $base; $k = 1;
+            while (isset($usados[$caminho . ($k > 1 ? " ($k)" : '') . '.ofx'])) $k++;
+            $final = $caminho . ($k > 1 ? " ($k)" : '') . '.ofx'; $usados[$final] = 1;
+            $z->addFromString($final, $raw); $n++;
+            $lista[] = substr($final, strlen($raiz) + 1) . '  <=  ' . $r['nome'] . ' (enviado em ' . date('d/m/Y H:i', strtotime($r['enviado_em'])) . ')';
+        }
+        $txt = "Arquivos .ofx ORIGINAIS enviados à Busca Bancos (portal.imobcamargo.com.br), sem nenhuma mudança. Gerado em " . date('d/m/Y H:i') . ".\r\n"
+            . "Organizados pelo período que cada arquivo diz cobrir. Quem cobre mais de um mês está em ANO/VARIOS MESES.\r\n"
+            . "Arquivos repetidos (mesmo conteúdo) entram uma vez só. Meses sem original não aparecem aqui — use \"Baixar completo\" para tê-los recriados.\r\n\r\n"
+            . "Total: $n arquivo(s).\r\n\r\nNOME AQUI  <=  NOME DO ARQUIVO ENVIADO:\r\n" . implode("\r\n", $lista) . "\r\n";
+        $z->addFromString($raiz . '/LEIA-ME.txt', $txt);
+        $z->close();
+        return ['arquivos' => $n];
+    }
+
+    /**
      * Monta o .zip em $destino. Estrutura: EXTRATOS OFX/ANO/MM - MÊS/EMPRESA - BANCO CONTA.ofx (+ LEIA-ME.txt).
      * Só entram meses com extrato importado (coberto) ou com lançamento. Devolve ['arquivos' => n, 'lanc' => n].
      */

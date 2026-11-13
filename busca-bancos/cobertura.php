@@ -16,7 +16,9 @@ if (!$contas) { echo '<div class="bb-vazio"><h2>Nenhum extrato importado ainda</
 ?>
 <section class="bb-card">
   <h2>O que temos de cada conta, mês a mês</h2>
-  <p style="float:right;margin:-34px 0 0"><a class="bb-btn sec" href="/busca-bancos/exportar-ofx.php" title="Um .ofx por conta e por mês, em pastas ANO / MÊS, com o nome da empresa — recriados dos lançamentos importados">⬇ Baixar todos em OFX (.zip)</a></p>
+  <p style="float:right;margin:-34px 0 0;display:flex;gap:6px">
+    <a class="bb-btn sec" href="/busca-bancos/exportar-ofx.php?so=originais" title="Só os arquivos .ofx enviados, sem nenhuma mudança, em pastas ANO / MÊS com o nome da empresa">⬇ Baixar originais (.zip)</a>
+    <a class="bb-btn sec" href="/busca-bancos/exportar-ofx.php" title="Um .ofx por conta e por mês: o original quando houver; senão recortado do original ou recriado dos lançamentos importados">⬇ Baixar completo (.zip)</a></p>
   <p>O número é a quantidade de lançamentos no mês. Passe o mouse num mês amarelo para ver os dias que faltam.</p>
   <div style="overflow-x:auto"><table class="bb-grade">
     <thead><tr><th class="c">Conta</th><?php foreach ($g['meses'] as $m): ?><th><?= $mesNome[substr($m, 5)] ?><br><?= substr($m, 2, 2) ?></th><?php endforeach; ?></tr></thead><tbody>
