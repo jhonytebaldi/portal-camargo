@@ -54,7 +54,7 @@ final class BbImportador
         }
         foreach ($res as $r) {
             self::registrarEnvio($pdo, $meta, sha1($bruto), $inicio, $t0, $r, null);
-            if (($r['status'] ?? '') === 'ok' && !empty($r['arquivo_id'])) {
+            if (in_array($r['status'] ?? '', ['ok', 'repetido'], true) && !empty($r['arquivo_id'])) {   // repetido também: guarda o original de arquivo antigo
                 try { $pdo->prepare('INSERT IGNORE INTO bb_arquivo_bruto (arquivo_id, conteudo) VALUES (?, ?)')->execute([(int)$r['arquivo_id'], gzencode($bruto, 6)]); }
                 catch (Throwable $e) { error_log('busca-bancos bruto: ' . $e->getMessage()); }
             }

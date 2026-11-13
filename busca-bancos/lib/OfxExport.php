@@ -47,6 +47,32 @@ final class BbOfxExport
         $st->execute([$cid, $d, $r['data']]); return round($r['saldo'] - (float)$st->fetchColumn(), 2);
     }
 
+    /**
+     * Recorte de um OFX ORIGINAL: só o extrato da conta $acct e só os lançamentos entre $de e $ate, com DTSTART/DTEND
+     * ajustados. Todo o resto (cabeçalho, textos, FITID…) fica como o banco mandou. O saldo só fica se for desse intervalo.
+     */
+    public static function recorte(string $bruto, string $acct, string $de, string $ate): ?string
+    {
+        if (!preg_match_all('/<(CC)?STMTRS>.*?(<\/(CC)?STMTRS>|(?=<\/STMTTRNRS>)|\z)/is', $bruto, $bl, PREG_OFFSET_CAPTURE)) return null;
+        $alvo = null;
+        foreach ($bl[0] as [$txt, $pos]) if (preg_match('/<ACCTID>\s*([^<\r\n]*)/i', $txt, $m) && preg_replace('/\s+/', '', $m[1]) === preg_replace('/\s+/', '', $acct)) { $alvo = [$txt, $pos]; break; }
+        if (!$alvo) return null;
+        [$txt, $pos] = $alvo;
+        $d = fn(string $x) => preg_match('/(\d{8})/', $x, $m) ? substr($m[1], 0, 4) . '-' . substr($m[1], 4, 2) . '-' . substr($m[1], 6, 2) : '';
+        $novo = preg_replace_callback('/<STMTTRN>.*?(?=<STMTTRN>|<\/BANKTRANLIST>)/is', function ($m) use ($d, $de, $ate) {
+            $dt = preg_match('/<DTPOSTED>\s*([^<\r\n]*)/i', $m[0], $x) ? $d($x[1]) : '';
+            return ($dt >= $de && $dt <= $ate) ? $m[0] : '';
+        }, $txt) ?? $txt;
+        $novo = preg_replace_callback('/(<DTSTART>\s*)(\d{8})/i', fn($m) => $m[1] . str_replace('-', '', max($de, $d($m[2]))), $novo, 1) ?? $novo;
+        $novo = preg_replace_callback('/(<DTEND>\s*)(\d{8})/i', fn($m) => $m[1] . str_replace('-', '', min($ate, $d($m[2]))), $novo, 1) ?? $novo;
+        if (preg_match('/<LEDGERBAL>.*?<DTASOF>\s*([^<\r\n]*)/is', $novo, $lb) && ($d($lb[1]) < $de || $d($lb[1]) > $ate))
+            $novo = preg_replace('/<LEDGERBAL>.*?(<\/LEDGERBAL>|(?=<\/STMTRS>)|(?=<AVAILBAL>))/is', '', $novo) ?? $novo;
+        // tira os outros extratos (outras contas) do mesmo arquivo
+        $ini = substr($bruto, 0, $pos); $fim = substr($bruto, $pos + strlen($txt));
+        $ini = preg_replace('/<(CC)?STMTRS>.*?<\/(CC)?STMTRS>/is', '', $ini) ?? $ini; $fim = preg_replace('/<(CC)?STMTRS>.*?<\/(CC)?STMTRS>/is', '', $fim) ?? $fim;
+        return $ini . $novo . $fim;
+    }
+
     /** um OFX de uma conta num intervalo */
     public static function ofx(array $conta, string $de, string $ate, array $lanc, ?float $saldo, string $saldoData): string
     {
@@ -91,7 +117,13 @@ final class BbOfxExport
         $refsPor = [];
         foreach ($pdo->query('SELECT conta_id, saldo_final, COALESCE(saldo_data, periodo_ate) d FROM bb_arquivos WHERE saldo_final IS NOT NULL') as $r) $refsPor[(int)$r['conta_id']][] = ['saldo' => (float)$r['saldo_final'], 'data' => $r['d']];
         $st = $pdo->prepare('SELECT id, data, valor, tipo_ofx, fitid, checknum, refnum, memo, nome, contraparte FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ? ORDER BY data, id');
-        $nArq = 0; $nLanc = 0; $leia = []; $ontem = date('Y-m-d', strtotime('-1 day'));
+        // originais guardados, por conta
+        $orig = [];
+        foreach ($pdo->query('SELECT a.id, a.conta_id, a.nome, a.periodo_de, a.periodo_ate, a.gerado_em FROM bb_arquivo_bruto b JOIN bb_arquivos a ON a.id = b.arquivo_id WHERE a.formato = \'ofx\' ORDER BY a.id') as $r) $orig[(int)$r['conta_id']][] = $r;
+        $bruto = function (int $aid) use ($pdo): string { static $c = []; if (!isset($c[$aid])) { $q = $pdo->prepare('SELECT conteudo FROM bb_arquivo_bruto WHERE arquivo_id = ?'); $q->execute([$aid]); $c[$aid] = (string)gzdecode((string)$q->fetchColumn()); } return $c[$aid]; };
+        $lidos = function (int $aid, string $acct) use ($bruto): array { static $c = []; if (!isset($c[$aid . $acct])) { $c[$aid . $acct] = []; try { foreach (BbOfx::ler($bruto($aid)) as $e) if (preg_replace('/\s+/', '', $e['conta']) === preg_replace('/\s+/', '', $acct)) $c[$aid . $acct] = array_column($e['lanc'], 'data'); } catch (Throwable $e) {} } return $c[$aid . $acct]; };
+        $nOrig = 0; $nRec = 0; $nRecorte = 0;
+        $nArq = 0; $nLanc = 0; $leia = []; $fontes = []; $ontem = date('Y-m-d', strtotime('-1 day'));
         foreach ($contas as $cid => $c) {
             if ($soEmpresas && !in_array($c['empresa'], $soEmpresas, true)) continue;
             $int = $ints[$cid] ?? [];
@@ -108,24 +140,49 @@ final class BbOfxExport
                 if (!$lanc && !$cob) continue;
                 $de = $cob ? $cob[0][0] : $lanc[0]['data']; $ate = $cob ? end($cob)[1] : end($lanc)['data'];
                 if ($lanc) { $de = min($de, $lanc[0]['data']); $ate = max($ate, end($lanc)['data']); }
-                $saldo = isset($refsPor[$cid]) ? self::saldoEm($pdo, $cid, $ate, $int, $refsPor[$cid]) : null;
                 $pasta = $raiz . '/' . substr($m, 0, 4) . '/' . substr($m, 5) . ' - ' . self::seguro(self::MESES[substr($m, 5)]);
+                // 1º: um original guardado que cubra a parte coberta deste mês e tenha todos os lançamentos dele
+                $usar = null;
+                foreach ($orig[$cid] ?? [] as $o) {
+                    // precisa cobrir a parte coberta deste mês (o dia do download, parcial, não conta) e ter todos os lançamentos (conferido abaixo)
+                    if ($o['periodo_ate'] < $o['periodo_de'] || $o['periodo_de'] > max($a, $cob ? $cob[0][0] : $a) || ($cob && $o['periodo_ate'] < end($cob)[1])) continue;
+                    $n = count(array_filter($lidos((int)$o['id'], $c['conta']), fn($x) => $x >= $a && $x <= $b));
+                    if ($n < count($lanc)) continue;   // o original tem menos que a ferramenta: não serve
+                    if ($usar === null || $n > $usar[1] || ($n === $usar[1] && (string)$o['gerado_em'] > (string)$usar[0]['gerado_em'])) $usar = [$o, $n];
+                }
+                if ($usar) {
+                    $o = $usar[0]; $raw = $bruto((int)$o['id']);
+                    $inteiro = $o['periodo_de'] >= $a && $o['periodo_ate'] <= $b && substr_count(strtoupper($raw), 'STMTRS>') <= 2;
+                    $conteudo = $inteiro ? $raw : self::recorte($raw, $c['conta'], $a, $b);
+                    if ($conteudo !== null) {
+                        $z->addFromString($pasta . '/' . $nomeArq, $conteudo);
+                        $inteiro ? $nOrig++ : $nRecorte++;
+                        $fontes[] = substr($m, 0, 4) . '/' . substr($m, 5) . ' · ' . $nomeArq . ': ' . ($inteiro ? 'ORIGINAL do banco' : 'recorte do mês tirado do original') . ' (' . $o['nome'] . ')';
+                        $nArq++; $nLanc += count($lanc);
+                        goto faltas;
+                    }
+                }
+                $saldo = isset($refsPor[$cid]) ? self::saldoEm($pdo, $cid, $ate, $int, $refsPor[$cid]) : null;
                 $z->addFromString($pasta . '/' . $nomeArq, self::ofx($c, $de, $ate, $lanc, $saldo, $ate));
-                $nArq++; $nLanc += count($lanc);
+                $fontes[] = substr($m, 0, 4) . '/' . substr($m, 5) . ' · ' . $nomeArq . ': recriado pela ferramenta';
+                $nArq++; $nLanc += count($lanc); $nRec++;
+                faltas:
                 $faltas = BbCobertura::buracos($int, $a, min($b, $ontem));
                 if ($faltas && $a <= $ontem) $leia[] = substr($m, 0, 4) . '/' . substr($m, 5) . ' · ' . $emp . ' · ' . (BbOfx::BANCOS[$c['banco']] ?? '') . ' ' . $c['conta'] . ': sem extrato em '
                     . implode(', ', array_map(fn($f) => BbTexto::dataBr($f[0]) . ($f[1] !== $f[0] ? ' a ' . BbTexto::dataBr($f[1]) : ''), $faltas));
             }
         }
-        $txt = "Extratos recriados pela Busca Bancos (portal.imobcamargo.com.br) em " . date('d/m/Y H:i') . ".\r\n\r\n"
-            . "Cada arquivo .ofx tem os lançamentos de UMA conta em UM mês, montados a partir de tudo o que foi importado na ferramenta\r\n"
-            . "(OFX dos bancos, PDF da Caixa e Omie Cash pela API), sem lançamentos repetidos. Não são os arquivos originais do banco.\r\n"
-            . "DTSTART/DTEND de cada arquivo = parte do mês que estava coberta por extrato. O saldo (LEDGERBAL) só vai quando dá para\r\n"
-            . "calcular com certeza a partir de um saldo informado pelo banco.\r\n\r\n"
-            . "Total: $nArq arquivo(s), $nLanc lançamento(s).\r\n\r\n"
+        $txt = "Extratos da Busca Bancos (portal.imobcamargo.com.br), gerados em " . date('d/m/Y H:i') . ".\r\n\r\n"
+            . "Um arquivo .ofx por conta e por mês, nas pastas ANO / MÊS, com o nome da empresa. De onde vem cada um:\r\n"
+            . "- ORIGINAL do banco: o arquivo enviado à ferramenta, sem nenhuma mudança (quando ele é só daquele mês e tem tudo).\r\n"
+            . "- recorte do original: o arquivo do banco cobria vários meses; aqui ficam só as linhas deste mês, como o banco mandou.\r\n"
+            . "- recriado pela ferramenta: montado com os lançamentos importados (OFX, PDF da Caixa, Omie Cash pela API), sem repetidos.\r\n"
+            . "  Nos recriados, DTSTART/DTEND = parte do mês coberta por extrato; o saldo só vai quando dá para calcular com certeza.\r\n\r\n"
+            . "Total: $nArq arquivo(s) ($nOrig original(is), $nRecorte recorte(s), $nRec recriado(s)), $nLanc lançamento(s).\r\n\r\n"
             . ($leia ? "MESES INCOMPLETOS (dias sem extrato importado):\r\n" . implode("\r\n", $leia) . "\r\n" : "Nenhum mês incompleto.\r\n");
+        $txt .= "\r\nDE ONDE VEIO CADA ARQUIVO:\r\n" . implode("\r\n", $fontes) . "\r\n";
         $z->addFromString($raiz . '/LEIA-ME.txt', $txt);
         $z->close();
-        return ['arquivos' => $nArq, 'lanc' => $nLanc];
+        return ['arquivos' => $nArq, 'lanc' => $nLanc, 'originais' => $nOrig, 'recortes' => $nRecorte, 'recriados' => $nRec];
     }
 }
