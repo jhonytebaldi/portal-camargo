@@ -324,7 +324,10 @@ portal_header('Recibos do Omie', $u);
 .ro-filtros label.on{color:#1f6b3a}.ro-filtros label.on .cf-in{border-color:#2f7a4b;background:#f1f8f3}.ro-filtros .ro-limpar{font-size:13px;align-self:end;padding-bottom:10px;white-space:nowrap}
 .ro-abas button{font:inherit;font-size:13px;padding:5px 11px;border-radius:14px;border:1px solid var(--line);background:#fff;cursor:pointer}.ro-abas button.on{background:var(--moss);color:#fff;border-color:var(--moss)}
 .ro-mais{display:inline-block;margin-top:3px;font-size:12px;color:#2f6b4f;cursor:pointer;text-decoration:underline dotted;white-space:nowrap}.ro-col{cursor:pointer}.ro-col .ro-resto{display:none}.ro-col.aberto .ro-resto{display:inline}
-#tbl-hist td:nth-child(2){max-width:260px}#tbl-hist td:nth-child(7){max-width:320px}
+#tbl-hist td:nth-child(2){max-width:260px}#tbl-hist td:nth-child(8){max-width:320px}
+#tbl-hist th.h-ord{cursor:pointer;user-select:none;white-space:nowrap}#tbl-hist th.h-ord::after{content:' ⇅';color:#aab;font-size:11px}#tbl-hist th.h-ord.asc::after{content:' ▲';color:#2f6b4f}#tbl-hist th.h-ord.desc::after{content:' ▼';color:#2f6b4f}
+#tbl-hist tr.h-filtros th{padding:4px 6px;background:#f6f7f3}#tbl-hist .h-f{width:100%;min-width:70px;box-sizing:border-box;font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:#fff}#tbl-hist .h-f.on{border-color:#2f7a4b;background:#f1f8f3}#tbl-hist .h-fn{text-align:right}
+#h-rodape{font-size:13px;color:#556;margin:6px 0 0}
 details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;font-size:16px;list-style:none;display:flex;align-items:center;gap:8px}details.ro-api summary::before{content:"▸";font-size:13px}details.ro-api[open] summary::before{content:"▾"}details.ro-api summary small{font-weight:400;color:#667;font-size:13px}
 </style>
 <div class="cf-rev">
@@ -395,19 +398,24 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
 </form>
 <?php if (!$historico): ?><p class="home-sub">Nenhum recibo ainda.</p><?php else: ?>
 <div class="cf-tbl-wrap"><table class="grid cf-tbl" id="tbl-hist">
-<thead><tr><th><input type="checkbox" id="h-todos"></th><th>Nº</th><th>Data</th><th>Recebedor</th><th>Empresa</th><th>Valor</th><th>Títulos</th><th>Omie</th><th>Gerado</th><th></th></tr></thead>
+<thead>
+<tr><th><input type="checkbox" id="h-todos"></th><th class="h-ord" data-k="num">Nº</th><th class="h-ord" data-k="data" data-tipo="n">Data</th><th class="h-ord" data-k="rec">Recebedor</th><th class="h-ord" data-k="emp">Empresa</th><th class="h-ord cf-num" data-k="bruto" data-tipo="n" title="soma dos valores dos títulos, antes de descontos/impostos">Bruto</th><th class="h-ord cf-num" data-k="liq" data-tipo="n" title="valor final do recibo (com descontos/impostos/juros)">Líquido</th><th class="h-ord" data-k="tit">Títulos</th><th class="h-ord" data-k="omie">Omie</th><th class="h-ord" data-k="ger" data-tipo="n">Gerado</th><th></th></tr>
+<tr class="h-filtros"><th></th><th><input class="h-f" data-k="num" placeholder="filtrar…"></th><th><input class="h-f" data-k="data" placeholder="dd/mm ou de-até"></th><th><input class="h-f" data-k="rec" placeholder="filtrar…"></th><th><input class="h-f" data-k="emp" placeholder="filtrar…"></th><th><input class="h-f h-fn" data-k="bruto" placeholder="= > < ou a-b"></th><th><input class="h-f h-fn" data-k="liq" placeholder="= > < ou a-b"></th><th><input class="h-f" data-k="tit" placeholder="cliente, COD…"></th><th><input class="h-f" data-k="omie" placeholder="filtrar…"></th><th><input class="h-f" data-k="ger" placeholder="quem/quando"></th><th><button type="button" class="cf-x" id="h-limpar-col" title="limpar os filtros das colunas">✖</button></th></tr>
+</thead>
 <tbody><?php foreach ($historico as $r): $its = json_decode((string)$r['itens'], true) ?: [];
   $quando = $r['encerrado_em'] ? ' em ' . cf_data_br(substr((string)$r['encerrado_em'], 0, 10)) : ''; $quem = $r['encerrado_nome'] ? ' por ' . h((string)$r['encerrado_nome']) : '';
   $sn = array_values(array_filter(array_map('trim', explode(' / ', (string)($r['subst_numero'] ?? ''))))); $snTxt = implode(' / ', array_slice($sn, 0, 2)) . (count($sn) > 2 ? ' +' . (count($sn) - 2) : '');
   $sit = $r['status'] === 'substituido' ? '<br><span class="cf-tag" title="' . h((string)$r['subst_numero']) . '">substituído' . ($snTxt !== '' ? ' pelo ' . h($snTxt) : '') . $quando . $quem . '</span>'
        : ($r['status'] === 'cancelado' ? '<br><span class="cf-tag cf-grave">cancelado' . $quando . $quem . '</span>' . ($r['motivo'] ? '<br><small class="cf-raw">' . h((string)$r['motivo']) . '</small>' : '') : ''); ?>
 <?php $cods = array_values(array_filter(array_map('trim', explode(' / ', (string)$r['numero'])))); $nCods = count($cods); ?>
-<tr data-id="<?= (int)$r['id'] ?>" class="<?= $r['status'] !== 'atual' ? 'ro-encerrado' : '' ?>"><td><input type="checkbox" class="h-sel"></td><td><?php if ($nCods > 3): ?><b class="ro-col" title="clique para ver todos os códigos"><?= h(implode(' / ', array_slice($cods, 0, 3))) ?><span class="ro-resto"> / <?= h(implode(' / ', array_slice($cods, 3))) ?></span></b> <span class="ro-mais">+<?= $nCods - 3 ?> ▾</span><?php else: ?><b><?= h($r['numero']) ?></b><?php endif; ?><?= $sit ?></td><td><?= cf_data_br($r['data_recibo']) ?></td><td><?= h($r['fornecedor_nome']) ?><br><small class="cf-raw"><?= h($r['fornecedor_doc']) ?></small></td>
-<td><?= h(strtoupper($r['conta'])) ?></td><td class="cf-num"><?= cf_brl($r['valor']) ?></td>
+<?php $brutoR = $r['bruto'] !== null ? (float)$r['bruto'] : array_sum(array_map(fn($it) => (float)($it['valor'] ?? 0), $its)); ?>
+<tr data-id="<?= (int)$r['id'] ?>" class="<?= $r['status'] !== 'atual' ? 'ro-encerrado' : '' ?>" data-num="<?= h((string)$r['numero']) ?>" data-data="<?= h((string)$r['data_recibo']) ?>" data-rec="<?= h((string)$r['fornecedor_nome'] . ' ' . $r['fornecedor_doc']) ?>" data-emp="<?= h(strtoupper($r['conta'])) ?>" data-bruto="<?= $brutoR ?>" data-liq="<?= (float)$r['valor'] ?>" data-tit="<?= h(implode(' | ', array_map(fn($it) => ($it['obs']['funcao'] ?? '') . ' ' . ($it['obs']['cliente'] ?? '') . ' COD ' . ($it['obs']['cod'] ?? '') . ' ' . ($it['numero'] ?? ''), $its))) ?>" data-omie="<?= h((string)$r['validado'] . ' ' . ($r['origem'] === 'api' ? 'API' : 'xlsx') . ' ' . $r['status']) ?>" data-ger="<?= h(substr((string)$r['gerado_em'], 0, 16) . ' ' . (string)$r['por']) ?>"><td><input type="checkbox" class="h-sel"></td><td><?php if ($nCods > 3): ?><b class="ro-col" title="clique para ver todos os códigos"><?= h(implode(' / ', array_slice($cods, 0, 3))) ?><span class="ro-resto"> / <?= h(implode(' / ', array_slice($cods, 3))) ?></span></b> <span class="ro-mais">+<?= $nCods - 3 ?> ▾</span><?php else: ?><b><?= h($r['numero']) ?></b><?php endif; ?><?= $sit ?></td><td><?= cf_data_br($r['data_recibo']) ?></td><td><?= h($r['fornecedor_nome']) ?><br><small class="cf-raw"><?= h($r['fornecedor_doc']) ?></small></td>
+<td><?= h(strtoupper($r['conta'])) ?></td><td class="cf-num"><?= cf_brl($brutoR) ?></td><td class="cf-num"><b><?= cf_brl($r['valor']) ?></b><?= abs($brutoR - (float)$r['valor']) > 0.005 ? '<br><small class="cf-raw">desc. ' . cf_brl($brutoR - (float)$r['valor']) . '</small>' : '' ?></td>
 <td><small><?php $nIts = count($its); if ($nIts > 2): ?><span class="ro-col" title="clique para ver todos os títulos"><?php foreach (array_slice($its, 0, 2) as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? '—')) ?><br><?php endforeach; ?><span class="ro-resto"><?php foreach (array_slice($its, 2) as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? '—')) ?><br><?php endforeach; ?></span></span><span class="ro-mais">+<?= $nIts - 2 ?> título(s) ▾</span><?php else: foreach ($its as $it): ?><?= h(($it['obs']['funcao'] ?? '') . ' · ' . mb_substr((string)($it['obs']['cliente'] ?? ''), 0, 30) . ' · COD ' . ($it['obs']['cod'] ?? '—')) ?><br><?php endforeach; endif; ?></small></td>
 <td><small><?= h((string)$r['validado']) ?><br><span class="cf-raw"><?= $r['origem'] === 'api' ? 'API' : '.xlsx' ?></span></small></td><td><small><?= h(substr((string)$r['gerado_em'], 0, 16)) ?><br><?= h((string)$r['por']) ?></small></td>
 <td style="white-space:nowrap"><a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>&ver=1" target="_blank" title="ver">📄</a> <a class="cf-x" href="?baixar=<?= (int)$r['id'] ?>" title="baixar">⬇</a><?php if (!empty($r['descricao_nf'])): ?> <a class="cf-x" href="#" onclick="cfNf.mostrar(this);return false" title="bruto, líquido e descrição para a Nota Fiscal" data-nf="<?= h(json_encode(['numero' => $r['numero'], 'recebedor' => $r['fornecedor_nome'], 'valor' => (float)$r['valor'], 'bruto' => (float)$r['bruto'], 'descricao_nf' => $r['descricao_nf'], 'link' => '?baixar=' . (int)$r['id'] . '&ver=1'], JSON_UNESCAPED_UNICODE)) ?>">🧾 NF</a><?php endif; ?><?php if ($gestor && $r['status'] === 'atual'): ?> <a class="cf-x ro-cancelar" href="#" data-num="<?= h($r['numero']) ?>" title="cancelar este recibo (fica guardado como cancelado)">✖</a><?php elseif ($gestor): ?> <a class="cf-x ro-restaurar" href="#" data-num="<?= h(mb_substr($r['numero'], 0, 40)) ?>" title="voltar este recibo para atual (desfaz o cancelamento/substituição)">↶ restaurar</a><?php endif; ?></td></tr>
 <?php endforeach; ?></tbody></table></div>
+<p id="h-rodape"></p>
 <p><a class="btn cf-btn-sec" id="h-zip" href="#" style="display:none">⬇ ZIP dos selecionados</a></p>
 <?php endif; ?>
 
@@ -555,6 +563,50 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + links + '</p>' + subst + (j.ids.length > 1 ? '<p style="margin:6px 0 0"><a href="?zip=' + j.ids.join(',') + '">⬇ baixar todos (ZIP)</a></p>' : '') + '<p class="cf-dica" style="margin:8px 0 0">' + (sobra ? sobra + ' título(s) novo(s) continuam na janela — gere-os também ou encerre para ignorá-los.' : 'Não sobrou título novo. Ao encerrar a janela, a lista de recibos é atualizada.') + '</p>'});
     cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
   });
+  // histórico: ordenar pelas colunas (clique no cabeçalho) e filtrar direto na coluna (estilo planilha)
+  (function(){
+    const tb = document.querySelector('#tbl-hist tbody'); if (!tb) return;
+    const linhas = [...tb.querySelectorAll('tr')]; let ord = {k: null, dir: 1};
+    const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const num = s => { s = String(s || '').trim().replace(/r\$|\s/gi, ''); if (!s) return NaN; if (/,\d{1,2}$/.test(s) || (s.includes(',') && !s.includes('.'))) s = s.replace(/\./g, '').replace(',', '.'); return parseFloat(s); };
+    // filtro numérico: "100" (≈ igual) · ">100" · "<100" · ">=100" · "100-500" (intervalo) · "100 a 500"
+    function okNum(v, f){ f = f.trim(); if (!f) return true; let m;
+      if ((m = f.match(/^(>=|<=|>|<|=)?\s*(.+)$/)) && !/[-–]|\sa\s/.test(m[2])) { const n = num(m[2]); if (isNaN(n)) return true; const op = m[1] || '='; return op === '>' ? v > n + 0.004 : op === '<' ? v < n - 0.004 : op === '>=' ? v >= n - 0.004 : op === '<=' ? v <= n + 0.004 : Math.abs(v - n) < 0.005; }
+      if ((m = f.match(/^(.+?)\s*(?:[-–]|\sa\s)\s*(.+)$/))) { const a = num(m[1]), b = num(m[2]); if (isNaN(a) || isNaN(b)) return true; return v >= Math.min(a, b) - 0.004 && v <= Math.max(a, b) + 0.004; }
+      return true; }
+    // filtro de data: "05/11" · "05/11/2026" · "01/11-10/11" · "2026-11"
+    const iso = s => { const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/); if (!m) return null; const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : String(new Date().getFullYear()); return y + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0'); };
+    function okData(v, f){ f = f.trim(); if (!f) return true; const br = v.split('-').reverse().join('/');
+      let m = f.match(/^(.+?)\s*(?:[-–]|\sa\s)\s*(.+)$/); if (m) { const a = iso(m[1]) || m[1], b = iso(m[2]) || m[2]; return v >= a && v <= b; }
+      const d = iso(f); if (d) return v === d; return br.includes(f) || v.includes(f); }
+    function aplicar(){
+      const fs = {}; document.querySelectorAll('#tbl-hist .h-f').forEach(i => { fs[i.dataset.k] = i.value; i.classList.toggle('on', i.value.trim() !== ''); });
+      let n = 0, sb = 0, sl = 0;
+      linhas.forEach(tr => {
+        let ok = true;
+        for (const k in fs) { const f = fs[k]; if (!f.trim()) continue;
+          if (k === 'bruto' || k === 'liq') ok = okNum(parseFloat(tr.dataset[k]) || 0, f);
+          else if (k === 'data') ok = okData(tr.dataset.data || '', f);
+          else ok = norm(tr.dataset[k]).includes(norm(f));
+          if (!ok) break; }
+        tr.style.display = ok ? '' : 'none'; if (ok) { n++; sb += parseFloat(tr.dataset.bruto) || 0; sl += parseFloat(tr.dataset.liq) || 0; }
+      });
+      const rod = document.getElementById('h-rodape'); if (rod) rod.textContent = n + ' de ' + linhas.length + ' recibo(s)' + (n ? ' · bruto ' + brl(sb) + ' · líquido ' + brl(sl) : '');
+      const lim = document.getElementById('h-limpar-col'); if (lim) lim.style.visibility = Object.values(fs).some(v => v.trim()) ? '' : 'hidden';
+    }
+    function ordenar(k, tipo){
+      ord = ord.k === k ? {k, dir: -ord.dir} : {k, dir: 1};
+      document.querySelectorAll('#tbl-hist th.h-ord').forEach(th => th.classList.remove('asc', 'desc'));
+      document.querySelector('#tbl-hist th.h-ord[data-k="' + k + '"]').classList.add(ord.dir === 1 ? 'asc' : 'desc');
+      const val = tr => tipo === 'n' ? (k === 'bruto' || k === 'liq' ? parseFloat(tr.dataset[k]) || 0 : String(tr.dataset[k] || '')) : norm(tr.dataset[k]);
+      linhas.sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * ord.dir; });
+      linhas.forEach(tr => tb.appendChild(tr));
+    }
+    document.querySelectorAll('#tbl-hist th.h-ord').forEach(th => th.addEventListener('click', () => ordenar(th.dataset.k, th.dataset.tipo || 's')));
+    document.querySelectorAll('#tbl-hist .h-f').forEach(i => i.addEventListener('input', aplicar));
+    const lim = document.getElementById('h-limpar-col'); if (lim) lim.addEventListener('click', () => { document.querySelectorAll('#tbl-hist .h-f').forEach(i => i.value = ''); aplicar(); });
+    aplicar();
+  })();
   // colunas longas do histórico: abre/fecha ao clicar
   document.querySelectorAll('#tbl-hist .ro-col, #tbl-hist .ro-mais').forEach(el => el.addEventListener('click', e => { e.preventDefault(); const td = el.closest('td'); const col = td.querySelector('.ro-col'); col.classList.toggle('aberto'); const m = td.querySelector('.ro-mais'); if (m) m.textContent = col.classList.contains('aberto') ? 'menos ▴' : m.dataset.rot || (m.dataset.rot = m.textContent); }));
   // filtros ativos em destaque
