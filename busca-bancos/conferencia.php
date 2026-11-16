@@ -38,7 +38,7 @@ try {
             $lin = (int)($_POST['linha_id'] ?? 0); $lanc = (int)($_POST['lanc_id'] ?? 0);
             if ($lanc) $pdo->prepare("UPDATE bb_conf_linhas SET status = IF(previsto = 1, 'pend_achou', 'ok'), lanc_id = ?, motivo = 'escolhido manualmente' WHERE id = ? AND conf_id = ?")->execute([$lanc, $lin, $id]);
             else $pdo->prepare("UPDATE bb_conf_linhas SET status = IF(previsto = 1, 'pendente', 'nao'), lanc_id = NULL, candidatos = '[]', motivo = 'nenhum dos possíveis era o certo' WHERE id = ? AND conf_id = ?")->execute([$lin, $id]);
-            header('Location: /busca-bancos/conferencia.php?id=' . $id . '&st=' . urlencode((string)($_POST['st'] ?? '')) . '&g=' . urlencode((string)($_POST['g'] ?? '')) . '&p=' . (int)($_POST['p'] ?? 1) . '#l' . $lin); exit;
+            header('Location: /busca-bancos/conferencia.php?id=' . $id . '&st=' . urlencode((string)($_POST['st'] ?? '')) . '&g=' . urlencode((string)($_POST['g'] ?? '')) . '&q=' . urlencode((string)($_POST['q'] ?? '')) . '&p=' . (int)($_POST['p'] ?? 1) . '#l' . $lin); exit;
         }
         if ($acao === 'marcar') {
             $n = $pdo->prepare("UPDATE bb_lanc l JOIN bb_conf_linhas c ON c.lanc_id = l.id SET l.conferido = 1, l.conferido_por = ?, l.conferido_em = ? WHERE c.conf_id = ? AND c.status = 'ok' AND l.conferido = 0");
@@ -122,11 +122,26 @@ if ($id):
     $st = $pdo->prepare('SELECT c.*, us.nome AS por FROM bb_conf c LEFT JOIN users us ON us.id = c.criado_por WHERE c.id = ?'); $st->execute([$id]); $conf = $st->fetch();
     if (!$conf) { echo '<div class="bb-alerta erro">Conferência não encontrada.</div>'; bb_rodape(); return; }
     $par = json_decode($conf['parametros'], true) ?: [];
-    $gSel = trim((string)($_GET['g'] ?? '')); $wG = $gSel !== '' ? ' AND grupo = ?' : ''; $aG = $gSel !== '' ? [$gSel] : [];
-    $cont = []; $st = $pdo->prepare('SELECT status, COUNT(*) n, SUM(ABS(valor)) v FROM bb_conf_linhas WHERE conf_id = ?' . $wG . ' GROUP BY status'); $st->execute(array_merge([$id], $aG)); foreach ($st as $r) $cont[$r['status']] = $r;
+    $gSel = trim((string)($_GET['g'] ?? '')); $qSel = trim((string)($_GET['q'] ?? ''));
+    // filtros: venda escolhida + busca (nome/texto da planilha ou do banco, valor, data, CPF/CNPJ, anotação)
+    $wG = ''; $aG = [];
+    if ($gSel !== '') { $wG .= ' AND c.grupo = ?'; $aG[] = $gSel; }
+    if ($qSel !== '') {
+        $iq = BbBusca::interpretar($qSel);
+        $txt = "CONCAT_WS(' ', c.texto, c.grupo, c.banco_planilha, c.motivo, l.contraparte, l.memo, l.nome, l.busca, l.nota)";
+        foreach ($iq['valores'] as $k => $v) { $cheio = in_array($k, $iq['cheios'], true); $solto = in_array($k, $iq['soltos'] ?? [], true);
+            $wG .= ' AND (ABS(c.valor) BETWEEN ? AND ? OR ABS(l.valor) BETWEEN ? AND ?' . ($solto ? " OR CONCAT(' ', $txt, ' ') LIKE ?" : '') . ')';
+            array_push($aG, $v - 0.004, $v + ($cheio ? 0.99 : 0) + 0.004, $v - 0.004, $v + ($cheio ? 0.99 : 0) + 0.004); if ($solto) $aG[] = '% ' . (int)$v . ' %'; }
+        foreach ($iq['refs'] as $d) { $wG .= " AND (ABS(c.valor) BETWEEN ? AND ? OR $txt LIKE ?)"; array_push($aG, (float)$d - 0.004, (float)$d + 0.994, '%' . $d . '%'); }
+        foreach ($iq['datas'] as $d) { $wG .= ' AND (c.data = ? OR l.data = ?)'; array_push($aG, $d, $d); }
+        foreach ($iq['docs'] as $d) { $wG .= " AND (l.doc = ? OR REPLACE(REPLACE(REPLACE($txt, '.', ''), '-', ''), '/', '') LIKE ?)"; array_push($aG, $d, '%' . $d . '%'); }
+        foreach ($iq['palavras'] as $w) { $wG .= " AND $txt LIKE ?"; $aG[] = '%' . $w . '%'; }
+    }
+    $deLinhas = ' FROM bb_conf_linhas c LEFT JOIN bb_lanc l ON l.id = c.lanc_id LEFT JOIN bb_contas ct ON ct.id = l.conta_id WHERE c.conf_id = ?';
+    $cont = []; $st = $pdo->prepare('SELECT c.status, COUNT(*) n, SUM(ABS(c.valor)) v' . $deLinhas . $wG . ' GROUP BY c.status'); $st->execute(array_merge([$id], $aG)); foreach ($st as $r) $cont[$r['status']] = $r;
     $total = array_sum(array_column($cont, 'n')); $stSel = array_key_exists($_GET['st'] ?? '', BbConferencia::STATUS) ? (string)$_GET['st'] : '';
     $porPag = 300; $pg = max(1, (int)($_GET['p'] ?? 1)); $nSel = $stSel ? (int)($cont[$stSel]['n'] ?? 0) : $total; $pags = max(1, (int)ceil($nSel / $porPag));
-    $sql = 'SELECT c.*, l.data AS l_data, l.valor AS l_valor, l.memo, l.contraparte, ct.apelido, ct.banco FROM bb_conf_linhas c LEFT JOIN bb_lanc l ON l.id = c.lanc_id LEFT JOIN bb_contas ct ON ct.id = l.conta_id WHERE c.conf_id = ?' . ($stSel ? ' AND c.status = ?' : '') . ($gSel !== '' ? ' AND c.grupo = ?' : '') . ' ORDER BY c.grupo, c.data, c.linha LIMIT ' . $porPag . ' OFFSET ' . (($pg - 1) * $porPag);
+    $sql = 'SELECT c.*, l.data AS l_data, l.valor AS l_valor, l.memo, l.contraparte, ct.apelido, ct.banco' . $deLinhas . ($stSel ? ' AND c.status = ?' : '') . $wG . ' ORDER BY c.grupo, c.data, c.linha LIMIT ' . $porPag . ' OFFSET ' . (($pg - 1) * $porPag);
     $st = $pdo->prepare($sql); $st->execute(array_merge([$id], $stSel ? [$stSel] : [], $aG)); $linhas = $st->fetchAll();
     $idsC = []; foreach ($linhas as $l) if (in_array($l['status'], ['ambigua', 'pendente'], true)) foreach (json_decode((string)$l['candidatos'], true) ?: [] as $x) $idsC[(int)$x] = 1;
     $cands = []; if ($idsC) foreach ($pdo->query('SELECT l.id, l.data, l.valor, l.memo, l.contraparte, ct.apelido, ct.banco FROM bb_lanc l JOIN bb_contas ct ON ct.id = l.conta_id WHERE l.id IN (' . implode(',', array_keys($idsC)) . ')') as $r) $cands[(int)$r['id']] = $r;
@@ -134,7 +149,7 @@ if ($id):
     // resumo por venda: onde estão os problemas
     $st = $pdo->prepare("SELECT grupo, COUNT(*) n, SUM(status = 'ok') ok, SUM(status = 'nao') nao, SUM(status = 'ambigua') amb, SUM(status = 'sem_dados') sem, SUM(status = 'pend_achou') pa, SUM(status = 'pendente') pe, SUM(CASE WHEN status = 'nao' THEN ABS(valor) ELSE 0 END) v_nao
         FROM bb_conf_linhas WHERE conf_id = ? AND grupo <> '' GROUP BY grupo ORDER BY (SUM(status = 'nao') + SUM(status = 'pend_achou') + SUM(status = 'ambigua')) DESC, grupo LIMIT 400"); $st->execute([$id]); $vendas = $st->fetchAll();
-    $lk = fn(array $t = []) => '?' . http_build_query(array_filter(array_merge(['id' => $id, 'st' => $stSel, 'g' => $gSel], $t), fn($v) => $v !== '' && $v !== null));
+    $lk = fn(array $t = []) => '?' . http_build_query(array_filter(array_merge(['id' => $id, 'st' => $stSel, 'g' => $gSel, 'q' => $qSel], $t), fn($v) => $v !== '' && $v !== null));
 ?>
 <section class="bb-card">
   <h2><?= h($conf['nome']) ?></h2>
@@ -156,6 +171,13 @@ if ($id):
 <?php if ($vendas && $gSel === ''): ?><details class="bb-card"<?= !$stSel && $pg === 1 ? ' open' : '' ?>><summary style="cursor:pointer;font-weight:700;color:#303682">Resumo por venda (<?= count($vendas) ?>) — as com mais problemas primeiro</summary>
   <div class="bb-tab-wrap" style="margin-top:10px;max-height:420px;overflow:auto"><table class="bb-tab"><thead><tr><th>Venda / cliente</th><th class="num">Linhas</th><th class="num">Encontradas</th><th class="num">Não encontradas</th><th class="num">Valor não encontrado</th><th class="num">Várias possíveis</th><th class="num">Pendente que está no banco</th><th class="num">Sem extrato</th><th class="num">Pendentes</th></tr></thead><tbody>
   <?php foreach ($vendas as $v): ?><tr><td><a href="<?= h($lk(['g' => $v['grupo'], 'st' => ''])) ?>"><?= h($v['grupo']) ?></a></td><td class="num"><?= (int)$v['n'] ?></td><td class="num ent"><?= (int)$v['ok'] ?></td><td class="num sai"><?= (int)$v['nao'] ?: '' ?></td><td class="num sai"><?= (float)$v['v_nao'] ? BbTexto::brl((float)$v['v_nao']) : '' ?></td><td class="num"><?= (int)$v['amb'] ?: '' ?></td><td class="num"><?= (int)$v['pa'] ?: '' ?></td><td class="num"><?= (int)$v['sem'] ?: '' ?></td><td class="num"><?= (int)$v['pe'] ?: '' ?></td></tr><?php endforeach; ?></tbody></table></div></details><?php endif; ?>
+<form class="bb-card bb-conf-busca" method="get" action="/busca-bancos/conferencia.php" role="search">
+  <input type="hidden" name="id" value="<?= $id ?>"><?php if ($stSel): ?><input type="hidden" name="st" value="<?= h($stSel) ?>"><?php endif; ?><?php if ($gSel !== ''): ?><input type="hidden" name="g" value="<?= h($gSel) ?>"><?php endif; ?>
+  <label for="bb-cq"><b>Procurar nesta conferência</b></label>
+  <div class="bb-conf-busca-linha"><input id="bb-cq" class="bb-campo" type="search" name="q" value="<?= h($qSel) ?>" placeholder="Nome, texto da planilha ou do banco, valor (2394 ou 2.394,16), data (15/03/2026), CPF/CNPJ, anotação" autocomplete="off">
+    <button class="bb-btn" type="submit">Procurar</button><?php if ($qSel !== ''): ?> <a class="bb-btn sec" href="<?= h($lk(['q' => '', 'p' => ''])) ?>">Limpar</a><?php endif; ?></div>
+  <?php if ($qSel !== ''): ?><p class="bb-nota" style="margin:6px 0 0"><?= $nSel ?> linha(s) encontradas<?= $stSel ? ' em "' . h(BbConferencia::STATUS[$stSel]) . '"' : '' ?><?= $gSel !== '' ? ' na venda ' . h($gSel) : '' ?>. Os números acima também consideram a busca.</p><?php endif; ?>
+</form>
 <div class="bb-tab-wrap"><table class="bb-tab">
   <thead><tr><th>Linha</th><th>Data</th><th class="num">Valor</th><th>Na planilha</th><th>Resultado</th><th>No extrato do banco</th></tr></thead><tbody>
   <?php foreach ($linhas as $l): ?>
@@ -163,10 +185,10 @@ if ($id):
       <td><span class="bb-tag <?= $classe[$l['status']] ?>"><?= h(BbConferencia::STATUS[$l['status']]) ?></span><br><small><?= h($l['motivo']) ?></small></td>
       <td><?php if ($l['lanc_id'] && $l['l_data']): ?><?= bb_banco((string)$l['banco']) ?> <span class="bb-conta"><?= h($l['apelido']) ?></span> · <?= BbTexto::dataBr($l['l_data']) ?> · <b class="<?= (float)$l['l_valor'] >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl((float)$l['l_valor']) ?></b><br><b><?= h($l['contraparte']) ?></b> <span class="bb-memo"><?= h($l['memo']) ?></span>
         <?php elseif (in_array($l['status'], ['ambigua', 'pendente'], true) && (json_decode((string)$l['candidatos'], true) ?: [])): foreach (json_decode((string)$l['candidatos'], true) ?: [] as $cx): if (!isset($cands[$cx])) continue; $c = $cands[$cx]; ?>
-          <form method="post" action="?id=<?= $id ?>" style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="escolher"><input type="hidden" name="st" value="<?= h($stSel) ?>"><input type="hidden" name="g" value="<?= h($gSel) ?>"><input type="hidden" name="p" value="<?= $pg ?>"><input type="hidden" name="linha_id" value="<?= (int)$l['id'] ?>"><input type="hidden" name="lanc_id" value="<?= (int)$cx ?>">
+          <form method="post" action="?id=<?= $id ?>" style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="escolher"><input type="hidden" name="st" value="<?= h($stSel) ?>"><input type="hidden" name="g" value="<?= h($gSel) ?>"><input type="hidden" name="q" value="<?= h($qSel) ?>"><input type="hidden" name="p" value="<?= $pg ?>"><input type="hidden" name="linha_id" value="<?= (int)$l['id'] ?>"><input type="hidden" name="lanc_id" value="<?= (int)$cx ?>">
             <button class="bb-btn sec" type="submit" style="padding:3px 9px">É este</button><span><?= bb_banco($c['banco']) ?> <?= BbTexto::dataBr($c['data']) ?> · <b><?= BbTexto::brl((float)$c['valor']) ?></b> · <b><?= h($c['contraparte']) ?></b> <span class="bb-memo"><?= h(mb_substr($c['memo'], 0, 70)) ?> (<?= h($c['apelido']) ?>)</span></span></form>
         <?php endforeach; ?>
-          <form method="post" action="?id=<?= $id ?>"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="escolher"><input type="hidden" name="st" value="<?= h($stSel) ?>"><input type="hidden" name="g" value="<?= h($gSel) ?>"><input type="hidden" name="p" value="<?= $pg ?>"><input type="hidden" name="linha_id" value="<?= (int)$l['id'] ?>"><input type="hidden" name="lanc_id" value="0"><button class="bb-btn perigo" type="submit" style="padding:3px 9px">Nenhum destes</button></form>
+          <form method="post" action="?id=<?= $id ?>"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="escolher"><input type="hidden" name="st" value="<?= h($stSel) ?>"><input type="hidden" name="g" value="<?= h($gSel) ?>"><input type="hidden" name="q" value="<?= h($qSel) ?>"><input type="hidden" name="p" value="<?= $pg ?>"><input type="hidden" name="linha_id" value="<?= (int)$l['id'] ?>"><input type="hidden" name="lanc_id" value="0"><button class="bb-btn perigo" type="submit" style="padding:3px 9px">Nenhum destes</button></form>
         <?php else: ?><a href="/busca-bancos/?q=<?= urlencode(number_format(abs((float)$l['valor']), 2, ',', '.')) ?>&tolv=5">procurar este valor na busca</a><?php endif; ?></td></tr>
   <?php endforeach; ?></tbody></table></div>
 <?php if ($pags > 1): ?><nav class="bb-pag">Página <?= $pg ?> de <?= $pags ?> <?php if ($pg > 1): ?><a class="bb-btn sec" href="<?= h($lk(['p' => $pg - 1])) ?>">← Anterior</a><?php endif; ?><?php if ($pg < $pags): ?><a class="bb-btn sec" href="<?= h($lk(['p' => $pg + 1])) ?>">Próxima →</a><?php endif; ?></nav><?php endif; ?>
