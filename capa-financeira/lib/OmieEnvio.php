@@ -444,6 +444,16 @@ final class OmieEnvio
         if (!empty($t['codigo_lancamento_omie'])) self::lembrarTitulo($empresa, $tipo, $codigo, $t);
         return $t ?: null;
     }
+    /** mesmo título por OUTRO caminho (PesquisarLancamentos por id) — uma requisição diferente de Consultar*, para conferir sem cair no "redundante".
+     *  Devolve só os campos no nome do Consultar* (codigo_cliente_fornecedor, valor_documento, data_vencimento, data_previsao, codigo_categoria, id_conta_corrente, numero_documento_fiscal). */
+    public static function consultarPorPesquisa(string $empresa, string $tipo, int $omieId): ?array
+    {
+        $r = OmieApi::call($empresa, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 5, 'cNatureza' => $tipo, 'nCodTitulo' => $omieId], true);
+        foreach ($r['titulosEncontrados'] ?? [] as $x) { $c = $x['cabecTitulo'] ?? $x; if ((int)($c['nCodTitulo'] ?? 0) !== $omieId) continue;
+            return ['codigo_lancamento_omie' => $omieId, 'codigo_cliente_fornecedor' => (int)($c['nCodCliente'] ?? 0), 'valor_documento' => (float)($c['nValorTitulo'] ?? 0), 'data_vencimento' => (string)($c['dDtVenc'] ?? ''),
+                    'data_previsao' => (string)($c['dDtPrevisao'] ?? ''), 'codigo_categoria' => (string)($c['cCodCateg'] ?? ''), 'id_conta_corrente' => (int)($c['nCodCC'] ?? 0), 'numero_documento_fiscal' => (string)($c['cNumDocFiscal'] ?? ''), 'status_titulo' => (string)($c['cStatus'] ?? ''), '_fonte' => 'pesquisa']; }
+        return null;
+    }
     /** conferência depois de incluir: consulta pelo código Omie (chamada diferente da pré-checagem, não cai no "consumo redundante") */
     public static function consultarPorOmieId(string $empresa, string $tipo, int $omieId): ?array
     {
@@ -491,21 +501,27 @@ final class OmieEnvio
         if (isset($mud['valor_documento']) && !empty($alvo['distribuicao'])) $mud['distribuicao'] = $alvo['distribuicao'];   // rateio acompanha o valor
         $ped = ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']] + $mud;
         OmieApi::call($empresa, self::path($tipo), 'Alterar' . self::sufixo($tipo), $ped);
-        // conferência de volta: o Omie leva alguns segundos para refletir a alteração na consulta (visto em 16/11/2026: a alteração
-        // de cliente tinha sido aceita, mas 2 s depois a consulta ainda devolvia o cliente antigo). Tenta em 2 s, 5 s e 8 s (15 s no total).
-        $v = null; $falhou = [];
-        foreach ([2, 5, 8] as $esp) {
+        // conferência de volta. Duas regras do Omie se combinam aqui: ele leva alguns segundos para refletir a alteração, e repetir uma
+        // requisição IDÊNTICA em menos de ~60 s dá "Consumo redundante" (bloqueia). Por isso cada tentativa usa uma consulta DIFERENTE da
+        // anterior (por código de integração, depois PesquisarLancamentos por id) e um erro temporário na conferência não vira "não alterou".
+        $omieId = (int)$t['codigo_lancamento_omie']; $v = null; $falhou = []; $inconclusiva = '';
+        $tentativas = [
+            [2, fn() => self::consultarPorIntegracao($empresa, $tipo, $codigo)],
+            [6, fn() => self::consultarPorPesquisa($empresa, $tipo, $omieId)],
+        ];
+        foreach ($tentativas as [$esp, $fn]) {
             sleep($esp);
-            OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => (int)$t['codigo_lancamento_omie']]);
-            $v = self::consultarPorOmieId($empresa, $tipo, (int)$t['codigo_lancamento_omie']);
-            if (!$v) continue;
-            $falhou = [];
+            try { $r = $fn(); } catch (Throwable $e) { if (self::erroTemporario($e->getMessage())) { $inconclusiva = $e->getMessage(); continue; } throw $e; }
+            if (!$r) continue;
+            $v = $r; $falhou = [];
             foreach ($mud as $k => $x) if ($k !== 'distribuicao' && !$igual($x, $v[$k] ?? '')) $falhou[] = $k . ' (ficou ' . json_encode($v[$k] ?? null, JSON_UNESCAPED_UNICODE) . ')';
             if (!$falhou) break;
         }
+        OmieApi::esquecer($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => $omieId]);   // a próxima leitura por id vem do Omie
+        if (!$v && $inconclusiva) { self::lembrarTitulo($empresa, $tipo, $codigo, $mud + $t); return ['status' => 'alterado', 'msg' => 'alteração aceita pelo Omie; não consegui conferir de volta agora (' . $inconclusiva . ') — confira no Omie mais tarde', 'antes' => $t, 'depois' => null]; }
         if (!$v) return ['status' => 'erro', 'msg' => 'o Omie aceitou a alteração mas a consulta de volta não achou o título — confira no Omie', 'antes' => $t, 'depois' => null];
-        $outros = [];   // nada além do pedido pode ter mudado
-        foreach ($campos as $k) if (!isset($mud[$k]) && !$igual($t[$k] ?? '', $v[$k] ?? '')) $outros[] = $k;
+        $outros = [];   // nada além do pedido pode ter mudado (só comparável quando a conferência veio do mesmo Consultar*)
+        if (($v['_fonte'] ?? '') !== 'pesquisa') foreach ($campos as $k) if (!isset($mud[$k]) && !$igual($t[$k] ?? '', $v[$k] ?? '')) $outros[] = $k;
         self::lembrarTitulo($empresa, $tipo, $codigo, $v);
         // o Omie aceitou o pedido (codigo_status 0): se depois de 15 s a consulta ainda não reflete, é atraso do Omie, não recusa —
         // conta como alterado, com aviso para conferir mais tarde (a lista local fica com o valor pedido)
