@@ -202,6 +202,9 @@ try {
     // ---- Busca Bancos (busca-bancos/schema.php): extratos unificados + botão na home -----
     require_once dirname(__DIR__) . '/busca-bancos/schema.php';
     foreach (bb_migrar($pdo) as $f) $feitos[] = 'busca-bancos: ' . $f;
+    // ---- Alterador Omie (alterador-omie/schema.php): rodadas/itens/receitas + botão na home -----
+    require_once dirname(__DIR__) . '/alterador-omie/schema.php';
+    foreach (ao_migrar($pdo) as $f) $feitos[] = 'alterador-omie: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
