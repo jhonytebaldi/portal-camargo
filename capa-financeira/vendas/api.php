@@ -269,6 +269,22 @@ try {
         $resp(['ok' => true]);
     }
 
+    if ($acao === 'construtora_cad') {
+
+        // etapa 1: guarda o cadastro do Omie escolhido/cadastrado para a construtora (vale para a etapa 3 e para as capas), sem mexer em "quem paga"
+
+        $nome = trim((string)($in['nome'] ?? '')); $cad = (array)($in['cadastro'] ?? []);
+
+        if ($nome === '' || empty($cad['codigo'])) $resp(['ok' => false, 'erros' => ['construtora ou cadastro do Omie não informado']]);
+
+        $r = cv_construtora($nome);
+
+        cv_construtora_gravar($nome, $r['modo'] ?? null, $r['sinal'] ?? null, null, ['codigo' => (int)$cad['codigo'], 'nome' => (string)($cad['nome'] ?? ''), 'doc' => (string)($cad['doc'] ?? '')], $u, false);
+
+        exit(json_encode(['ok' => true]));
+
+    }
+
     if ($acao === 'omie') {
         $doc = Venda::docLimpo($in['documento'] ?? '');
         if (!Venda::tipoDoc($doc)) $resp(['ok' => true, 'status' => 'invalido', 'msg' => 'CPF/CNPJ inválido']);

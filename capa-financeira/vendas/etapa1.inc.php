@@ -47,6 +47,7 @@ $e1ok = $v['e1_status'] !== 'rascunho';
       <label>Construtora
         <input name="construtora" list="cv-lista-construtoras" value="<?= h($v['construtora']) ?>" placeholder="escolha da lista sempre que existir">
         <span class="cv-sug" data-sug="construtora"></span>
+        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px"><span class="cv-chip esp" data-constr-omie>—</span><button type="button" class="cf-x" id="cv-constr-omie" title="procura cadastros parecidos no Omie (Vertical/Camargo) ou cadastra a construtora agora">🔍 escolher / cadastrar no Omie</button></span>
       </label>
       <label>Cód. do imóvel (Robust)
         <input name="cod_imovel" value="<?= h($v['cod_imovel']) ?>" inputmode="numeric" placeholder="ex.: 933">
@@ -131,7 +132,7 @@ $e1ok = $v['e1_status'] !== 'rascunho';
     <div class="cv-comp-top"><span class="n">Comprador</span><button type="button" class="cf-x cv-rem" title="remover este comprador">✕</button></div>
     <div class="cv-g cv-g2">
       <label>Nome completo<input data-c="nome"></label>
-      <label>CPF ou CNPJ<input data-c="documento" inputmode="numeric"><span class="cv-chip esp" data-omie>—</span></label>
+      <label>CPF ou CNPJ<input data-c="documento" inputmode="numeric"><span class="cv-chip esp" data-omie>—</span><button type="button" class="cf-x cv-comp-omie" style="margin-top:4px" title="procura cadastros parecidos no Omie da Vertical ou cadastra o comprador agora">🔍 escolher / cadastrar no Omie</button></label>
       <label>E-mail<input data-c="email" type="email"></label>
       <label>Data de nascimento (opcional)<input data-c="nascimento" type="date"></label>
     </div>
@@ -166,6 +167,18 @@ $e1ok = $v['e1_status'] !== 'rascunho';
     const doc = el.querySelector('[data-c="documento"]');
     doc.addEventListener('blur', () => { doc.value = docMask(doc.value); conferirOmie(el); });
     el.querySelector('[data-c="nome"]').addEventListener('blur', e => { e.target.value = e.target.value.toUpperCase().replace(/\s+/g, ' ').trim(); });
+    // escolher um cadastro parecido no Omie da Vertical, ou cadastrar o comprador agora (mesmo seletor da etapa 3 / exportação)
+    el.querySelector('.cv-comp-omie').onclick = async () => {
+      const nomeEl = el.querySelector('[data-c="nome"]'), emailEl = el.querySelector('[data-c="email"]');
+      const c = await CFOmie.escolher({empresa: 'vertical', empresaNome: 'Vertical', termo: nomeEl.value.trim() || doc.value, doc: doc.value, email: emailEl.value, titulo: 'Comprador — cadastro no Omie da Vertical'});
+      if (!c) return;
+      if (c.doc) doc.value = docMask(String(c.doc));
+      if (!nomeEl.value.trim() && c.nome) nomeEl.value = c.nome;
+      el.dataset.docSalvo = '';
+      chip(el, 'ok', '✔ Omie Vertical: ' + (c.nome || '') + ' (cód. ' + c.codigo + ')');
+      mudou();
+      if (c.nome && nomeEl.value.trim() && chave(c.nome) !== chave(nomeEl.value)) chip(el, 'novo', '⚠ no Omie está como: ' + c.nome + ' (cód. ' + c.codigo + ') — confira se é a mesma pessoa');
+    };
     box.appendChild(el); renumera();
     if (CV.somenteLeitura) el.querySelectorAll('input,button').forEach(x => x.disabled = true);
   }
@@ -184,6 +197,31 @@ $e1ok = $v['e1_status'] !== 'rascunho';
   }
   comps0.forEach(addComp);
   document.getElementById('cv-add-comp').onclick = () => { addComp({}); mudou(); };
+
+  /* ---------- construtora no Omie (base compartilhada Vertical/Camargo) ---------- */
+  const EMP_CONSTR = 'vertical';
+  const chipC = (cls, txt) => { const c = form.querySelector('[data-constr-omie]'); c.className = 'cv-chip ' + cls; c.textContent = txt; };
+  let constrId = 0;
+  async function identificaConstrutora() {
+    const nome = form.construtora.value.trim(); const n = ++constrId;
+    if (!nome) { chipC('esp', '—'); return; }
+    chipC('esp', 'procurando no Omie…');
+    const r = await CFOmie.identificar({empresa: EMP_CONSTR, termo: nome});
+    if (n !== constrId) return;
+    if (r.certo) { chipC('ok', '✔ Omie: ' + r.certo.nome + (r.certo.doc ? ' · ' + r.certo.doc : '') + ' (cód. ' + r.certo.codigo + ')'); CV.api({acao: 'construtora_cad', nome, cadastro: r.certo}); }
+    else chipC('novo', r.erro ? r.erro : (r.lista && r.lista.length ? r.lista.length + ' cadastro(s) parecido(s) no Omie — clique em escolher' : 'não está no Omie — clique para escolher ou cadastrar'));
+  }
+  document.getElementById('cv-constr-omie').onclick = async () => {
+    const c = await CFOmie.escolher({empresa: EMP_CONSTR, empresaNome: 'Vertical / Camargo (base compartilhada)', termo: form.construtora.value.trim(), titulo: 'Construtora — cadastro no Omie'});
+    if (!c) return;
+    form.construtora.value = String(c.nome || '').toUpperCase().replace(/\s+/g, ' ').trim();
+    chipC('ok', '✔ Omie: ' + c.nome + (c.doc ? ' · ' + c.doc : '') + ' (cód. ' + c.codigo + ')');
+    const j = await CV.api({acao: 'construtora_cad', nome: form.construtora.value, cadastro: c});
+    if (!j.ok) CV.msg('erro', CV.lista(j.erros || ['não consegui guardar o vínculo da construtora']));
+    mudou();
+  };
+  form.construtora.addEventListener('change', () => identificaConstrutora());
+  if (!CV.somenteLeitura) identificaConstrutora(); else document.getElementById('cv-constr-omie').disabled = true;
 
   /* ---------- CEP (ViaCEP, direto do navegador) ---------- */
   const sug = (k, html) => form.querySelector('[data-sug="' + k + '"]').innerHTML = html;
