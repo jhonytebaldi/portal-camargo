@@ -43,7 +43,7 @@
         + '<details class="cfo-novo" data-novo><summary>Não está na lista? Cadastrar no Omie agora</summary>'
         + '<label>Nome completo / razão social (até 60) <input data-nome maxlength="60" value="' + esc((o.termo || '').slice(0, 60)) + '"></label>'
         + '<label>CPF ou CNPJ <input data-doc value="' + esc(fmtDoc(o.doc || '')) + '"></label>'
-        + '<label>E-mail (opcional) <input data-email></label>'
+        + '<label>E-mail (opcional) <input data-email value="' + esc(o.email || '') + '"></label>'
         + '<div class="cfo-msg" data-msg></div><button type="button" class="pri" data-cadastrar>Cadastrar no Omie</button></details>'
         + '<div class="cfo-rod"><button type="button" data-cancelar>Cancelar</button></div></div>';
       document.body.appendChild(f);
