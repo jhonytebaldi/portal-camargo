@@ -208,7 +208,11 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
   const mostraOrdem = () => info.textContent = manual ? 'ordem manual (arrastada) — os gatilhos continuam calculados pela data' : 'ordenado por data';
   function ordenaPorData() {
     const rows = [...tb.querySelectorAll('tr')];
-    rows.map((tr, i) => [tr.querySelector('[data-f=data]').value || '9999-99-99', i, tr]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]).forEach(x => tb.appendChild(x[2]));
+    const ord = rows.map((tr, i) => [tr.querySelector('[data-f=data]').value || '9999-99-99', i, tr]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]).map(x => x[2]);
+    if (ord.every((tr, i) => tr === rows[i])) return;   // já está em ordem: não mexe no DOM (remover/recolocar as linhas tirava o foco do campo e a página rolava para o topo)
+    const foco = document.activeElement, pos = foco && foco.selectionStart !== undefined ? [foco.selectionStart, foco.selectionEnd] : null;
+    ord.forEach(tr => tb.appendChild(tr));
+    if (foco && tb.contains(foco)) { try { foco.focus({preventScroll: true}); if (pos) foco.setSelectionRange(pos[0], pos[1]); } catch (e) {} }
   }
   document.getElementById('cv-ord-data').onclick = () => { manual = false; ordenaPorData(); mostraOrdem(); mudou(); };
   // reordena por data só quando a pessoa termina a linha (sai dela com data e valor preenchidos — e nome/CPF se for outro pagador),

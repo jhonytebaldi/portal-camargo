@@ -184,10 +184,23 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
     if (ev.key === 'Enter') { ev.preventDefault(); try { aplicarEdicao(tr); } catch (e) {} }
     if (ev.key === 'Escape') { editando = null; render(); }
   });
-  box.addEventListener('focusout', ev => { if (ev.target.dataset.e === 'valor') CV.numBlur(ev.target, false); });
+  box.addEventListener('focusout', ev => {
+    if (ev.target.dataset.e === 'valor') CV.numBlur(ev.target, false);
+    if (ev.target.dataset.pend) { delete ev.target.dataset.pend; aplicaCfg(ev.target); }   // data da etapa: aplica só quando sai do campo
+  });
+  box.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.dataset.dm !== undefined) { ev.preventDefault(); ev.target.blur(); } });
   box.addEventListener('change', ev => {
     const i = ev.target;
     if (i.dataset.cond !== undefined || i.dataset.dm !== undefined) {
+      // campo de data dispara "change" a cada parte digitada (ano "0002"…) — se ainda está com o foco, espera sair do campo
+      if (i.type === 'date' && document.activeElement === i) { i.dataset.pend = '1'; return; }
+      aplicaCfg(i); return;
+    }
+    if (i.dataset.pag) { i.checked ? sel.add(i.dataset.pag) : sel.delete(i.dataset.pag); i.closest('tr').classList.toggle('sel', i.checked); botoes(); return; }
+    if (i.dataset.todos) { ultimo.calc.pagamentos.filter(p => p.etapa === i.dataset.todos && podeMarcar(p)).forEach(p => i.checked ? sel.add(p.chave) : sel.delete(p.chave)); render(); }
+  });
+  function aplicaCfg(i) {
+    {
       const k = i.dataset.cond ?? i.dataset.dm;
       cfg[k] = cfg[k] || {};
       const campo = i.dataset.cond !== undefined ? 'condicao' : 'data';
@@ -195,12 +208,11 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
       const proprias = ultimo.calc.pagamentos.filter(p => p.etapa === k && (lin[p.chave] || {})[campo] !== undefined);
       if (proprias.length && confirm(proprias.length + ' linha(s) desta etapa têm ' + (campo === 'data' ? 'data' : 'condição') + ' própria. Aplicar o novo valor também nelas?'))
         proprias.forEach(p => { delete lin[p.chave][campo]; if (!Object.keys(lin[p.chave]).length) delete lin[p.chave]; });
-      if (campo === 'condicao') cfg[k].condicao = i.value.trim().toUpperCase(); else cfg[k].data_manual = i.value;
-      CV.sujo = true; previa(); return;
+      if (campo === 'condicao') cfg[k].condicao = i.value.trim().toUpperCase();
+      else { if (i.value && i.value < '2000-01-01') { CV.alerta('Data inválida (' + i.value.split('-').reverse().join('/') + ') — confira o ano.'); return; } cfg[k].data_manual = i.value; }
+      CV.sujo = true; previa();
     }
-    if (i.dataset.pag) { i.checked ? sel.add(i.dataset.pag) : sel.delete(i.dataset.pag); i.closest('tr').classList.toggle('sel', i.checked); botoes(); return; }
-    if (i.dataset.todos) { ultimo.calc.pagamentos.filter(p => p.etapa === i.dataset.todos && podeMarcar(p)).forEach(p => i.checked ? sel.add(p.chave) : sel.delete(p.chave)); render(); }
-  });
+  }
 
   async function enviar(acao, extra) {
     if (editando) { CV.alerta('Aplique ou cancele a linha que está editando.'); return; }
