@@ -120,7 +120,7 @@ final class OmieEnvio
     private static function tituloReg(array $t): array
     {
         return ['omie_id' => (int)($t['codigo_lancamento_omie'] ?? 0), 'forn' => (int)($t['codigo_cliente_fornecedor'] ?? 0), 'valor' => (float)($t['valor_documento'] ?? 0),
-                'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => (float)($t['valor_pag'] ?? 0), 'doc' => (string)($t['numero_documento'] ?? '')];
+                'venc' => (string)($t['data_vencimento'] ?? ''), 'status' => (string)($t['status_titulo'] ?? ''), 'pago' => self::baixado($t) ? (float)($t['valor_documento'] ?? 0) : 0.0, 'doc' => (string)($t['numero_documento'] ?? '')];
     }
     private static function indexarTitulo(array &$out, array $t): void
     {
@@ -460,7 +460,10 @@ final class OmieEnvio
         try { return OmieApi::call($empresa, self::path($tipo), 'Consultar' . self::sufixo($tipo), ['codigo_lancamento_omie' => $omieId]); }
         catch (RuntimeException $e) { if (preg_match('/n[ãa]o cadastrado|n[ãa]o (foi )?(encontrad|localizad)|Client-105|Client-103/iu', $e->getMessage())) return null; throw $e; }
     }
-    public static function erroTemporario(string $msg): bool { return (bool)preg_match('/REDUNDANT|MISUSE|Client-6\]|bloqueada temporariamente|indispon[ií]vel|timed out|timeout|Client-1013|pausa preventiva/iu', $msg); }
+    /** título com baixa (total ou parcial)? Pela SITUAÇÃO: o campo valor_pag do Omie NÃO é "valor já pago" — vem igual ao valor do
+     *  documento em muitos títulos em aberto (e vazio em outros); conferido em 17/11/2026 na Vertical (ListarContasPagar/ConsultarContaPagar). */
+    public static function baixado(array $t): bool { return (bool)preg_match('/PAG|RECEB|LIQ/i', (string)($t['status_titulo'] ?? '')); }
+    public static function erroTemporario(string $msg): bool { return (bool)preg_match('/REDUNDANT|MISUSE|Client-6\]|Client-1880|sendo executada|sendo processada|j[áa] foi processada|bloqueada temporariamente|indispon[ií]vel|timed out|timeout|Client-1013|pausa preventiva/iu', $msg); }
 
     /** Exclui se ainda não foi baixado. @return array{ok: bool, msg: string} */
     public static function excluir(string $empresa, string $tipo, string $codigo): array
@@ -468,7 +471,7 @@ final class OmieEnvio
         $tit = self::titulos($empresa, $tipo); $t0 = $tit['por_codigo'][$codigo] ?? null;
         $t = $t0 ? self::consultarPorOmieId($empresa, $tipo, (int)$t0['omie_id']) : null;   // consulta por id só quando sabemos que existe (não gera erro)
         if (!$t) { self::lembrarTitulo($empresa, $tipo, $codigo, null); return ['ok' => true, 'msg' => 'já não existia no Omie']; }
-        $st = (string)($t['status_titulo'] ?? ''); $pago = (float)($t['valor_pag'] ?? 0);
+        $st = (string)($t['status_titulo'] ?? ''); $pago = self::baixado($t) ? (float)($t['valor_documento'] ?? 0) : 0.0;
         if ($pago > 0 || in_array(strtoupper($st), ['PAGO', 'RECEBIDO', 'LIQUIDADO', 'PAGO PARC', 'RECEBIDO PARC'], true) || preg_match('/PAG|RECEB|LIQ/i', $st))
             return ['ok' => false, 'msg' => "não excluído: o título já tem baixa no Omie (status $st, pago " . number_format($pago, 2, ',', '.') . ') — trate manualmente'];
         $chave = $tipo === 'P' ? ['codigo_lancamento_integracao' => $codigo] : ['codigo_lancamento_integracao' => $codigo];
@@ -490,8 +493,8 @@ final class OmieEnvio
         $id = $omieId ?: (int)($t0['omie_id'] ?? 0);
         $t = $id ? self::consultarPorOmieId($empresa, $tipo, $id) : self::consultarPorIntegracao($empresa, $tipo, $codigo);
         if (!$t) return ['status' => 'erro', 'msg' => 'título não existe no Omie com este código — se foi excluído por lá, use "Forçar reenvio"', 'antes' => null, 'depois' => null];
-        $st = (string)($t['status_titulo'] ?? ''); $pago = (float)($t['valor_pag'] ?? $t['valor_recebido'] ?? 0);
-        if ($pago > 0 || preg_match('/PAG|RECEB|LIQ/i', $st)) return ['status' => 'manual', 'msg' => "título já tem baixa no Omie (status $st) — o Omie não deixa alterar; ajuste manualmente", 'antes' => null, 'depois' => null];
+        $st = (string)($t['status_titulo'] ?? '');
+        if (self::baixado($t)) return ['status' => 'manual', 'msg' => "título já tem baixa no Omie (status $st) — o Omie não deixa alterar; ajuste manualmente", 'antes' => null, 'depois' => null];
         if (preg_match('/CANCEL/i', $st)) return ['status' => 'manual', 'msg' => 'título cancelado no Omie — ajuste manualmente', 'antes' => null, 'depois' => null];
         $campos = ['codigo_cliente_fornecedor', 'valor_documento', 'data_vencimento', 'data_previsao', 'codigo_categoria', 'id_conta_corrente', 'numero_documento_fiscal'];
         $igual = fn($a, $b) => is_numeric($a) && is_numeric($b) ? abs((float)$a - (float)$b) < 0.005 : trim((string)$a) === trim((string)$b);
@@ -546,7 +549,7 @@ final class OmieEnvio
         $forma = (string)($cnab['codigo_forma_pagamento'] ?? '');
         if ($forma === 'TRA' && (string)($cnab['finalidade_transferencia'] ?? '') === '01.3') return ['status' => 'ja_ok', 'msg' => 'já está como Transferência por chave PIX', 'antes' => $cnab, 'depois' => $cnab];
         if ($forma !== 'PIX' && $forma !== '') return ['status' => 'pulado', 'msg' => "forma de pagamento é \"$forma\" (não é PIX QR-Code) — não mexi", 'antes' => $cnab, 'depois' => null];
-        if ((float)($t['valor_pag'] ?? 0) > 0 || preg_match('/PAG|LIQ/i', (string)($t['status_titulo'] ?? ''))) return ['status' => 'pulado', 'msg' => 'título já pago/baixado (status ' . $t['status_titulo'] . ') — não mexi', 'antes' => $cnab, 'depois' => null];
+        if (self::baixado($t)) return ['status' => 'pulado', 'msg' => 'título já pago/baixado (status ' . $t['status_titulo'] . ') — não mexi', 'antes' => $cnab, 'depois' => null];
         $chave = trim($chave) !== '' ? trim($chave) : trim((string)($cnab['pix_qrcode'] ?? ''));
         if ($chave === '') return ['status' => 'erro', 'msg' => 'sem chave Pix (nem no portal nem no título)', 'antes' => $cnab, 'depois' => null];
         $cad = null;

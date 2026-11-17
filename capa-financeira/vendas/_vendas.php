@@ -445,7 +445,7 @@ function cv_titulos_para_cancelar(array $venda): array
         }
         $t = $lista[$tipo]['por_codigo'][$l['codigo_integracao']] ?? null;
         $st = (string)($t['status'] ?? ''); $pago = (float)($t['pago'] ?? 0);
-        $baixado = $t && ($pago > 0 || preg_match('/PAG|RECEB|LIQ/i', $st));
+        $baixado = $t && preg_match('/PAG|RECEB|LIQ/i', $st);   // pela situação: valor_pag do Omie não é "valor pago" (17/11/2026)
         $out[$l['codigo_integracao']] = ['codigo' => $l['codigo_integracao'], 'tipo' => $tipo, 'valor' => (float)$l['valor'], 'vencimento' => $l['data_prevista'],
             'quem' => (string)$l['cf_raw'], 'status_omie' => $t ? $st : (isset($lista[$tipo]['erro']) ? 'não consegui consultar' : 'não encontrado no Omie'),
             'pago' => $pago, 'acao' => $baixado ? 'bloqueado' : ($t ? 'excluir' : 'nada'), 'linha_id' => (int)$l['id']];

@@ -97,7 +97,10 @@ final class OmieApi
             if (str_contains($msg, 'MISUSE') || str_contains($msg, 'REDUNDANT') || str_contains($msg, 'Client-6]')) self::registrarBloqueio($conta, $msg);
             // erros "de negócio" em leitura (não existe / sem registros) também entram no cache curto — repetir a pergunta é o que o Omie pune
             elseif ($leitura && preg_match('/n[ãa]o (existem|cadastrad|encontrad|localizad)|Client-103|Client-105|Client-5113/iu', $msg)) @file_put_contents($chave, json_encode(['__erro' => $msg]));
-            elseif (!$leitura) @file_put_contents($fw, $msg);   // lembra a gravação recusada (ver acima)
+            // lembra a gravação recusada (ver acima) — menos as recusas passageiras ("já existe uma requisição desse método sendo
+            // executada" Client-1880 / "esta requisição já foi processada ou está sendo processada… tente novamente às hh:mm:ss"):
+            // nelas o mesmo pedido PRECISA ser reenviado depois do horário indicado (visto em 17/11/2026)
+            elseif (!$leitura && !preg_match('/Client-1880|sendo executada|sendo processada|j[áa] foi processada/iu', $msg)) @file_put_contents($fw, $msg);
             throw new RuntimeException($msg);
         }
         if ($leitura) @file_put_contents($chave, (string)$raw);
