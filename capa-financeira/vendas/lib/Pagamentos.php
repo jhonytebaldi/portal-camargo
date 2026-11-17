@@ -15,7 +15,8 @@
      pagamento de comissão (o que fecha 100%).
    - Cada linha da etapa 2 recebe o seu % do líquido de cada etapa. DIRETOR:
      a parte dele sobre o arras e o restante inteiro na etapa que fecha 50%.
-   - Bônus: quando o cliente quita tudo (data da última parcela).
+   - Bônus: quando o cliente quita tudo (data da última parcela). Com trava (método atual) sai em 2 partes:
+     pré-reserva 50%/50%; IR Futuro ou Condicionado 75%/25% — a parte travada exige data e condição (17/11/2026).
    - Conclusão do processo: o desconto sai do 1º pagamento da linha se ele
      cobrir; senão do 2º — nunca parcial. Quem concluiu recebe na mesma etapa.
    - Data de pagamento: cliente paga até segunda → quinta da mesma semana; de
@@ -38,6 +39,9 @@ final class Pagamentos
     public const METODOS = ['atual' => 'Atual (Arras/50/75/100) ≥Out/26', 'antigo' => 'Antigo com trava padrão de 20%'];
     public const COND_CHAVES = 'ENTREGA CHAVES';
     public const COND_RESERVA = 'RESERVA 50%';
+    public const COND_IR_FUTURO = 'IR FUTURO';
+    public const COND_CONDICIONADO = 'CONDICIONADO';
+    public const COND_TRAVA_BONUS = 'TRAVA BONUS';
 
     public static function metodo(array $venda): string { return ($venda['metodo'] ?? 'atual') === 'antigo' ? 'antigo' : 'atual'; }
     public static function gatilhos(array $venda): array { return self::metodo($venda) === 'antigo' ? self::GATILHOS_ANTIGO : self::GATILHOS; }
@@ -168,10 +172,14 @@ final class Pagamentos
         if ($c1['bonus'] > 0) {
             $quit = max(array_map(fn($p) => (string)$p['data'], $parc));
             $base = ['gatilhos' => [], 'data_cliente' => $quit, 'frac' => 0, 'pct_preenchido' => 1, 'ultima_comissao' => false, 'bonus' => true, 'tem50' => false, 'limitado' => false];
-            if (!$antigo && in_array('PRE_RESERVA', $venda['e3']['travas'] ?? [], true)) {
-                // pré-reserva: bônus em 2 — metade na quitação, metade travada (data e condição manuais)
-                $etapas[] = $base + ['chave' => 'bonus', 'rotulo' => 'Bônus — 1ª metade (quitação)', 'parte' => 0.5, 'bruto' => (float)$c1['bonus'] / 2, 'liquido' => (float)$c1['bonus_distribuicao'] / 2, 'bonus_travado' => false];
-                $etapas[] = $base + ['chave' => 'bonus2', 'rotulo' => 'Bônus — 2ª metade', 'parte' => 0.5, 'bruto' => (float)$c1['bonus'] / 2, 'liquido' => (float)$c1['bonus_distribuicao'] / 2, 'bonus_travado' => true];
+            $tr = $venda['e3']['travas'] ?? [];
+            // bônus em 2 partes quando há trava (método atual): pré-reserva 50% / 50%; IR Futuro ou Condicionado 75% / 25%
+            // (regra de 17/11/2026: o bônus segue a mesma trava da comissão). A 1ª parte sai na quitação; a travada exige data e condição.
+            $parteLivre = !$antigo ? (in_array('PRE_RESERVA', $tr, true) ? 0.5 : (array_intersect(['IR_FUTURO', 'ABAIXO_70'], $tr) ? 0.75 : 1.0)) : 1.0;
+            if ($parteLivre < 1.0) {
+                $pl = (int)round($parteLivre * 100); $pt = 100 - $pl;
+                $etapas[] = $base + ['chave' => 'bonus', 'rotulo' => "Bônus — {$pl}% (quitação)", 'parte' => $parteLivre, 'bruto' => (float)$c1['bonus'] * $parteLivre, 'liquido' => (float)$c1['bonus_distribuicao'] * $parteLivre, 'bonus_travado' => false];
+                $etapas[] = $base + ['chave' => 'bonus2', 'rotulo' => "Bônus — {$pt}% travado", 'parte' => 1 - $parteLivre, 'bruto' => (float)$c1['bonus'] * (1 - $parteLivre), 'liquido' => (float)$c1['bonus_distribuicao'] * (1 - $parteLivre), 'bonus_travado' => true];
             } else {
                 $etapas[] = $base + ['chave' => 'bonus', 'rotulo' => 'Bônus (quitação)', 'parte' => 1.0, 'bruto' => (float)$c1['bonus'], 'liquido' => (float)$c1['bonus_distribuicao'], 'bonus_travado' => false];
             }
@@ -227,6 +235,14 @@ final class Pagamentos
             if ($porTrava && $antigo) {   // método antigo: condição já vem preenchida (pode trocar; não pode ficar vazia)
                 $e['condicao_padrao'] = in_array('100%', $e['gatilhos'], true) ? self::COND_CHAVES : (in_array('80%', $e['gatilhos'], true) ? self::COND_RESERVA : '');
                 if ($e['condicao'] === '') $e['condicao'] = $e['condicao_padrao'];
+            } elseif ($porTrava && !$antigo) {
+                // método atual: só UMA trava marcada (IR Futuro OU Condicionado) → condição sugerida, editável; parte travada do bônus → TRAVA BONUS.
+                // Com pré-reserva, ou com as duas travas marcadas, fica em branco (obrigatória, manual).
+                $unica = array_values(array_intersect(['IR_FUTURO', 'ABAIXO_70'], $travas));
+                if (count($unica) === 1 && !in_array('PRE_RESERVA', $travas, true)) {
+                    $e['condicao_padrao'] = $e['bonus'] ? self::COND_TRAVA_BONUS : ($unica[0] === 'IR_FUTURO' ? self::COND_IR_FUTURO : self::COND_CONDICIONADO);
+                    if ($e['condicao'] === '') $e['condicao'] = $e['condicao_padrao'];
+                }
             }
             $e['exige_manual'] = $porTrava || $e['condicao'] !== '';
             $e['exige_condicao'] = $porTrava;
