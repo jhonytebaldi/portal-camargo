@@ -7,8 +7,9 @@
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
+require_login();
+ao_instalar_se_preciso();   // admin: cria tabelas e registra a ferramenta antes da checagem de acesso (1ª visita)
 $u = require_tool('alterador-omie');
-ao_instalar_se_preciso();
 $empresas = ao_empresas();
 portal_header('Alterador Omie', $u);
 ?>

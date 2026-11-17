@@ -6,8 +6,9 @@
    ===================================================================== */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
+require_login();
+ao_instalar_se_preciso();   // admin: cria tabelas e registra a ferramenta antes da checagem de acesso (1ª visita)
 $u = require_tool('alterador-omie');
-ao_instalar_se_preciso();
 $pdo = db();
 $a = (string)($_GET['a'] ?? $_POST['a'] ?? '');
 $post = $_SERVER['REQUEST_METHOD'] === 'POST';
