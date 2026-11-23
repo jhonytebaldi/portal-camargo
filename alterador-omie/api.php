@@ -113,7 +113,7 @@ try {
         $erros = AoRegras::validarOps($ops, $tipos, $ctx);
         if ($erros) ao_json(['erros' => $erros]);
         $res = AoRegras::preparar($titulos, $ops, $opts, $ctx);
-        if ($a === 'previa') ao_json(['linhas' => array_map(fn($x) => ao_linha_previa($x, $ctx), $res), 'resumo' => AoRegras::resumo($ops)]);
+        if ($a === 'previa') ao_json(['linhas' => array_map(fn($x) => ao_linha_previa($x, $ctx), $res), 'resumo' => AoRegras::resumo($ops, AoCache::nomes($ctx))]);
         $id = ao_criar_rodada($pdo, $u, $emp, $tipos, $ops, $opts, $res, $ctx, null);
         ao_json(ao_rodada_view($pdo, $id));
     }
@@ -230,7 +230,7 @@ function ao_linha_previa(array $x, array $ctx): array
 function ao_criar_rodada(PDO $pdo, array $u, string $emp, string $tipos, array $ops, array $opts, array $res, array $ctx, ?int $desfaz, array $fixos = []): int
 {
     $pdo->beginTransaction();
-    $resumo = $desfaz ? 'Desfazer a rodada #' . $desfaz . ' (' . implode(', ', array_map(fn($o) => AoTitulo::rotulo($o['campo']), $ops)) . ')' : AoRegras::resumo($ops);
+    $resumo = $desfaz ? 'Desfazer a rodada #' . $desfaz . ' (' . implode(', ', array_map(fn($o) => AoTitulo::rotulo($o['campo']), $ops)) . ')' : AoRegras::resumo($ops, AoCache::nomes($ctx));
     $pdo->prepare('INSERT INTO ao_rodadas (empresa, tipos, resumo, ops, opts, desfaz_id, criado_por, n_itens) VALUES (?,?,?,?,?,?,?,?)')
         ->execute([$emp, $tipos, $resumo, json_encode($ops, JSON_UNESCAPED_UNICODE), json_encode($opts, JSON_UNESCAPED_UNICODE), $desfaz, $u['id'], count($res)]);
     $rid = (int)$pdo->lastInsertId();

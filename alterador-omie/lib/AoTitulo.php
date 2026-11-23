@@ -43,7 +43,7 @@ final class AoTitulo
 
     public static function rotulo(string $campo, string $tipo = 'P'): string
     {
-        if ($campo === 'forn') return $tipo === 'R' ? 'Cliente' : 'Fornecedor';
+        if ($campo === 'forn' && $tipo !== '') return $tipo === 'R' ? 'Cliente' : 'Fornecedor';
         return self::CAMPOS[$campo][0] ?? $campo;
     }
     public static function omieCampo(string $campo, string $tipo): string { return (string)(self::CAMPOS[$campo][$tipo === 'R' ? 3 : 2] ?? ''); }

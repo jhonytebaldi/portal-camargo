@@ -366,7 +366,13 @@
     if (e.target.dataset.perc !== undefined) { op.itens[+e.target.dataset.perc][1] = e.target.value; }
     if (e.target.matches('[data-busca-forn]')) buscarForn(e.target, card, op);
   });
-  $('#ao-ops').addEventListener('change', e => { if (e.target.dataset.perc !== undefined) renderOps(); });
+  $('#ao-ops').addEventListener('change', e => {
+    if (e.target.dataset.perc !== undefined) renderOps();
+    if (e.target.tagName === 'SELECT' && e.target.dataset.p) {   // garante a escolha mesmo se o navegador não disparar 'input' no select
+      const card = e.target.closest('.ao-op'), op = S.ops[+card.dataset.i];
+      if (op && String(op[e.target.dataset.p] ?? '') !== e.target.value) { op[e.target.dataset.p] = e.target.value; if (op.campo === 'forn') op.valorNome = e.target.selectedOptions[0]?.textContent; renderOps(); }
+    }
+  });
   function renderSeqSemPerder() { const a = document.activeElement; const had = $('#ao-seq').hidden; renderSeq(); if (had !== $('#ao-seq').hidden && a) a.focus(); }
   let tmoForn;
   function buscarForn(inp, card, op) {
@@ -375,9 +381,12 @@
       const q = inp.value.trim(); if (q.length < 2) return;
       try {
         const j = await get({a: 'forn', emp: S.emp, q});
+        // a busca pode voltar depois que você já escolheu (ou depois de a tela ser redesenhada): nunca apaga a escolha
+        if (!card.isConnected || inp.value.trim() !== q) return;
         const s = $('select[data-p="valor"]', card);
-        s.innerHTML = '<option value="">' + (j.itens.length ? j.itens.length + ' encontrado(s) — escolha…' : 'nada encontrado') + '</option>' + j.itens.map(x => '<option value="' + esc(x.id) + '">' + esc(x.nome + (x.doc ? ' — ' + x.doc : '')) + '</option>').join('');
-        op.valor = ''; s.focus();
+        const atual = op.valor ? '<option value="' + esc(op.valor) + '" selected>' + esc(op.valorNome || op.valor) + '</option>' : '';
+        s.innerHTML = (atual || '<option value="">' + (j.itens.length ? j.itens.length + ' encontrado(s) — escolha…' : 'nada encontrado') + '</option>') +
+          j.itens.filter(x => String(x.id) !== String(op.valor)).map(x => '<option value="' + esc(x.id) + '">' + esc(x.nome + (x.doc ? ' — ' + x.doc : '')) + '</option>').join('');
       } catch (err) { aviso(esc(err.message), 'erro'); }
     }, 300);
   }
@@ -401,7 +410,12 @@
   $('#ao-abrir-alt').onclick = () => { $('#ao-alt').hidden = false; $('#ao-dock').hidden = true; renderOps(); $('#ao-alt').scrollIntoView({behavior: 'smooth', block: 'start'}); };
   $('#ao-fechar-alt').onclick = () => { $('#ao-alt').hidden = true; contadores(); };
 
+  function sincronizarOps() {
+    $$('#ao-ops .ao-op').forEach(card => { const op = S.ops[+card.dataset.i]; if (!op) return;
+      $$('select[data-p]', card).forEach(s => { if (s.value !== '' || op.campo !== 'forn') op[s.dataset.p] = s.value; }); });
+  }
   function opsParaEnvio() {
+    sincronizarOps();
     return S.ops.map(o => {
       const x = {...o}; delete x.valorNome;
       if (x.data && /^\d{4}-\d{2}-\d{2}$/.test(x.data)) x.data = x.data.split('-').reverse().join('/');

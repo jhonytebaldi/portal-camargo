@@ -309,18 +309,18 @@ final class AoRegras
     }
 
     /** resumo legível das alterações (histórico) */
-    public static function resumo(array $ops): string
+    public static function resumo(array $ops, array $nomes = []): string
     {
         $p = [];
         foreach ($ops as $op) {
-            $c = (string)($op['campo'] ?? ''); $r = AoTitulo::rotulo($c);
+            $c = (string)($op['campo'] ?? ''); $r = AoTitulo::rotulo($c, '');
             $p[] = match (AoTitulo::CAMPOS[$c][1] ?? '') {
                 'texto' => $r . ': ' . (['substituir' => 'substituir por', 'antes' => 'inserir antes', 'depois' => 'inserir depois', 'trocar' => 'trocar "' . ($op['procurar'] ?? '') . '" por'][$op['modo'] ?? ''] ?? '') . ' "' . ($op['texto'] ?? '') . '"',
                 'data' => $r . ': ' . match ($op['modo'] ?? '') { 'somar' => ((int)$op['n'] >= 0 ? '+' : '') . (int)$op['n'] . (!empty($op['uteis']) ? ' dias úteis' : ' dias'), 'fixa' => 'data fixa ' . $op['data'], 'dia' => 'dia ' . $op['dia'] . ' do mês', 'copiar' => 'igual a ' . AoTitulo::rotulo((string)$op['de']) . (!empty($op['n']) ? ' ' . ((int)$op['n'] >= 0 ? '+' : '') . (int)$op['n'] . ' dias' : ''), default => '' },
                 'valor' => 'Valor: ' . match ($op['modo'] ?? '') { 'fixo' => 'fixo ' . $op['n'], 'percent' => $op['n'] . '%', default => '+' . $op['n'] },
                 'deps' => 'Departamentos: ' . count((array)($op['itens'] ?? [])) . ' item(ns)',
                 'pix' => 'Forma de pagamento: Pix (chave do cadastro)',
-                default => $r . ': ' . ($op['valor'] ?? ''),
+                default => $r . ': ' . AoTitulo::mostrar($c, in_array($c, ['cc', 'forn', 'proj'], true) ? (int)($op['valor'] ?? 0) : (string)($op['valor'] ?? ''), $nomes),
             };
         }
         return implode(' · ', $p);
