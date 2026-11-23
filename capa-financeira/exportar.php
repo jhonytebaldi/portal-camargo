@@ -124,6 +124,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             exit(json_encode(['ok' => true, 'valor' => $valor]));
         }
+        if ($acao === 'admin_linha') {
+            // só admin: altera valor/vencimento ou exclui um título ainda não enviado (ex.: erro na planilha que trava a linha)
+            if (!is_admin($u)) $falha('Só administradores podem alterar ou excluir um título nesta tela. Peça a um administrador ou corrija a capa e envie a versão nova.', 403);
+            $st = $pdo->prepare("SELECT l.*, c.empresa AS capa_empresa FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.status = 'confirmado'");
+            $st->execute([(int)($in['id'] ?? 0)]);
+            if (!($l = $st->fetch())) $falha('A linha não está mais pendente de exportação (já foi enviada, removida ou substituída) — recarregue a página.');
+            $op = (string)($in['op'] ?? ''); $quem = (string)($u['nome'] ?? $u['login'] ?? 'admin'); $quando = date('d/m/Y H:i');
+            $flags = json_decode((string)$l['flags'], true) ?: [];
+            if ($op === 'excluir') {
+                $motivo = mb_substr(trim((string)($in['motivo'] ?? '')), 0, 120);
+                $flags[] = 'AJUSTE_ADMIN (excluído na exportação por ' . $quem . ' em ' . $quando . ($motivo !== '' ? ': ' . $motivo : '') . ')';
+                $pdo->prepare("UPDATE cf_lancamentos SET status = 'removido', flags = ? WHERE id = ?")->execute([json_encode($flags, JSON_UNESCAPED_UNICODE), (int)$l['id']]);
+                exit(json_encode(['ok' => true, 'msg' => 'Título ' . $l['codigo_integracao'] . ' excluído — ele sai da fila e fica marcado como removido na capa. Se a planilha for reenviada com a mesma linha, ela volta como linha nova para revisão.'], JSON_UNESCAPED_UNICODE));
+            }
+            if ($op !== 'alterar') $falha('operação inválida');
+            $mud = []; $sets = []; $vals = [];
+            $rawV = trim((string)($in['valor'] ?? ''));
+            if ($rawV !== '') {
+                $n = str_replace(['R$', ' '], '', $rawV);
+                if (str_contains($n, ',')) $n = str_replace('.', '', $n); $n = str_replace(',', '.', $n);
+                if (!is_numeric($n)) $falha('Valor inválido: "' . $rawV . '". Use o formato 1.234,56.');
+                $v = round((float)$n, 2);
+                if ($v <= 0) $falha('O valor precisa ser maior que zero (o Omie não aceita título zerado ou negativo). Se o lançamento não deve existir, use "excluir".');
+                if (abs($v - (float)$l['valor']) >= 0.005) { $sets[] = 'valor = ?'; $vals[] = number_format($v, 2, '.', ''); $mud[] = 'valor ' . cf_brl($l['valor']) . ' → ' . cf_brl($v); }
+            }
+            $rawD = trim((string)($in['data_prevista'] ?? ''));
+            if ($rawD !== '') {
+                $dt = DateTimeImmutable::createFromFormat('!Y-m-d', $rawD) ?: DateTimeImmutable::createFromFormat('!d/m/Y', $rawD);
+                if (!$dt || (int)$dt->format('Y') < 2000 || (int)$dt->format('Y') > 2100) $falha('Vencimento inválido: "' . $rawD . '". Use dd/mm/aaaa.');
+                $d = $dt->format('Y-m-d');
+                if ($d !== (string)$l['data_prevista']) { $sets[] = 'data_prevista = ?'; $vals[] = $d; $mud[] = 'vencimento ' . cf_data_br($l['data_prevista']) . ' → ' . cf_data_br($d); }
+            }
+            if (!$sets) exit(json_encode(['ok' => true, 'msg' => 'Nada mudou: o valor e o vencimento informados são os que já estavam.', 'nada' => true], JSON_UNESCAPED_UNICODE));
+            $flags[] = 'AJUSTE_ADMIN (' . implode(', ', $mud) . ' — por ' . $quem . ' em ' . $quando . ')';
+            $sets[] = 'flags = ?'; $vals[] = json_encode($flags, JSON_UNESCAPED_UNICODE); $vals[] = (int)$l['id'];
+            $pdo->prepare('UPDATE cf_lancamentos SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($vals);
+            exit(json_encode(['ok' => true, 'msg' => 'Título ' . $l['codigo_integracao'] . ' alterado (' . implode(', ', $mud) . '). O ajuste fica registrado na linha da capa.'], JSON_UNESCAPED_UNICODE));
+        }
         if ($acao === 'conta_padrao') {
             $empresa = (string)($in['empresa'] ?? ''); $tipo = ($in['tipo'] ?? 'P') === 'R' ? 'R' : 'P';
             if (!isset($empresas[$empresa])) $falha('empresa inválida');
@@ -684,6 +722,7 @@ $st = $pdo->prepare("SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, e
                      WHERE l.alteracao_pos_exportacao = 1 AND l.status IN ('exportado','removido') AND c.empresa = ? ORDER BY l.id DESC LIMIT 100");
 $st->execute([$empresa]); $alteradas = $st->fetchAll();
 $apiOk = OmieApi::disponivel() && isset(OmieApi::contas()[$empresa]);
+$admin = is_admin($u);   // admin pode alterar valor/vencimento ou excluir um título ainda não enviado direto nesta tela
 $st = $pdo->prepare("SELECT l.*, c.cod AS capa_cod, c.cliente AS capa_cliente, e.gerado_em FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id LEFT JOIN cf_exportacoes e ON e.id = l.exportacao_id
                      WHERE l.status = 'exportado' AND l.omie_id IS NOT NULL AND c.empresa = ? AND l.tipo = ? ORDER BY l.id DESC LIMIT 60");
 $st->execute([$empresa, $tipo]); $enviadosApi = $st->fetchAll();
@@ -693,7 +732,7 @@ $st->execute([$empresa]); $historico = $st->fetchAll();
 portal_header('Exportar para o Omie', $u);
 ?>
 <meta name="csrf" content="<?= h(csrf_token()) ?>">
-<style>main.wrap{max-width:1680px}</style>
+<style>main.wrap{max-width:1680px}.exp-adm{margin-top:6px;white-space:nowrap}.exp-adm .cf-x{font-size:12px}</style>
 <script src="/capa-financeira/pix.js?v=2"></script>
 <div class="cf-rev">
 <?php cf_cabecalho('Exportar para o Omie', 'Lançamentos confirmados e ainda não enviados. Envie direto pela API (conferido antes, linha a linha, reversível) ou gere a planilha de importação (modelo oficial).', [['Capa Financeira', '/capa-financeira/'], ['Exportar para o Omie', null]], 'exportar'); ?>
@@ -751,7 +790,7 @@ portal_header('Exportar para o Omie', $u);
 <thead><tr><th><input type="checkbox" id="exp-todos" checked></th><th>Capa</th><th>Código</th><th>Pessoa → Fornecedor (Omie)</th><th>Categoria</th><th>Conta corrente</th><th>Valor</th><th>Vencimento</th><th>Nota Fiscal</th><th>Chave Pix</th><th>Problemas</th></tr></thead>
 <tbody>
 <?php foreach ($linhas as $l): $m = $montadas[(int)$l['id']]; $p = $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null; $ok = !$m['erros']; ?>
-<tr class="cf-row <?= $ok ? '' : 'cf-tem-grave' ?>" data-id="<?= (int)$l['id'] ?>" data-valor="<?= (float)$l['valor'] ?>">
+<tr class="cf-row <?= $ok ? '' : 'cf-tem-grave' ?>" data-id="<?= (int)$l['id'] ?>" data-valor="<?= (float)$l['valor'] ?>" data-codigo="<?= h((string)$l['codigo_integracao']) ?>" data-data="<?= h((string)$l['data_prevista']) ?>">
   <td><input type="checkbox" class="exp-sel" <?= $ok ? 'checked' : 'disabled' ?>></td>
   <td><a href="/capa-financeira/revisar.php?id=<?= (int)$l['capa_id'] ?>"><?= h((string)$l['capa_cod']) ?></a><br><small class="cf-raw"><?= h(mb_substr((string)$l['capa_cliente'], 0, 40)) ?></small></td>
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['funcao']) ?><?= $l['natureza'] === 'BONUS' ? ' (BONUS)' : '' ?></small></td>
@@ -762,7 +801,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
   <td class="cf-pix-cel"><input type="text" class="cf-in cf-pix exp-edit" data-campo="chave_pix" value="<?= h((string)$l['chave_pix']) ?>" autocomplete="off"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div><?php if ($admin): ?><div class="exp-adm"><button type="button" class="cf-x exp-adm-alt" title="só admin: corrige valor e/ou vencimento deste título antes de enviar (fica registrado na capa)">✎ alterar</button> <button type="button" class="cf-x exp-adm-exc" title="só admin: tira este título da fila (marca como removido na capa; não mexe no Omie)">🗑 excluir</button></div><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -771,7 +810,7 @@ portal_header('Exportar para o Omie', $u);
 <thead><tr><th><input type="checkbox" id="exp-todos" checked></th><th>Capa</th><th>Código</th><th>Cliente (como está no Omie)</th><th>Categoria</th><th>Conta corrente</th><th>Valor</th><th>Parcela</th><th>Vencimento</th><th>Nota Fiscal</th><th>Problemas</th></tr></thead>
 <tbody>
 <?php foreach ($linhas as $l): $m = $montadas[(int)$l['id']]; $ok = !$m['erros']; ?>
-<tr class="cf-row <?= $ok ? '' : 'cf-tem-grave' ?>" data-id="<?= (int)$l['id'] ?>" data-valor="<?= (float)$l['valor'] ?>">
+<tr class="cf-row <?= $ok ? '' : 'cf-tem-grave' ?>" data-id="<?= (int)$l['id'] ?>" data-valor="<?= (float)$l['valor'] ?>" data-codigo="<?= h((string)$l['codigo_integracao']) ?>" data-data="<?= h((string)$l['data_prevista']) ?>">
   <td><input type="checkbox" class="exp-sel" <?= $ok ? 'checked' : 'disabled' ?>></td>
   <td><a href="/capa-financeira/revisar.php?id=<?= (int)$l['capa_id'] ?>"><?= h((string)$l['capa_cod']) ?></a><br><small class="cf-raw"><?= h(mb_substr((string)$l['capa_cliente'], 0, 40)) ?></small></td>
   <td><b><?= h((string)$l['codigo_integracao']) ?></b><br><small class="cf-raw">L<?= (int)$l['linha_xlsx'] ?> · <?= h((string)$l['cf_raw']) ?></small></td>
@@ -782,7 +821,7 @@ portal_header('Exportar para o Omie', $u);
   <td><?= $l['parcela'] ? (int)$l['parcela'] . '/' . (int)$l['total_parcelas'] : '—' ?></td>
   <td><?= cf_data_br($l['data_prevista']) ?></td>
   <td><input type="text" class="cf-in exp-edit" data-campo="nota_fiscal" value="<?= h((string)$l['nota_fiscal']) ?>" maxlength="20" style="width:130px"></td>
-  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div></td>
+  <td class="cf-alertas"><?php foreach ($m['erros'] as $e): ?><div class="cf-flag cf-grave"><?= h($e) ?></div><?php endforeach; foreach ($m['avisos'] as $a): ?><div class="cf-flag cf-leve"><?= h($a) ?></div><?php endforeach; ?><?php if ($l['omie_erro']): ?><div class="cf-flag cf-grave" title="último envio pela API">Omie (último envio): <?= h((string)$l['omie_erro']) ?><?php if (!empty($ultPedido[(int)$l['id']]['pedido'])): ?> <details class="exp-pedido"><summary>ver pedido enviado</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0"><?= h((string)$ultPedido[(int)$l['id']]['pedido']) ?></pre></details><?php endif; ?></div><?php endif; ?><div class="exp-omie"></div><?php if ($admin): ?><div class="exp-adm"><button type="button" class="cf-x exp-adm-alt" title="só admin: corrige valor e/ou vencimento deste título antes de enviar (fica registrado na capa)">✎ alterar</button> <button type="button" class="cf-x exp-adm-exc" title="só admin: tira este título da fila (marca como removido na capa; não mexe no Omie)">🗑 excluir</button></div><?php endif; ?></td>
 </tr>
 <?php endforeach; ?>
 </tbody></table></div>
@@ -954,6 +993,28 @@ document.getElementById('exp-forcar').onclick = async () => {
     }
     const j = await post(body); if (!j) return;
     toast('Salvo — recarregando para reavaliar'); setTimeout(() => location.reload(), 600);
+  }));
+  // só admin: alterar valor/vencimento ou excluir um título pendente direto daqui (a linha travada por erro na planilha, por exemplo)
+  const brData = iso => iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : (iso || '');
+  const admTitulo = tr => '<b>' + CFModal.esc(tr.dataset.codigo) + '</b> · ' + CFModal.esc(tr.querySelector('td:nth-child(2) a').textContent.trim()) + ' · ' + brl(+tr.dataset.valor) + ' · venc. ' + brData(tr.dataset.data);
+  document.querySelectorAll('.exp-adm-alt').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); if (!window.CFModal) return;
+    const html = '<p style="margin:0 0 10px">' + admTitulo(tr) + '</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left"><label>Valor (R$)<input type="text" id="adm-valor" class="cf-in" style="width:100%" value="' + CFModal.esc(brl(+tr.dataset.valor).replace('R$', '').trim()) + '"></label><label>Vencimento<input type="date" id="adm-data" class="cf-in" style="width:100%" value="' + CFModal.esc(tr.dataset.data) + '"></label></div><p class="cf-dica" style="margin:10px 0 0;text-align:left">Só o valor e o vencimento mudam aqui; o resto (favorecido, categoria, NF, Pix) continua editável na linha. O ajuste fica registrado na linha da capa.</p>';
+    const p = CFModal.pergunta({tipo: 'info', icone: '✎', titulo: 'Alterar o título (admin)', html, ok: 'Salvar alteração'});
+    const iv = document.getElementById('adm-valor'), id = document.getElementById('adm-data'); setTimeout(() => iv && iv.select(), 80);
+    if (!await p) return;
+    const j = await post({acao: 'admin_linha', op: 'alterar', id: +tr.dataset.id, valor: iv.value, data_prevista: id.value}); if (!j) return;
+    if (j.nada) { await aviso('info', 'Nada mudou', j.msg); return; }
+    await aviso('ok', 'Título alterado', j.msg + ' A página vai recarregar para reavaliar a linha.'); location.reload();
+  }));
+  document.querySelectorAll('.exp-adm-exc').forEach(b => b.addEventListener('click', async () => {
+    const tr = b.closest('tr'); if (!window.CFModal) return;
+    const html = '<p style="margin:0 0 10px">' + admTitulo(tr) + '</p><p style="margin:0 0 8px">O título sai da fila de exportação e fica marcado como <b>removido</b> na capa. Nada é enviado ou apagado no Omie. Se a planilha for reenviada com essa linha, ela volta como linha nova para revisão.</p><label style="display:block;text-align:left">Motivo (opcional, fica registrado)<input type="text" id="adm-motivo" class="cf-in" style="width:100%" maxlength="120" placeholder="ex.: erro na planilha original"></label>';
+    const p = CFModal.pergunta({tipo: 'erro', icone: '🗑', titulo: 'Excluir o título (admin)?', html, ok: 'Sim, excluir'});
+    const im = document.getElementById('adm-motivo');
+    if (!await p) return;
+    const j = await post({acao: 'admin_linha', op: 'excluir', id: +tr.dataset.id, motivo: im ? im.value : ''}); if (!j) return;
+    await aviso('ok', 'Título excluído', j.msg); location.reload();
   }));
   const bcta = document.getElementById('btn-conta');
   if (bcta) bcta.addEventListener('click', async () => {

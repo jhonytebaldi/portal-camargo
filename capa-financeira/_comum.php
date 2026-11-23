@@ -203,7 +203,7 @@ function cf_nivel_flag(string $f): string
     return str_starts_with($f, 'GRAVE:') ? 'grave' : 'leve';
 }
 /** Flags que não são alerta para conferir (informativas ou resolvidas por outro campo). */
-const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE', 'CONDICAO_DO_BLOCO_CORRETORES'];
+const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE', 'CONDICAO_DO_BLOCO_CORRETORES', 'AJUSTE_ADMIN'];
 /** código curto do alerta (sem GRAVE:, sem detalhes) */
 function cf_flag_codigo(string $f): string
 {
@@ -252,6 +252,7 @@ function cf_flag_curto(string $f): string
         case 'FLUXO_NAO_PAREADO': return 'Recebimentos não batem com o bloco FLUXO DE PAGAMENTO';
         case 'REPASSE': return 'Repasse a terceiro (não é comissão)';
         case 'NF_CORTADA_20': return 'Nota Fiscal cortada em 20 caracteres';
+        case 'AJUSTE_ADMIN': return 'Ajuste de admin na exportação: ' . $q($det('AJUSTE_ADMIN'));
     }
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA')) return 'Condição fora do dicionário: ' . substr($f, strpos($f, ':') + 1);
     if (str_starts_with($f, 'FUNCAO_DESCONHECIDA')) return 'Função desconhecida: ' . substr($f, strpos($f, ':') + 1);
@@ -311,6 +312,7 @@ function cf_flag_texto(string $f): string
     ];
     if (isset($map[$f])) return $map[$f];
     if (str_starts_with($f, 'GRAVE:FAVORECIDO_DIVERGE')) return 'Favorecido da coluna C é DIFERENTE do nome no histórico ' . substr($f, strlen('GRAVE:FAVORECIDO_DIVERGE '));
+    if (str_starts_with($f, 'AJUSTE_ADMIN')) return 'Título ajustado por um administrador direto na tela de exportação (valor/vencimento alterado ou título excluído) ' . substr($f, strlen('AJUSTE_ADMIN '));
     if (str_starts_with($f, 'REPASSE')) return 'Repasse a terceiro (construtora): não é comissão — favorecido é a coluna C, sem função; confira a categoria (Repasse a Terceiros / Futuro)';
     if (str_starts_with($f, 'FAVORECIDO_ABREVIADO')) return 'Nome abreviado no histórico ' . substr($f, strlen('FAVORECIDO_ABREVIADO '));
     if (str_starts_with($f, 'CLIENTES_HIST_GRAFIA')) return 'Cliente no histórico com grafia um pouco diferente da capa (letra trocada/a mais) — escolha qual nome vale ' . substr($f, strlen('CLIENTES_HIST_GRAFIA '));
