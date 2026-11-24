@@ -54,7 +54,9 @@ portal_header('Capa Financeira', $u);
   <p class="cf-dica">Dá para selecionar <b>várias capas de uma vez</b> (até 20, da mesma empresa): todas entram em revisão e você resolve os alertas repetidos em <a href="/capa-financeira/lote.php">Resolver em lote</a>. Capa com COD de uma venda do formulário, ou com COD que já é de outro cliente, fica de fora e precisa ser enviada sozinha.</p>
 </section>
 <section class="card cf-upload" id="drv">
-  <h2>Escolher do Google Drive <small id="drv-pasta" class="cf-raw" style="font-weight:400"></small></h2>
+ <details id="drv-det">
+  <summary style="cursor:pointer"><h2 style="display:inline">Escolher do Google Drive</h2> <small id="drv-pasta" class="cf-raw" style="font-weight:400"></small> <small id="drv-resumo" class="cf-raw"></small></summary>
+  <div style="margin-top:10px">
   <div id="drv-off" class="cf-dica" style="display:none">O acesso ao Drive ainda não foi configurado. Em <a href="/capa-financeira/configuracoes.php">Configurações › Google Drive</a> um administrador envia a chave da conta de serviço e testa o acesso.</div>
   <div id="drv-on" style="display:none">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
@@ -80,14 +82,16 @@ portal_header('Capa Financeira', $u);
     <p class="cf-dica">Quando há mais de um arquivo da mesma venda (mesmos compradores no nome, em qualquer pasta), só um fica disponível: o <b>aditivo</b> mais recente, se houver; senão o que já está no portal ou o modificado por último. Os outros aparecem travados com o motivo, apontando para o que vale (dá para liberar). A lista é lida do Drive na hora (e de novo a cada 45 s com esta tela aberta): renomear, mover ou subir arquivo na pasta aparece aqui sem fazer mais nada. As marcadas entram em revisão — nada é confirmado nem enviado ao Omie. Marcando uma só, ela pode virar nova versão de uma capa do mesmo cliente; em lote, COD que já existe fica de fora com o motivo. Quando a capa vai toda para o Omie, o arquivo ganha "ok - " no nome sozinho.</p>
   </div>
   <div id="drv-carregando" class="cf-raw">lendo a pasta do Drive…</div>
+  </div>
+ </details>
 </section>
-<style>.drv-ano{margin:10px 0;border-top:1px solid var(--line);padding-top:6px}.drv-ano>summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0}.drv-ano .drv-g{margin-left:14px}.drv-g{margin:6px 0}.drv-g>summary{cursor:pointer;font-weight:600;padding:4px 0}.drv-a{display:flex;gap:8px;align-items:center;padding:3px 0 3px 18px;font-size:14px}.drv-a:hover{background:rgba(0,0,0,.03)}.drv-a .cf-flag{font-size:11px;padding:1px 7px;margin:0}.drv-a small{color:#778}</style>
+<style>.drv-ano{margin:10px 0;border-top:1px solid var(--line);padding-top:6px}.drv-ano:first-child{border-top:0;margin-top:0}#drv-det>summary h2{margin:0}.drv-ano>summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0}.drv-ano .drv-g{margin-left:14px}.drv-g{margin:6px 0}.drv-g>summary{cursor:pointer;font-weight:600;padding:4px 0}.drv-a{display:flex;gap:8px;align-items:center;padding:3px 0 3px 18px;font-size:14px}.drv-a:hover{background:rgba(0,0,0,.03)}.drv-a .cf-flag{font-size:11px;padding:1px 7px;margin:0}.drv-a small{color:#778}</style>
 <script>
 (() => {
   const csrf = <?= json_encode(csrf_token()) ?>, $ = id => document.getElementById(id), esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const SIT = {pendente: ['cf-leve', 'pendente'], revisao: ['cf-ok', 'em revisão'], confirmada: ['cf-ok', 'confirmada'], enviada: ['cf-ok', 'no Omie'], alterada: ['cf-grave', 'mudou no Drive'], provavel: ['cf-ok', 'já enviada à mão?'], ok: ['cf-ok', 'ok no nome'], modelo: ['', 'modelo']};
   let arquivos = [], marcados = new Set(), fechados = new Set(), ocupado = false, primeira = true;
-  const liberados = new Set(), anosAbertos = new Set();
+  const liberados = new Set(), anoEstado = new Map();   // anoEstado: abrir/fechar que a pessoa fez em cada bloco de ano ('' = ano atual)
   let desenhouEm = 0;   // os blocos recém-desenhados disparam 'toggle' sozinhos: só vale o abrir/fechar feito pela pessoa
   const travado = a => (a.trava || a.nao_subir) && !liberados.has(a.id);
   const TRV = {aditivo: ['substituída pelo aditivo', 'o aditivo substitui esta capa: suba só o aditivo'], copia: ['cópia idêntica', 'é uma cópia exata de outro arquivo desta venda'], mais_recente: ['há versão mais recente', 'existe outro arquivo desta venda modificado depois deste'], copia_importada: ['cópia de arquivo já importado', 'cópia exata de um arquivo desta venda que já está no portal'], ja_importada: ['venda já no portal', 'esta venda já está no portal por outro arquivo; liberar importa este como nova versão']};
@@ -149,13 +153,17 @@ portal_header('Capa Financeira', $u);
     const porRaiz = {}; vis.forEach(a => ((porRaiz[a.raiz || ''] ??= {})[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
     const filtrando = !!busca || temFiltroData(fd);
     const rolagem = $('drv-lista').scrollTop;
-    const partes = Object.keys(porRaiz).sort().map(rz => {
+    // um bloco por ano: o atual (pasta principal) primeiro e aberto; os anteriores em ordem decrescente e fechados até você abrir
+    const anos = Object.keys(porRaiz).sort((x, y) => x === '' ? -1 : (y === '' ? 1 : y.localeCompare(x, 'pt', {numeric: true})));
+    const partes = anos.map(rz => {
       const gs = porRaiz[rz], inner = Object.keys(gs).sort().map(g => htmlGrupo(g, gs[g], rz && g.startsWith(rz) ? (g.slice(rz.length).replace(/^\s*\/\s*/, '') || '(raiz da pasta)') : g)).join('');
-      if (!rz) return inner;
       const todosAno = Object.values(gs).flat(), nPend = todosAno.filter(escolhivel).length;
-      return '<details class="drv-ano" data-ano="' + esc(rz) + '"' + (anosAbertos.has(rz) || filtrando ? ' open' : '') + '><summary>📁 ' + esc(rz) + ' <small class="cf-raw">' + todosAno.length + ' arquivo(s)' + (nPend ? ' · ' + nPend + ' pendente(s) disponíveis' : '') + '</small></summary>' + inner + '</details>';
+      const aberto = anoEstado.has(rz) ? anoEstado.get(rz) : (rz === '' || filtrando);   // sem escolha da pessoa: ano atual aberto; os outros só abrem quando há busca/filtro
+      return '<details class="drv-ano" data-ano="' + esc(rz) + '"' + (aberto ? ' open' : '') + '><summary>📁 ' + esc(rz || ANO) + ' <small class="cf-raw">' + todosAno.length + ' arquivo(s)' + (nPend ? ' · ' + nPend + ' pendente(s) disponíveis' : '') + '</small></summary>' + inner + '</details>';
     });
     $('drv-lista').innerHTML = partes.length ? partes.join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    const nDisp = arquivos.filter(escolhivel).length;
+    $('drv-resumo').textContent = '· ' + nDisp + ' capa(s) pendente(s) disponíveis' + (marcados.size ? ' · ' + marcados.size + ' marcada(s)' : '');
     desenhouEm = Date.now();
     $('drv-lista').scrollTop = rolagem;
     contar();
@@ -195,8 +203,9 @@ portal_header('Capa Financeira', $u);
     const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
     const busca = semAc($('drv-busca').value.trim());
     arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && bate(a, busca) && datasOk(a, filtroData())).forEach(a => marcados.add(a.id)); desenhar(); });
-  $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g);
-    else if (d.classList && d.classList.contains('drv-ano') && Date.now() - desenhouEm > 250) d.open ? anosAbertos.add(d.dataset.ano) : anosAbertos.delete(d.dataset.ano); }, true);
+  $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (Date.now() - desenhouEm <= 250) return;
+    if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g);
+    else if (d.classList && d.classList.contains('drv-ano')) anoEstado.set(d.dataset.ano, d.open); }, true);
   $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
   ['drv-ftipo', 'drv-fano', 'drv-faberto', 'drv-fde', 'drv-fate'].forEach(i => $(i).addEventListener('change', desenhar));
   // "quem": as linhas das capas só vêm do servidor quando o filtro é usado; na primeira vez busca e redesenha
