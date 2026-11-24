@@ -157,6 +157,7 @@ final class CfDrive
     }
     /* ---- ficha de cada arquivo: o cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda) lido uma vez e
             guardado por id + md5 — é o que permite filtrar a lista do Drive por construtora, COD etc. sem baixar tudo a cada vez ---- */
+    public const FICHA_V = 2;   // muda quando a ficha ganha campo novo: as antigas são relidas
     private static function arqFichas(): string { return cf_data_dir() . '/drive-fichas.json'; }
     public static function fichas(): array
     {
@@ -179,10 +180,14 @@ final class CfDrive
         try {
             self::baixar($id, $tmp);
             $r = cf_parser()->parse($tmp); $c = $r['capa'];
-            return ['md5' => $md5, 'cod' => $c['cod'] !== null ? (string)$c['cod'] : '', 'cliente' => (string)($c['cliente'] ?? ''), 'construtora' => (string)($c['construtora'] ?? ''),
+            // vencimentos das linhas (únicos, por tipo): servem aos filtros "com contas em tal período" da lista do Drive
+            $dp = []; $dr = [];
+            foreach ($r['linhas'] ?? [] as $ln) { $d = (string)($ln['data'] ?? ''); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) continue; if (($ln['tipo'] ?? '') === 'PAGAR') $dp[$d] = 1; else $dr[$d] = 1; }
+            ksort($dp); ksort($dr);
+            return ['md5' => $md5, 'v' => self::FICHA_V, 'dp' => array_keys($dp), 'dr' => array_keys($dr), 'cod' => $c['cod'] !== null ? (string)$c['cod'] : '', 'cliente' => (string)($c['cliente'] ?? ''), 'construtora' => (string)($c['construtora'] ?? ''),
                     'bairro' => (string)($c['bairro'] ?? ''), 'unidade' => (string)($c['unidade'] ?? ''), 'venda' => (string)($c['data_venda'] ?? ''), 'linhas' => count($r['linhas'] ?? [])];
         } catch (Throwable $e) {
-            return ['md5' => $md5, 'erro' => mb_substr($e->getMessage(), 0, 160)];
+            return ['md5' => $md5, 'v' => self::FICHA_V, 'erro' => mb_substr($e->getMessage(), 0, 160)];
         } finally { @unlink($tmp); }
     }
 
