@@ -36,7 +36,7 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
   <section class="card">
     <div class="cv-bloco-h"><h2>Pagamentos aos corretores</h2><small><?= $podeLiberar ? 'você pode liberar pagamentos' : 'só o financeiro libera — aqui você ajusta datas e condições' ?></small></div>
     <p class="cf-dica" style="margin-top:0"><b>Método: <?= h(Pagamentos::METODOS[Pagamentos::metodo($v)]) ?></b> · Cada etapa paga quando o cliente atinge <?= Pagamentos::metodo($v) === 'antigo' ? 'Sinal / 50% / 80% / 100%' : 'Arras / 50% / 75% / 100%' ?> da comissão base. Data sugerida: cliente pagou até segunda → quinta da mesma semana; de terça a domingo → quinta da semana seguinte (quinta feriado → quarta).
-      Travas e condições pedem data manual. Para mudar uma linha só, clique no ✎ (ou dê dois cliques na linha). “Liberar todos” coloca todas as contas a pagar na capa da venda (em revisão na Capa Financeira), de onde vão ao Omie — igual às contas a receber.</p>
+      Travas e condições pedem data manual. Para mudar uma linha só, clique no ✎ (ou dê dois cliques na linha). “Liberar todos” coloca todas as contas a pagar na capa da venda; sem pendências elas vão direto para “Exportar para o Omie” (se sobrar algum aviso, a capa fica em revisão na Capa Financeira) — igual às contas a receber.</p>
     <div class="cv-res" id="cv-res"></div>
   </section>
   <div id="cv-etapas"><p class="cf-dica">Calculando…</p></div>
@@ -233,7 +233,7 @@ if ($v['e3_status'] === 'rascunho') $faltam[] = 'a etapa 3 (fluxo do cliente)';
   if ($('cv-liberar-todos')) $('cv-liberar-todos').onclick = () => {
     const ps = ultimo.calc.pagamentos.filter(pendente);
     if (!confirm('Liberar TODOS os pagamentos que faltam — ' + ps.length + ', total ' + brl(ps.reduce((a, p) => a + p.valor, 0)) + '?\n\n' + resumo(ps)
-      + '\n\nAs contas a pagar vão para a capa da venda (em revisão na Capa Financeira), de onde seguem ao Omie.')) return;
+      + '\n\nAs contas a pagar vão para a capa da venda e, sem pendências, direto para “Exportar para o Omie”.')) return;
     enviar('liberar4', {todos: true});
   };
   if ($('cv-liberar-marc')) $('cv-liberar-marc').onclick = () => {

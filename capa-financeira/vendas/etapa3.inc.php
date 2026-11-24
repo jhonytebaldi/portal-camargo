@@ -1,6 +1,6 @@
 <?php
 /* capa-financeira/vendas/etapa3.inc.php — etapa 3 (fluxo de pagamento do cliente + recebidos + travas).
-   Ao concluir, gera as contas a receber na Capa Financeira (em revisão) para conferência e envio ao Omie. */
+   Ao concluir, gera as contas a receber na Capa Financeira: sem pendências a capa já sai confirmada (Exportar para o Omie); senão fica em revisão. */
 declare(strict_types=1);
 
 $e3 = $v['e3'] ?? Fluxo::vazio();
@@ -86,7 +86,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
   <section class="card"><h2>Gatilhos (prévia da etapa 4)</h2><table class="cv-calc" id="cv-gat"></table>
     <p class="cf-dica">Quando o que o cliente pagou atinge <?= $antigo ? '50%, 80%' : '50%, 75%' ?> e 100% da comissão base dos corretores.</p></section>
   <section class="card cv-pend" id="cv-pend"></section>
-  <?php if ($v['capa_id']): ?><section class="card"><p class="cf-dica" style="margin:0">Contas a receber na <a href="/capa-financeira/revisar.php?id=<?= (int)$v['capa_id'] ?>">capa #<?= (int)$v['capa_id'] ?></a> (revisar, confirmar e enviar pela Capa Financeira). Alterar as parcelas gera uma nova versão da capa.</p></section><?php endif; ?>
+  <?php if ($v['capa_id']): ?><section class="card"><p class="cf-dica" style="margin:0">Contas a receber na <a href="/capa-financeira/revisar.php?id=<?= (int)$v['capa_id'] ?>">capa #<?= (int)$v['capa_id'] ?></a> — sem pendências, ela já sai confirmada e as contas vão direto para <a href="/capa-financeira/exportar.php">Exportar para o Omie</a>; se sobrar algum aviso, fica em revisão. Alterar as parcelas gera uma nova versão da capa.</p></section><?php endif; ?>
   <?php cv_aside_comum($venda, $hist, $cancelada); ?>
 </aside>
 </div>

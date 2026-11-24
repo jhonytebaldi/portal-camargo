@@ -362,14 +362,17 @@ function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u)
  * preenche cliente (CPF/CNPJ de quem paga) e conta corrente de cada linha.
  * @return int id da capa em revisão
  */
-function cv_gerar_receber(int $id, array $u): int { return cv_gerar_capa($id, $u); }
+function cv_gerar_receber(int $id, array $u, ?array &$pend = null): int { return cv_gerar_capa($id, $u, $pend); }
 
 /**
  * Gera a nova versão da capa da venda: contas a receber (etapa 3) + pagamentos LIBERADOS pelo financeiro (etapa 4).
  * Importa pelo mesmo caminho do upload; grava cliente/conta das linhas a receber e a ligação pagamento → linha da capa.
+ * O formulário já conferiu tudo: se a capa nasce sem nenhuma pendência nem aviso, é confirmada aqui mesmo e as contas vão
+ * direto para "Exportar para o Omie". Se sobrar algo, ela fica em revisão e $pend recebe a lista do que precisa ser visto.
  */
-function cv_gerar_capa(int $id, array $u): int
+function cv_gerar_capa(int $id, array $u, ?array &$pend = null): int
 {
+    require_once dirname(__DIR__) . '/_confirmar.php';
     require_once __DIR__ . '/lib/CapaXlsx.php';
     require_once dirname(__DIR__) . '/_importar.php';
     $v = cv_carregar($id);
@@ -402,9 +405,20 @@ function cv_gerar_capa(int $id, array $u): int
     db()->prepare('UPDATE cf_capas SET quem_paga = ? WHERE id = ?')->execute([json_encode(['modo' => $temCons ? 'construtora' : 'cliente', 'origem' => 'formulario', 'cad' => $temCons ? ($v['e3']['construtora_cad'] ?? null) : null,
         'sinal_ids' => [], 'por' => (string)$u['nome'], 'em' => date('Y-m-d H:i:s'), 'contado' => true, 'etapa3' => $q3], JSON_UNESCAPED_UNICODE), $capaId]);
     db()->prepare('UPDATE cv_vendas SET capa_id = ?, rev = rev + 1 WHERE id = ?')->execute([$capaId, $id]);
-    if (!empty($mapa['pagar'])) cv_hist($id, 4, 'contas_receber', 'Contas a receber e a pagar', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'nova versão na capa #' . $capaId . ' com ' . count($mapa['pagar']) . ' pagamento(s) liberado(s) (em revisão na Capa Financeira)', $u);
-    else cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (em revisão na Capa Financeira)', $u);
+    // sem pendência nem aviso: confirma sozinha (a conferência já foi feita no formulário). Falha aqui não desfaz a capa: ela só fica em revisão.
+    try { $pend = cf_confirmar_se_limpa(db(), $capaId, $u); }
+    catch (Throwable $e) { $pend = ['Não consegui confirmar a capa sozinho (' . $e->getMessage() . ') — abra a revisão da capa e clique em Confirmar.']; }
+    $onde = $pend ? 'em revisão na Capa Financeira: ' . mb_substr(implode('; ', array_slice($pend, 0, 3)), 0, 300) : 'sem pendências: confirmada e pronta em Exportar para o Omie';
+    if (!empty($mapa['pagar'])) cv_hist($id, 4, 'contas_receber', 'Contas a receber e a pagar', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'nova versão na capa #' . $capaId . ' com ' . count($mapa['pagar']) . ' pagamento(s) liberado(s) (' . $onde . ')', $u);
+    else cv_hist($id, 3, 'contas_receber', 'Contas a receber', $v['capa_id'] ? 'capa #' . $v['capa_id'] : null, 'geradas na capa #' . $capaId . ' (' . $onde . ')', $u);
     return $capaId;
+}
+
+/** frase para a mensagem do formulário: para onde foram as contas da capa recém-gerada */
+function cv_destino_capa(int $capaId, ?array $pend): string
+{
+    if (!$pend) return 'Nenhuma pendência: a capa #' . $capaId . ' já foi confirmada e as contas estão em “Exportar para o Omie”.';
+    return 'Atenção: a capa #' . $capaId . ' ficou em revisão na Capa Financeira porque ainda falta conferir: ' . implode('; ', array_slice($pend, 0, 4)) . (count($pend) > 4 ? '; e mais ' . (count($pend) - 4) : '') . '. Abra a revisão da capa, resolva e confirme para liberar o envio ao Omie.';
 }
 
 /** capas da venda (a atual e as versões anteriores) */

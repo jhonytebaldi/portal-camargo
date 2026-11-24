@@ -197,16 +197,16 @@ try {
             $gerar = true;
         }
         $rev = cv_gravar_e4($id, $rev, $e4n, $u, $hist);
-        $capaId = null;
+        $capaId = null; $pendCapa = null;
         if ($gerar) {
-            $capaId = cv_gerar_capa($id, $u);
+            $capaId = cv_gerar_capa($id, $u, $pendCapa);
             cv_atualizar_conclusao($id, $u);
             $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
         }
         $n = count($chaves);
         $msg = match ($acao) {
-            'liberar4' => $n . ' pagamento(s) liberado(s). Contas a pagar na capa #' . $capaId . ' — revise e confirme na Capa Financeira para enviar ao Omie.',
-            'desfazer4' => 'Liberação desfeita (' . $n . '). Capa #' . $capaId . ' regerada sem esse(s) pagamento(s) — revise na Capa Financeira.',
+            'liberar4' => $n . ' pagamento(s) liberado(s). ' . cv_destino_capa((int)$capaId, $pendCapa),
+            'desfazer4' => 'Liberação desfeita (' . $n . '). Capa regerada sem esse(s) pagamento(s). ' . cv_destino_capa((int)$capaId, $pendCapa),
             default => $hist ? 'Alterações dos pagamentos gravadas.' : 'Nada mudou.',
         };
         $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'capa_id' => $capaId, 'msg' => $msg, 'avisos' => Pagamentos::calcular(cv_carregar($id), $e4n, $fer)['avisos']]);
@@ -247,11 +247,11 @@ try {
             cv_construtora_gravar((string)$venda['construtora'], $qp['modo'] === 'construtora' ? 'construtora' : 'cliente', $qp['sinal'] === 'construtora' ? 'construtora' : 'cliente',
                                   (string)$venda['empresa'], $qp['modo'] === 'construtora' ? ($venda['e3']['construtora_cad'] ?? null) : null, $u, true);
         }
-        $capaId = null;
-        if (!$concluida || $g['mudou'] > 0 || !$venda['capa_id']) $capaId = cv_gerar_receber($id, $u);
+        $capaId = null; $pendCapa = null;
+        if (!$concluida || $g['mudou'] > 0 || !$venda['capa_id']) $capaId = cv_gerar_receber($id, $u, $pendCapa);
         $rev = (int)db()->query('SELECT rev FROM cv_vendas WHERE id = ' . $id)->fetchColumn();
         $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'capa_id' => $capaId, 'avisos' => $val['avisos'],
-               'msg' => ($concluida ? 'Alterações gravadas.' : 'Etapa 3 concluída.') . ($capaId ? ' Contas a receber geradas na capa #' . $capaId . ' — revise e confirme na Capa Financeira para enviar ao Omie.' : ' Nada mudou nas parcelas: as contas a receber continuam as mesmas.')]);
+               'msg' => ($concluida ? 'Alterações gravadas.' : 'Etapa 3 concluída.') . ($capaId ? ' Contas a receber geradas. ' . cv_destino_capa($capaId, $pendCapa) : ' Nada mudou nas parcelas: as contas a receber continuam as mesmas.')]);
     }
 
     if ($acao === 'add_bairro') {
