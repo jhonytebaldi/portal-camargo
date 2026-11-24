@@ -118,7 +118,7 @@ final class BbBusca
 {
     private const VAZIAS = ['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o'];
     /** texto pesquisável = o que veio do banco + a anotação feita na ferramenta */
-    private const TEXTO = "CONCAT(l.busca, ' ', l.nota_busca)";
+    private const TEXTO = "CONCAT(l.busca, ' ', l.nota_busca, ' ', l.omie_busca)";   // + quem pagou o boleto, pelo Omie
 
     /**
      * Entende a caixa única: ['valores'=>[float], 'docs'=>[dígitos], 'datas'=>[iso], 'refs'=>[dígitos], 'palavras'=>[norm], 'sinal'=>-1|0|1]
@@ -186,7 +186,7 @@ final class BbBusca
             if ($solto) $a[] = '% ' . (int)$v . ' %';
         }
         foreach ($i['refs'] as $d) { $w[] = '(ABS(l.valor) BETWEEN ? AND ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = (float)$d - $tolv - 0.004; $a[] = (float)$d + 0.99 + $tolv + 0.004; $a[] = '%' . $d . '%'; }
-        foreach ($i['docs'] as $d) { $w[] = '(l.doc = ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = $d; $a[] = '%' . $d . '%'; }
+        foreach ($i['docs'] as $d) { $w[] = '(l.doc = ? OR l.omie_doc = ? OR ' . self::TEXTO . ' LIKE ?)'; $a[] = $d; $a[] = $d; $a[] = '%' . $d . '%'; }
         foreach ($i['datas'] as $d) { $w[] = 'l.data BETWEEN ? AND ?'; $a[] = date('Y-m-d', strtotime("$d -$told days")); $a[] = date('Y-m-d', strtotime("$d +$told days")); }
         $ordem = 'l.data DESC, l.id DESC';
         if ($i['palavras'] && empty($f['sem_palavras'])) {
@@ -253,7 +253,7 @@ final class BbBusca
         if (!$pal || $n > 500) return [];
         $tk = fn(string $s) => array_values(array_filter(explode(' ', BbTexto::norm($s)), fn($w) => $w !== '' && !in_array($w, self::VAZIAS, true) && !ctype_digit($w)));
         $refs = []; $docs = []; $ja = [];
-        $st = $pdo->prepare('SELECT l.id, l.contraparte, l.doc ' . self::FROM . ' WHERE ' . $m['where']); $st->execute($m['args']);
+        $st = $pdo->prepare("SELECT l.id, CASE WHEN l.contraparte <> '' THEN l.contraparte ELSE l.omie_nome END AS contraparte, CASE WHEN l.doc <> '' THEN l.doc ELSE l.omie_doc END AS doc " . self::FROM . ' WHERE ' . $m['where']); $st->execute($m['args']);
         foreach ($st as $r) {
             $ja[(int)$r['id']] = 1;
             if ($r['doc'] !== '') $docs[$r['doc']] = $r['contraparte'];
@@ -265,7 +265,7 @@ final class BbBusca
         if (!$refs && !$docs) return [];
         // mesmos filtros da busca (período, contas, tipo…), sem as palavras; o nome é comparado aqui em PHP
         $m2 = self::montar(['sem_palavras' => 1] + $f);
-        $st = $pdo->prepare('SELECT l.id, l.contraparte, l.nome, l.doc ' . self::FROM . ' WHERE ' . $m2['where'] . ' ORDER BY l.data DESC, l.id DESC LIMIT 50000');
+        $st = $pdo->prepare("SELECT l.id, CASE WHEN l.contraparte <> '' THEN l.contraparte ELSE l.omie_nome END AS contraparte, l.nome, CASE WHEN l.doc <> '' THEN l.doc ELSE l.omie_doc END AS doc " . self::FROM . ' WHERE ' . $m2['where'] . ' ORDER BY l.data DESC, l.id DESC LIMIT 50000');
         $st->execute($m2['args']);
         $achou = [];
         foreach ($st as $r) {
@@ -341,8 +341,8 @@ final class BbBusca
     /** agrupado por pessoa/empresa (CPF/CNPJ quando existe; senão o nome) */
     public static function agrupar(PDO $pdo, array $m, int $limite = 300): array
     {
-        $chave = "CASE WHEN l.doc <> '' THEN l.doc WHEN l.contraparte <> '' THEN UPPER(l.contraparte) ELSE '' END";
-        $st = $pdo->prepare("SELECT $chave AS chave, MAX(l.doc) doc, MAX(l.contraparte) nome, COUNT(*) n,
+        $chave = "CASE WHEN l.doc <> '' THEN l.doc WHEN l.omie_doc <> '' THEN l.omie_doc WHEN l.contraparte <> '' THEN UPPER(l.contraparte) WHEN l.omie_nome <> '' THEN UPPER(l.omie_nome) ELSE '' END";
+        $st = $pdo->prepare("SELECT $chave AS chave, MAX(CASE WHEN l.doc <> '' THEN l.doc ELSE l.omie_doc END) doc, MAX(CASE WHEN l.contraparte <> '' THEN l.contraparte ELSE l.omie_nome END) nome, COUNT(*) n,
               COALESCE(SUM(CASE WHEN l.valor > 0 THEN l.valor END), 0) ent, COALESCE(SUM(CASE WHEN l.valor < 0 THEN l.valor END), 0) sai, MIN(l.data) de, MAX(l.data) ate, COUNT(DISTINCT l.conta_id) contas
               " . self::FROM . ' WHERE ' . $m['where'] . " GROUP BY chave ORDER BY (chave = ''), ABS(SUM(l.valor)) DESC LIMIT " . (int)$limite);
         $st->execute($m['args']);

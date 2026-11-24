@@ -276,6 +276,75 @@ final class BbOmie
     }
 
     /**
+     * Quem pagou cada boleto. O extrato do Sicoob só diz "CRÉD.LIQUIDAÇÃO COBRANÇA", sem nome; o Omie sabe de quem é o título
+     * pago (boleto emitido pela integração Omie × Sicoob). Para cada crédito de cobrança SEM nome numa conta ligada ao Omie,
+     * procura o recebimento do Omie da mesma conta corrente, mesmo valor, pago no dia do crédito ou até 5 dias antes; só liga
+     * quando o par é único dos dois lados. Grava no lançamento o cliente, o CPF/CNPJ e o título (entram na busca).
+     * Devolve ['ligados' => n, 'sem_par' => n, 'detalhe' => [...]].
+     */
+    public static function identificarRecebimentos(PDO $pdo, string $empresa): array
+    {
+        require_once __DIR__ . '/../../recibos-omie/lib/OmieApi.php';
+        $contas = [];
+        $st = $pdo->prepare("SELECT id, omie_cc FROM bb_contas WHERE empresa = ? AND omie_cc IS NOT NULL AND banco <> 'omie-cash'"); $st->execute([$empresa]);
+        foreach ($st as $c) $contas[(int)$c['id']] = (string)$c['omie_cc'];
+        if (!$contas) return ['ligados' => 0, 'sem_par' => 0, 'detalhe' => []];
+        $st = $pdo->query("SELECT id, conta_id, data, valor FROM bb_lanc WHERE conta_id IN (" . implode(',', array_keys($contas)) . ") AND valor > 0 AND omie_titulo IS NULL AND categoria = 'boleto' AND contraparte = '' ORDER BY data");
+        $banco = $st->fetchAll();
+        if (!$banco) return ['ligados' => 0, 'sem_par' => 0, 'detalhe' => []];
+        $de = date('Y-m-d', strtotime(min(array_column($banco, 'data')) . ' -6 days')); $ate = max(array_column($banco, 'data'));
+        // recebimentos do Omie no período (paginado)
+        $omie = []; $pag = 1;
+        do {
+            $r = OmieApi::call($empresa, 'financas/mf/', 'ListarMovimentos', ['nPagina' => $pag, 'nRegPorPagina' => 500, 'cNatureza' => 'R', 'dDtPagtoDe' => OmieApi::br($de), 'dDtPagtoAte' => OmieApi::br($ate)]);
+            foreach ($r['movimentos'] ?? [] as $mv) {
+                $d = $mv['detalhes'] ?? []; $rs = $mv['resumo'] ?? [];
+                $pago = OmieApi::iso((string)($d['dDtPagamento'] ?? ''));
+                if (!$pago || ($rs['cLiquidado'] ?? '') !== 'S' || empty($d['nCodTitulo'])) continue;
+                $omie[] = ['titulo' => (int)$d['nCodTitulo'], 'cc' => (string)($d['nCodCC'] ?? ''), 'pago' => $pago, 'cliente' => (int)($d['nCodCliente'] ?? 0),
+                    'doc' => preg_replace('/\D+/', '', (string)($d['cCPFCNPJCliente'] ?? '')), 'valores' => array_values(array_unique(array_filter([round((float)($rs['nValPago'] ?? 0), 2), round((float)($rs['nValLiquido'] ?? 0), 2)]))),
+                    'num' => (string)($d['cNumTitulo'] ?? ''), 'parcela' => (string)($d['cNumParcela'] ?? ''), 'boleto' => (string)($d['cNumBoleto'] ?? '')];
+            }
+            $tot = (int)($r['nTotPaginas'] ?? 1); $pag++;
+        } while ($pag <= $tot && $pag <= 40);
+        // candidatos dos dois lados
+        $doBanco = []; $doOmie = [];
+        foreach ($banco as $b) foreach ($omie as $k => $o) {
+            if ($o['cc'] !== $contas[(int)$b['conta_id']]) continue;
+            $dias = (strtotime($b['data']) - strtotime($o['pago'])) / 86400;
+            if ($dias < -0.01 || $dias > 5.01) continue;
+            $ok = false; foreach ($o['valores'] as $v) if (abs($v - (float)$b['valor']) < 0.005) $ok = true;
+            if (!$ok) continue;
+            $doBanco[(int)$b['id']][$k] = $dias; $doOmie[$k][(int)$b['id']] = $dias;
+        }
+        // só pares únicos; repete porque cada par fechado pode deixar outro único
+        $pares = []; $usadoO = [];
+        do { $mudou = false;
+            foreach ($doBanco as $bid => $cands) {
+                if (isset($pares[$bid])) continue;
+                $livres = array_diff_key($cands, $usadoO);
+                if (count($livres) !== 1) continue;
+                $k = array_key_first($livres);
+                $outros = array_diff_key($doOmie[$k], $pares, [$bid => 1]);
+                if ($outros) continue;   // o recebimento do Omie também casaria com outro crédito: não arrisca
+                $pares[$bid] = $k; $usadoO[$k] = 1; $mudou = true;
+            }
+        } while ($mudou);
+        $up = $pdo->prepare('UPDATE bb_lanc SET omie_titulo = ?, omie_nome = ?, omie_doc = ?, omie_info = ?, omie_busca = ? WHERE id = ? AND omie_titulo IS NULL');
+        $det = [];
+        foreach ($pares as $bid => $k) {
+            $o = $omie[$k];
+            try { $cli = $o['cliente'] ? OmieApi::fornecedor($pdo, $empresa, $o['cliente']) : []; } catch (Throwable $e) { $cli = []; }
+            $nome = trim((string)(($cli['razao_social'] ?? '') ?: ($cli['nome_fantasia'] ?? '')));
+            $doc = $o['doc'] ?: preg_replace('/\D+/', '', (string)($cli['cnpj_cpf'] ?? ''));
+            $info = 'título ' . $o['num'] . ($o['parcela'] !== '' ? ' · parcela ' . $o['parcela'] : '') . ($o['boleto'] !== '' ? ' · boleto ' . $o['boleto'] : '') . ' · pago em ' . BbTexto::dataBr($o['pago']);
+            $up->execute([$o['titulo'], mb_substr($nome, 0, 200), substr($doc, 0, 14), mb_substr($info, 0, 200), mb_substr(BbTexto::norm($nome . ' ' . $o['num'] . ' ' . $o['boleto']) . ' ' . $doc, 0, 400), $bid]);
+            $det[] = $nome . ' (' . $o['num'] . ')';
+        }
+        return ['ligados' => count($pares), 'sem_par' => count($banco) - count($pares), 'detalhe' => $det];
+    }
+
+    /**
      * Puxa o Omie Cash de uma empresa direto do Omie (sem arquivo). Só entram os movimentos "Conciliado" — os que de fato
      * passaram pela conta; os "Previsto" são contas a pagar ainda não pagas. Volta de 3 em 3 meses até não achar mais nada.
      * Devolve os resultados de BbImportador::gravar (um por conta Omie Cash da empresa).

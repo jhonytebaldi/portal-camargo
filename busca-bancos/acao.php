@@ -17,8 +17,9 @@ if ($a === 'detalhe') {
     if ($l['par_id']) { $st = $pdo->prepare("$sel WHERE l.id = ?"); $st->execute([$l['par_id']]); $par = $st->fetch() ?: null; }
     $st = $pdo->prepare("$sel WHERE l.conta_id = ? AND l.data = ? AND l.id <> ? ORDER BY l.id LIMIT 12"); $st->execute([$l['conta_id'], $l['data'], $id]);
     $viz = $st->fetchAll();
+    if ($l['contraparte'] === '' && $l['omie_nome'] !== '') { $l['contraparte'] = $l['omie_nome']; if ($l['doc'] === '') $l['doc'] = $l['omie_doc']; }
     $nPessoa = 0; $buscaPessoa = $l['doc'] !== '' ? $l['doc'] : $l['contraparte'];
-    if ($l['doc'] !== '') { $st = $pdo->prepare('SELECT COUNT(*) FROM bb_lanc WHERE doc = ?'); $st->execute([$l['doc']]); $nPessoa = (int)$st->fetchColumn(); }
+    if ($l['doc'] !== '') { $st = $pdo->prepare('SELECT COUNT(*) FROM bb_lanc WHERE doc = ? OR omie_doc = ?'); $st->execute([$l['doc'], $l['doc']]); $nPessoa = (int)$st->fetchColumn(); }
     elseif ($l['contraparte'] !== '') { $st = $pdo->prepare('SELECT COUNT(*) FROM bb_lanc WHERE contraparte = ?'); $st->execute([$l['contraparte']]); $nPessoa = (int)$st->fetchColumn(); }
     $conf = null;
     if ($l['conferido'] && $l['conferido_por']) { $st = $pdo->prepare('SELECT nome FROM users WHERE id = ?'); $st->execute([$l['conferido_por']]); $conf = $st->fetchColumn() ?: null; }
@@ -26,7 +27,7 @@ if ($a === 'detalhe') {
         'texto' => trim($r['contraparte'] . ' — ' . $r['memo'], ' —'), 'conta' => $r['apelido'], 'banco' => BbOfx::BANCOS[$r['banco']] ?? $r['banco']];
     bb_json(['id' => (int)$l['id'], 'campos' => array_values(array_filter([
             ['Data', BbTexto::dataBr($l['data'])], ['Valor', BbTexto::brl((float)$l['valor']) . ((float)$l['valor'] >= 0 ? ' (entrada)' : ' (saída)')],
-            ['Descrição do banco', $l['memo']], ['Nome informado pelo banco', $l['nome']], ['Pessoa / empresa identificada', $l['contraparte']],
+            ['Descrição do banco', $l['memo']], ['Nome informado pelo banco', $l['nome']], ['Pessoa / empresa identificada', $l['contraparte']], ['Quem pagou (pelo Omie)', $l['omie_nome'] !== '' ? $l['omie_nome'] . ($l['omie_doc'] !== '' ? ' · ' . BbTexto::docFmt($l['omie_doc']) : '') . ' — ' . $l['omie_info'] : ''],
             ['CPF/CNPJ', BbTexto::docFmt($l['doc'])], ['Chave Pix', 'os bancos não informam a chave no extrato'],
             ['Tipo', (['pix' => 'Pix', 'ted' => 'TED/transferência', 'boleto' => 'Boleto/cobrança', 'tarifa' => 'Tarifa', 'cartao' => 'Cartão/fatura', 'imposto' => 'Imposto', 'outro' => 'Outro'][$l['categoria']] ?? $l['categoria']) . ($l['tipo_ofx'] !== '' ? ' (' . $l['tipo_ofx'] . ' no arquivo)' : '')],
             ['Nº do documento / cobrança', $l['checknum']], ['Referência', $l['refnum']], ['Código da transação no banco', $l['fitid']],

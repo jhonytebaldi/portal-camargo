@@ -8,9 +8,9 @@ $pdo = db();
 $f = bb_filtros();
 $m = BbBusca::montar($f);
 $linhas = BbBusca::linhas($pdo, $m, 20000);
-$cab = ['Data', 'Empresa', 'Banco', 'Conta', 'Pessoa / empresa', 'CPF/CNPJ', 'Descrição do banco', 'Nome informado pelo banco', 'Tipo', 'Nº documento', 'Valor', 'Entrada/Saída', 'Conferido', 'Anotação', 'Transferência interna', 'Anulada', 'Origem'];
+$cab = ['Data', 'Empresa', 'Banco', 'Conta', 'Pessoa / empresa', 'CPF/CNPJ', 'Descrição do banco', 'Nome informado pelo banco', 'Tipo', 'Nº documento', 'Valor', 'Entrada/Saída', 'Conferido', 'Anotação', 'Transferência interna', 'Anulada', 'Origem', 'Quem pagou (pelo Omie)', 'Título no Omie'];
 $linha = fn(array $l) => [$l['data'], bb_empresa($l['empresa']), BbOfx::BANCOS[$l['banco']] ?? $l['banco'], $l['apelido'], $l['contraparte'], BbTexto::docFmt($l['doc']), $l['memo'], $l['nome'], $l['categoria'], $l['checknum'],
-    (float)$l['valor'], (float)$l['valor'] >= 0 ? 'Entrada' : 'Saída', $l['conferido'] ? 'sim' : '', $l['nota'], $l['interna'] ? 'sim' : '', $l['anulada'] ? 'sim' : '', $l['origem']];
+    (float)$l['valor'], (float)$l['valor'] >= 0 ? 'Entrada' : 'Saída', $l['conferido'] ? 'sim' : '', $l['nota'], $l['interna'] ? 'sim' : '', $l['anulada'] ? 'sim' : '', $l['origem'], trim($l['omie_nome'] . ($l['omie_doc'] !== '' ? ' · ' . BbTexto::docFmt($l['omie_doc']) : '')), $l['omie_info']];
 $nome = 'busca-bancos-' . date('d-m-Y-Hi');
 if (($_GET['fmt'] ?? '') === 'csv') {
     header('Content-Type: text/csv; charset=utf-8'); header('Content-Disposition: attachment; filename="' . $nome . '.csv"');

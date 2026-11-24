@@ -156,11 +156,12 @@ bb_cabecalho('busca', $u);
       <tr class="bb-lin<?= $l['anulada'] || $l['interna'] ? ' apagado' : '' ?>" data-id="<?= (int)$l['id'] ?>" tabindex="0" role="button" aria-expanded="false">
         <td class="mono"><?= BbTexto::dataBr($l['data']) ?></td>
         <td><?= bb_banco($l['banco']) ?> <span class="bb-conta"><?= h($l['apelido']) ?></span></td>
-        <td><?php if ($l['contraparte'] !== ''): ?><b><?= h($l['contraparte']) ?></b> <?php endif; ?><span class="bb-memo"><?= h($l['memo']) ?></span>
+        <td><?php if ($l['contraparte'] !== ''): ?><b><?= h($l['contraparte']) ?></b> <?php elseif (($l['omie_nome'] ?? '') !== ''): ?><b><?= h($l['omie_nome']) ?></b> <span class="bb-tag" title="O extrato do banco não traz o nome; veio do título recebido no Omie (<?= h($l['omie_info']) ?>)">pelo Omie</span> <?php endif; ?><span class="bb-memo"><?= h($l['memo']) ?></span>
+          <?php if (($l['omie_info'] ?? '') !== ''): ?><br><small class="bb-omie-info">Omie: <?= h($l['omie_info']) ?></small><?php endif; ?>
           <?php if ($l['interna']): ?><span class="bb-tag">transferência interna</span><?php endif; ?><?php if ($l['anulada']): ?><span class="bb-tag">anulada</span><?php endif; ?><?php if ($l['origem'] === 'pdf'): ?><span class="bb-tag">PDF</span><?php endif; ?>
           <?php if (!empty($l['motivo'])): ?><br><span class="bb-motivo">≈ <?= h($l['motivo']) ?></span><?php endif; ?>
           <?php if ($l['nota'] !== ''): ?><br><span class="bb-nota-lin">✎ <?= h($l['nota']) ?></span><?php endif; ?></td>
-        <td class="mono"><?= h(BbTexto::docFmt($l['doc'])) ?></td>
+        <td class="mono"><?= h(BbTexto::docFmt($l['doc'] !== '' ? $l['doc'] : ($l['omie_doc'] ?? ''))) ?></td>
         <td class="num <?= $v >= 0 ? 'ent' : 'sai' ?>"><?= BbTexto::brl($v) ?></td>
         <td><?php $quem = $l['conferido'] ? trim('Conferido' . ($l['conferido_nome'] ? ' por ' . $l['conferido_nome'] : '') . ($l['conferido_em'] ? ' em ' . date('d/m/Y H:i', strtotime($l['conferido_em'])) : '')) . '. Clique para desmarcar.' : 'Clique quando tiver checado este lançamento (bateu com a planilha, o Omie ou o comprovante).'; ?>
           <button type="button" class="bb-confpill<?= $l['conferido'] ? ' on' : '' ?>" aria-pressed="<?= $l['conferido'] ? 'true' : 'false' ?>" title="<?= h($quem) ?>"><?= $l['conferido'] ? '✓ Conferido' : 'Conferir' ?></button></td>

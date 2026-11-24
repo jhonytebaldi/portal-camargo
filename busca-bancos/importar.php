@@ -5,7 +5,7 @@ require_once __DIR__ . '/_comum.php';
 $u = require_tool('busca-bancos');
 $pdo = db();
 const BB_PASTA_PADRAO = '1rJqfghetDnTix5VX3W-s0vOGMxbMbQEd';
-$resultados = []; $erros = []; $ligadas = [];
+$resultados = []; $erros = []; $ligadas = []; $boletos = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
@@ -21,6 +21,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             catch (Throwable $ex) { $erros[] = 'Omie Cash da ' . h(BbImportador::EMPRESAS[$emp]) . ': ' . h($ex->getMessage()); }
         }
         foreach (BbOmie::vincular($pdo, $porEmp) as $v) $ligadas[] = $v;
+        // quem pagou os boletos (crédito de cobrança sem nome no extrato × título recebido no Omie)
+        foreach (array_keys($porEmp) as $emp) {
+            try { $x = BbOmie::identificarRecebimentos($pdo, $emp); if ($x['ligados'] || $x['sem_par']) $boletos[] = BbImportador::EMPRESAS[$emp] . ': ' . $x['ligados'] . ' crédito(s) de boleto identificados' . ($x['sem_par'] ? ', ' . $x['sem_par'] . ' ainda sem título correspondente no Omie' : '') . ($x['detalhe'] ? ' — ' . implode(', ', array_slice($x['detalhe'], 0, 12)) . (count($x['detalhe']) > 12 ? '…' : '') : ''); }
+            catch (Throwable $ex) { $erros[] = 'Boletos da ' . h(BbImportador::EMPRESAS[$emp]) . ': ' . h($ex->getMessage()); }
+        }
         BbImportador::configSet($pdo, 'omie_cash_ultima', date('Y-m-d H:i:s'));
     } elseif ($acao === 'pdf') {   // extratos da Caixa lidos do PDF no navegador
         foreach ((array)json_decode((string)($_POST['dados'] ?? ''), true) as $e) {
@@ -152,12 +157,14 @@ bb_cabecalho('importar', $u);
 </section>
 
 <?php if (!empty($ligarOmie) && array_filter($resultados, fn($r) => $r['conta_nova'])) { require_once __DIR__ . '/lib/Conferencia.php'; try { $ligadas = array_merge($ligadas, BbOmie::vincularTudo($pdo)); } catch (Throwable $e) {} } ?>
+<?php if ($boletos): ?><div class="bb-alerta ok"><b>Quem pagou os boletos (pelo Omie):</b><ul><?php foreach ($boletos as $v): ?><li><?= h($v) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
 <?php if ($ligadas): ?><div class="bb-alerta info"><b>Contas ligadas ao cadastro do Omie:</b><ul><?php foreach ($ligadas as $v): ?><li><?= h($v) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
 <section class="bb-card" id="bb-omie-cash">
-  <h2>Omie Cash (direto do Omie, sem arquivo)</h2>
-  <p>O Omie Cash não precisa de extrato: os lançamentos vêm da API do Omie das três empresas. Entram só os <b>conciliados</b> (o que de fato passou pela conta), com nome, CPF/CNPJ e número da transação Pix. Na primeira vez traz todo o histórico; depois, só os últimos dias.
+  <h2>Atualizar do Omie (Omie Cash e quem pagou os boletos)</h2>
+  <p>O Omie Cash não precisa de extrato: os lançamentos vêm da API do Omie das três empresas. Entram só os <b>conciliados</b> (o que de fato passou pela conta), com nome, CPF/CNPJ e número da transação Pix. Na primeira vez traz todo o histórico; depois, só os últimos dias.</p>
+  <p>Também identifica <b>quem pagou cada boleto</b>: o extrato do Sicoob só diz "CRÉD.LIQUIDAÇÃO COBRANÇA", sem nome. Para cada crédito desses, a ferramenta procura no Omie o título recebido na mesma conta, com o mesmo valor e pago no dia ou até 5 dias antes, e grava no lançamento o cliente, o CPF/CNPJ e o título — aí a busca pelo nome do cliente acha o crédito. Só liga quando não há dúvida (um único título para um único crédito).
     <?php $uo = BbImportador::config($pdo, 'omie_cash_ultima'); echo $uo ? 'Última atualização: <b>' . h(date('d/m/Y H:i', strtotime((string)$uo))) . '</b>.' : '<b>Ainda não foi atualizado nenhuma vez.</b>'; ?></p>
-  <form method="post"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="omie_cash"><button class="bb-btn" type="submit">Atualizar Omie Cash</button></form>
+  <form method="post"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="acao" value="omie_cash"><button class="bb-btn" type="submit">Atualizar do Omie</button></form>
 </section>
 
 <section class="bb-card" id="bb-pdf">
