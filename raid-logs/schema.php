@@ -17,7 +17,7 @@ function rl_migrar(PDO $pdo): array {
     $existe = (int)$pdo->query("SELECT COUNT(*) FROM tools WHERE slug='raid-logs'")->fetchColumn();
     if (!$existe) {
         $pdo->prepare("INSERT INTO tools (slug,nome,descricao,icone,caminho,ativo,ordem)
-            VALUES ('raid-logs','Análise de Logs da Raid','Warcraft Logs: wipes, cooldowns de cura e notes do NSRT','🐍','/raid-logs/',1,90)")
+            VALUES ('raid-logs','Análise de Logs da Raid','Warcraft Logs: wipes, cooldowns de cura e notes do NSRT','🐍','/raid-logs/index.php',1,90)")
             ->execute();
         $feitos[] = 'tool:raid-logs';
     }

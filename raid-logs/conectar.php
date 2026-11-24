@@ -6,7 +6,7 @@ require_once __DIR__ . '/_comum.php';
 $u = require_tool('raid-logs');
 if (!is_admin($u)) { http_response_code(403); exit('Só o administrador conecta o Warcraft Logs.'); }
 
-if (isset($_GET['sair'])) { rl_del('_token'); header('Location: ./'); exit; }
+if (isset($_GET['sair'])) { rl_del('_token'); header('Location: index.php'); exit; }
 
 $b64 = fn(string $s): string => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
 $verifier = $b64(random_bytes(48));

@@ -14,4 +14,4 @@ $t = rl_token_post(['grant_type' => 'authorization_code', 'client_id' => RL_CLIE
     'code_verifier' => $p['v'], 'code' => $code]);
 if (!$t) { http_response_code(502); exit('O Warcraft Logs recusou a troca do código. Confira se a redirect URL ' . h(RL_REDIRECT) . ' está cadastrada no client.'); }
 rl_token_salvar($t);
-header('Location: ./');
+header('Location: index.php');
