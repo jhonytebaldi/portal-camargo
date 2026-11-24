@@ -216,6 +216,10 @@ function cf_migrar(PDO $pdo): array
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN capa_flags_ok JSON NULL AFTER capa_flags");
         $feitos[] = 'cf_capas.capa_flags_ok';
     }
+    if (!$colExiste('cf_capas', 'drive_id')) {   // arquivo de origem no Google Drive (capa escolhida direto da pasta) + md5 do conteúdo importado
+        $pdo->exec("ALTER TABLE cf_capas ADD COLUMN drive_id VARCHAR(80) NULL AFTER sha256, ADD COLUMN drive_md5 VARCHAR(40) NULL AFTER drive_id, ADD KEY ix_cfc_drive (drive_id)");
+        $feitos[] = 'cf_capas.drive_id';
+    }
     if (!$colExiste('cf_capas', 'obs_final')) {
         $pdo->exec("ALTER TABLE cf_capas ADD COLUMN obs_final TEXT NULL AFTER obs_capa");
         $feitos[] = 'cf_capas.obs_final';

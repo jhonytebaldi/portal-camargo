@@ -52,8 +52,6 @@ if (count($varios) > 1) {
     $t0 = microtime(true); $res = [];
     $dir = cf_data_dir() . '/capas/' . date('Y/m');
     if (!is_dir($dir)) @mkdir($dir, 0750, true);
-    $temVenda = $pdo->prepare("SELECT COUNT(*) FROM cv_vendas WHERE cod_imovel = ? AND status <> 'cancelada'");
-    $jaTem = $pdo->prepare("SELECT id, cliente FROM cf_capas WHERE cod = ? AND status IN ('revisao','confirmada') ORDER BY id DESC LIMIT 1");
     foreach ($varios as $v) {
         $nome = $v['name'];
         if ((microtime(true) - $t0) > 25) { $res[] = ['nome' => $nome, 'st' => 'pulada', 'msg' => 'Não deu tempo de processar neste envio (o servidor limita a duração). Envie de novo só as que faltaram.']; continue; }
@@ -62,25 +60,7 @@ if (count($varios) > 1) {
         $seguro = preg_replace('/[^A-Za-z0-9._ -]+/u', '_', $nome) ?: 'capa.xlsx';
         $destino = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6) . '-' . $seguro;
         if (!move_uploaded_file($v['tmp_name'], $destino)) { $res[] = ['nome' => $nome, 'st' => 'erro', 'msg' => 'Não consegui gravar o arquivo no servidor. Tente de novo; se persistir, me avise.']; continue; }
-        try {
-            $capaUp = cf_parser()->parse($destino)['capa'];
-            $codUp = $capaUp['cod'] ?? null;
-            if ($codUp !== null && $codUp !== '') {
-                $temVenda->execute([(string)$codUp]);
-                if ((int)$temVenda->fetchColumn() > 0) { @unlink($destino); $res[] = ['nome' => $nome, 'st' => 'sozinha', 'msg' => 'COD ' . $codUp . ' é de uma venda feita pelo formulário. Envie este arquivo sozinho para ver o aviso e decidir.']; continue; }
-                $jaTem->execute([(string)$codUp]);
-                if ($ex = $jaTem->fetch()) {
-                    // já existe capa com este COD: no envio em lote a ordem dos arquivos é arbitrária (capa × aditivo), então a versão nova é decidida uma a uma
-                    @unlink($destino);
-                    $res[] = ['nome' => $nome, 'st' => 'sozinha', 'msg' => 'COD ' . $codUp . ' já está na capa #' . (int)$ex['id'] . ' (' . $ex['cliente'] . '). Se for aditivo/nova versão, envie este arquivo sozinho, depois da capa original; se o COD estiver errado, corrija na planilha.'];
-                    continue;
-                }
-                if ($conf = cf_cod_outro_cliente($pdo, $capaUp)) { @unlink($destino); $res[] = ['nome' => $nome, 'st' => 'sozinha', 'msg' => 'COD ' . $codUp . ' já está na capa #' . (int)$conf['id'] . ' de outro cliente (' . $conf['cliente'] . '). Confira o COD na planilha ou envie este arquivo sozinho para decidir.']; continue; }
-            }
-            $id = cf_importar_capa($destino, $empresa, $nome, $u);
-            $q = $pdo->prepare('SELECT versao, cliente, cod FROM cf_capas WHERE id = ?'); $q->execute([$id]); $c = $q->fetch();
-            $res[] = ['nome' => $nome, 'st' => 'ok', 'id' => $id, 'msg' => ($c['cod'] ? 'COD ' . $c['cod'] : 'sem COD') . ' · ' . $c['cliente'] . ((int)$c['versao'] > 1 ? ' · versão ' . (int)$c['versao'] . ' (já havia capa com este COD)' : '')];
-        } catch (Throwable $e) { @unlink($destino); $res[] = ['nome' => $nome, 'st' => 'erro', 'msg' => $e->getMessage() . ' Confira se o arquivo é uma capa no modelo e envie de novo.']; }
+        $res[] = ['nome' => $nome] + cf_importar_item_lote($pdo, $destino, $empresa, $nome, $u);
     }
     $nOk = count(array_filter($res, fn($r) => $r['st'] === 'ok'));
     portal_header('Capas enviadas', $u);

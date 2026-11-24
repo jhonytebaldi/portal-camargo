@@ -30,6 +30,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $m = cf_pares((string)($_POST['texto'] ?? ''));
             foreach (['CORRETOR', 'BONUS', 'RECEBER_NOVO', 'RECEBER_USADO', 'RECEBER_BONUS'] as $ob) if (!isset($m[$ob])) throw new RuntimeException("Faltou a chave $ob");
             cf_config_set('categorias', $m); $msg = 'Categorias salvas.';
+        } elseif ($op === 'drive_chave') {
+            if (!is_admin($u)) throw new RuntimeException('Só administradores podem trocar a chave de acesso ao Google Drive.');
+            $f = $_FILES['chave'] ?? null;
+            if (!$f || ($f['error'] ?? 1) !== UPLOAD_ERR_OK) throw new RuntimeException('Selecione o arquivo .json da chave (o que o Google Cloud baixou para o seu computador) e envie de novo.');
+            if ((int)$f['size'] > 20000) throw new RuntimeException('Arquivo grande demais para ser a chave da conta de serviço (ela tem uns 2 KB). Confira se escolheu o .json certo.');
+            $email = CfDrive::gravarChave((string)file_get_contents($f['tmp_name']));
+            $msg = 'Chave gravada. Conta do portal no Drive: ' . $email . '. Compartilhe a pasta das capas com esse e-mail como Editor e clique em "Testar acesso".';
+        } elseif ($op === 'drive_pasta') {
+            $v = trim((string)($_POST['pasta'] ?? ''));
+            if (preg_match('~/folders/([A-Za-z0-9_-]{10,})~', $v, $mm)) $v = $mm[1];
+            if ($v !== '' && !preg_match('/^[A-Za-z0-9_-]{10,80}$/', $v)) throw new RuntimeException('Não reconheci a pasta. Cole o link da pasta do Drive (https://drive.google.com/drive/folders/…) ou só o código dela.');
+            cf_config_set('drive_pasta', $v); $msg = 'Pasta do Drive salva.';
+        } elseif ($op === 'drive_teste') {
+            $l = CfDrive::listar();
+            $msg = 'Acesso ao Drive funcionando: pasta "' . $l['pasta'] . '" com ' . count($l['arquivos']) . ' arquivo(s) .xlsx.';
         } elseif ($op === 'nf_dict') {
             $m = cf_pares((string)($_POST['texto'] ?? ''));
             foreach ($m as $k => $v) if (mb_strlen($v, 'UTF-8') > 20) throw new RuntimeException("\"$v\" passa de 20 caracteres");
@@ -102,6 +117,23 @@ portal_header('Configurações — Capa Financeira', $u);
     <button class="btn">Salvar condições</button></form>
 </section>
 </div>
+
+<section class="card">
+  <h2>Google Drive — pasta das capas</h2>
+  <p class="cf-dica">Permite escolher as capas direto da pasta do Drive na tela de Capas. O portal entra com uma conta própria (conta de serviço), que só enxerga a pasta compartilhada com ela.</p>
+  <?php $drvEmail = CfDrive::email(); $drvPasta = (string)cf_config('drive_pasta', ''); ?>
+  <p><b>Situação:</b> <?= $drvEmail ? '<span class="cf-flag cf-ok">chave configurada</span> conta <code>' . h($drvEmail) . '</code>' : '<span class="cf-flag cf-leve">sem chave</span> envie abaixo o .json da conta de serviço' ?></p>
+  <?php if (is_admin($u)): ?>
+  <form method="post" enctype="multipart/form-data" class="cf-form"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_chave">
+    <label>Chave da conta de serviço (.json baixado do Google Cloud) <input type="file" name="chave" accept=".json,application/json" required></label>
+    <button class="btn cf-btn-sec"><?= $drvEmail ? 'Trocar a chave' : 'Enviar a chave' ?></button>
+    <span class="cf-dica">A chave fica só no servidor, fora do GitHub. Depois de enviar, pode apagar o arquivo do seu computador.</span></form>
+  <?php else: ?><p class="cf-dica">Só administradores trocam a chave.</p><?php endif; ?>
+  <form method="post" class="cf-form" style="margin-top:10px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_pasta">
+    <label>Pasta das capas (link ou código) <input type="text" name="pasta" value="<?= h($drvPasta) ?>" placeholder="<?= h(CfDrive::PASTA_PADRAO) ?> (padrão: CAPAS CORRIGIDAS PRA SUBIR NO SISTEMA)" style="width:520px;max-width:100%"></label>
+    <button class="btn cf-btn-sec">Salvar pasta</button></form>
+  <?php if ($drvEmail): ?><form method="post" class="cf-form" style="margin-top:10px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_teste"><button class="btn">Testar acesso</button></form><?php endif; ?>
+</section>
 
 <section class="card">
   <h2>Empresas e recibo</h2>

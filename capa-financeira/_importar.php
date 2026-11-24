@@ -37,6 +37,34 @@ function cf_cod_outro_cliente(PDO $pdo, array $capa): ?array
     return cf_mesmo_cliente((string)$a['cliente'], (string)($capa['cliente'] ?? '')) ? null : $a;
 }
 
+/** Importa UM arquivo dentro de um envio em lote (vários arquivos do computador ou escolhidos no Drive). Só importa quando não há
+    nada para decidir: COD de venda do formulário ou COD que já está em outra capa ficam de fora, com o motivo e o que fazer.
+    Apaga $destino quando não importa. @return array{st:string,msg:string,id?:int}  st = ok | sozinha | erro */
+function cf_importar_item_lote(PDO $pdo, string $destino, string $empresa, string $nome, array $u): array
+{
+    try {
+        $capaUp = cf_parser()->parse($destino)['capa'];
+        $codUp = $capaUp['cod'] ?? null;
+        if ($codUp !== null && $codUp !== '') {
+            $q = $pdo->prepare("SELECT COUNT(*) FROM cv_vendas WHERE cod_imovel = ? AND status <> 'cancelada'"); $q->execute([(string)$codUp]);
+            if ((int)$q->fetchColumn() > 0) { @unlink($destino); return ['st' => 'sozinha', 'msg' => 'COD ' . $codUp . ' é de uma venda feita pelo formulário. Envie este arquivo sozinho (campo de arquivo) para ver o aviso e decidir.']; }
+            // já existe capa com este COD: num lote a ordem dos arquivos é arbitrária (capa × aditivo), então a versão nova é decidida uma a uma
+            $q = $pdo->prepare("SELECT id, cliente FROM cf_capas WHERE cod = ? AND status IN ('revisao','confirmada') ORDER BY id DESC LIMIT 1"); $q->execute([(string)$codUp]);
+            if ($ex = $q->fetch()) {
+                @unlink($destino);
+                $outro = !cf_mesmo_cliente((string)$ex['cliente'], (string)($capaUp['cliente'] ?? ''));
+                return ['st' => 'sozinha', 'msg' => 'COD ' . $codUp . ' já está na capa #' . (int)$ex['id'] . ' (' . $ex['cliente'] . ')' . ($outro ? ', de OUTRO cliente — confira o COD na planilha.' : '. Se for aditivo/nova versão, envie este arquivo sozinho, depois da capa original; se o COD estiver errado, corrija na planilha.')];
+            }
+        }
+        $id = cf_importar_capa($destino, $empresa, $nome, $u);
+        $q = $pdo->prepare('SELECT cliente, cod FROM cf_capas WHERE id = ?'); $q->execute([$id]); $c = $q->fetch();
+        return ['st' => 'ok', 'id' => $id, 'msg' => ($c['cod'] ? 'COD ' . $c['cod'] : 'sem COD') . ' · ' . $c['cliente']];
+    } catch (Throwable $e) {
+        @unlink($destino);
+        return ['st' => 'erro', 'msg' => $e->getMessage() . ' Confira se o arquivo é uma capa no modelo e tente de novo.'];
+    }
+}
+
 /** $flagsExtras: avisos da capa acrescentados por quem chama (ex.: COD repetido em outra venda, importada separada). */
 function cf_importar_capa(string $destino, string $empresa, string $nomeOrig, array $u, ?int $anteriorId = null, bool $procurarPorCod = true, array $flagsExtras = []): int
 {

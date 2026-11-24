@@ -53,6 +53,97 @@ portal_header('Capa Financeira', $u);
   <p class="cf-dica">Reenviar a capa de uma venda já enviada (mesmo COD) cria uma nova versão e mostra o que mudou linha a linha.</p>
   <p class="cf-dica">Dá para selecionar <b>várias capas de uma vez</b> (até 20, da mesma empresa): todas entram em revisão e você resolve os alertas repetidos em <a href="/capa-financeira/lote.php">Resolver em lote</a>. Capa com COD de uma venda do formulário, ou com COD que já é de outro cliente, fica de fora e precisa ser enviada sozinha.</p>
 </section>
+<section class="card cf-upload" id="drv">
+  <h2>Escolher do Google Drive <small id="drv-pasta" class="cf-raw" style="font-weight:400"></small></h2>
+  <div id="drv-off" class="cf-dica" style="display:none">O acesso ao Drive ainda não foi configurado. Em <a href="/capa-financeira/configuracoes.php">Configurações › Google Drive</a> um administrador envia a chave da conta de serviço e testa o acesso.</div>
+  <div id="drv-on" style="display:none">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <select id="drv-emp" class="cf-in"><option value="">— empresa da importação —</option><?php foreach ($empresas as $e): ?><option value="<?= h($e['id']) ?>"><?= h($e['nome']) ?></option><?php endforeach; ?></select>
+      <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar por nome" style="width:220px">
+      <label style="font-size:13px"><input type="checkbox" id="drv-todos"> mostrar também as já importadas, "ok" e modelos</label>
+      <button type="button" class="btn" id="drv-importar" disabled>Importar marcadas (<span id="drv-n">0</span>)</button>
+      <button type="button" class="cf-x" id="drv-atualizar" title="lê a pasta do Drive de novo agora">↻ atualizar</button>
+      <span class="cf-raw" id="drv-quando"></span>
+    </div>
+    <div id="drv-aviso" class="cf-flag cf-leve" style="display:none;margin-bottom:8px"></div>
+    <div id="drv-lista" style="max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px"></div>
+    <p class="cf-dica">A lista é lida do Drive na hora (e de novo a cada 45 s com esta tela aberta): renomear, mover ou subir arquivo na pasta aparece aqui sem fazer mais nada. As marcadas entram em revisão — nada é confirmado nem enviado ao Omie. Marcando uma só, ela pode virar nova versão de uma capa do mesmo cliente; em lote, COD que já existe fica de fora com o motivo. Quando a capa vai toda para o Omie, o arquivo ganha "ok - " no nome sozinho.</p>
+  </div>
+  <div id="drv-carregando" class="cf-raw">lendo a pasta do Drive…</div>
+</section>
+<style>.drv-g{margin:6px 0}.drv-g>summary{cursor:pointer;font-weight:600;padding:4px 0}.drv-a{display:flex;gap:8px;align-items:center;padding:3px 0 3px 18px;font-size:14px}.drv-a:hover{background:rgba(0,0,0,.03)}.drv-a .cf-flag{font-size:11px;padding:1px 7px;margin:0}.drv-a small{color:#778}</style>
+<script>
+(() => {
+  const csrf = <?= json_encode(csrf_token()) ?>, $ = id => document.getElementById(id), esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const SIT = {pendente: ['cf-leve', 'pendente'], revisao: ['cf-ok', 'em revisão'], confirmada: ['cf-ok', 'confirmada'], enviada: ['cf-ok', 'no Omie'], alterada: ['cf-grave', 'mudou no Drive'], provavel: ['cf-ok', 'já enviada à mão?'], ok: ['cf-ok', 'ok no nome'], modelo: ['', 'modelo']};
+  let arquivos = [], marcados = new Set(), fechados = new Set(), ocupado = false, primeira = true;
+  const escolhivel = a => a.sit === 'pendente' || a.sit === 'alterada';
+  function desenhar() {
+    const busca = $('drv-busca').value.trim().toLowerCase(), todos = $('drv-todos').checked;
+    const vis = arquivos.filter(a => (todos || escolhivel(a)) && (!busca || a.nome.toLowerCase().includes(busca)));
+    const grupos = {}; vis.forEach(a => (grupos[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
+    const nomes = Object.keys(grupos).sort();
+    $('drv-lista').innerHTML = nomes.length ? nomes.map(g => {
+      const its = grupos[g], esc_g = esc(g), nEsc = its.filter(escolhivel).length;
+      return '<details class="drv-g" data-g="' + esc_g + '"' + (fechados.has(g) ? '' : ' open') + '><summary>' + esc_g + ' <small class="cf-raw">' + its.length + ' arquivo(s)</small>' + (nEsc ? ' <button type="button" class="cf-x drv-mes" data-g="' + esc_g + '">marcar os ' + nEsc + ' pendentes</button>' : '') + '</summary>' +
+        its.map(a => { const s = SIT[a.sit] || ['', a.sit]; const d = a.modificado ? new Date(a.modificado).toLocaleDateString('pt-BR') : '';
+          return '<label class="drv-a" title="' + esc(a.txt || '') + '"><input type="checkbox" class="drv-c" value="' + esc(a.id) + '"' + (marcados.has(a.id) ? ' checked' : '') + (escolhivel(a) ? '' : ' disabled') + '> <span>' + esc(a.nome) + '</span> <span class="cf-flag ' + s[0] + '">' + s[1] + '</span>' +
+            (a.capa ? ' <a href="/capa-financeira/revisar.php?id=' + a.capa + '">capa #' + a.capa + '</a>' : '') + ' <small>' + d + '</small></label>'; }).join('') + '</details>';
+    }).join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    contar();
+  }
+  function contar() { $('drv-n').textContent = marcados.size; $('drv-importar').disabled = !marcados.size || ocupado; }
+  async function ler(manual) {
+    if (ocupado) return;
+    let j = null;
+    try { const r = await fetch('/capa-financeira/drive.php?acao=listar', {headers: {'Accept': 'application/json'}}); j = await r.json(); } catch (e) { j = null; }
+    $('drv-carregando').style.display = 'none';
+    if (!j || !j.ok) {
+      const m = j && j.erro ? j.erro : 'Não consegui ler a pasta do Drive agora (sem resposta do portal). Confira sua internet e clique em atualizar.';
+      if (primeira || manual) { $('drv-on').style.display = ''; $('drv-aviso').style.display = ''; $('drv-aviso').textContent = m; }
+      primeira = false; return;
+    }
+    primeira = false;
+    if (!j.configurado) { $('drv-off').style.display = ''; return; }
+    $('drv-on').style.display = ''; $('drv-pasta').textContent = '· ' + j.pasta; $('drv-quando').textContent = 'lido às ' + j.lido_em;
+    $('drv-aviso').style.display = j.aviso ? '' : 'none'; $('drv-aviso').textContent = j.aviso || '';
+    arquivos = j.arquivos; const validos = new Set(arquivos.filter(escolhivel).map(a => a.id));
+    marcados = new Set([...marcados].filter(i => validos.has(i)));
+    desenhar();
+  }
+  $('drv-lista').addEventListener('change', e => { if (!e.target.classList.contains('drv-c')) return; e.target.checked ? marcados.add(e.target.value) : marcados.delete(e.target.value); contar(); });
+  $('drv-lista').addEventListener('click', e => { const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
+    const busca = $('drv-busca').value.trim().toLowerCase();
+    arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && (!busca || a.nome.toLowerCase().includes(busca))).forEach(a => marcados.add(a.id)); desenhar(); });
+  $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g); }, true);
+  $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
+  $('drv-atualizar').addEventListener('click', () => { $('drv-quando').textContent = 'lendo…'; ler(true); });
+  $('drv-importar').addEventListener('click', async () => {
+    const emp = $('drv-emp').value, ids = [...marcados];
+    if (!emp) { await CFModal.aviso({tipo: 'info', titulo: 'Falta a empresa', texto: 'Escolha a empresa da importação (Vertical ou Camargo) ao lado do botão.'}); return; }
+    if (ids.length > 1 && !await CFModal.pergunta({titulo: 'Importar ' + ids.length + ' capas do Drive?', html: '<p style="margin:0">Todas entram em <b>revisão</b> na empresa escolhida. Nada é confirmado nem enviado ao Omie. As que tiverem COD já usado em outra capa ficam de fora, com o motivo.</p>', ok: 'Sim, importar'})) return;
+    ocupado = true; contar();
+    const pg = CFModal.progresso({titulo: 'Importando do Drive', atraso: 200}); let fila = ids.slice(), res = [], erro = null, voltas = 0;
+    while (fila.length && voltas++ < 60) {
+      pg.pct(Math.round(100 * res.length / ids.length), res.length + ' de ' + ids.length + ' arquivo(s)…');
+      let j = null;
+      try { const r = await fetch('/capa-financeira/drive.php', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({acao: 'importar', csrf, empresa: emp, ids: fila, unico: ids.length === 1 ? 1 : 0})}); j = await r.json(); } catch (e) { j = null; }
+      if (!j || !j.ok) { erro = j && j.erro ? j.erro : 'O portal não respondeu no meio da importação. O que já foi importado está na lista de capas; atualize a página e importe de novo as que faltaram.'; break; }
+      res = res.concat(j.resultados); if (!j.resultados.length && j.restantes.length === fila.length) { erro = 'A importação não avançou (o servidor está lento). Tente de novo com menos arquivos.'; break; }
+      fila = j.restantes;
+    }
+    ocupado = false;
+    const ROT = {ok: ['cf-ok', 'importada'], sozinha: ['cf-leve', 'ficou de fora'], ja: ['cf-ok', 'já importada'], erro: ['cf-grave', 'erro']}, nOk = res.filter(r => r.st === 'ok').length;
+    const html = (erro ? '<p><b>' + esc(erro) + '</b></p>' : '') + '<div style="text-align:left;max-height:50vh;overflow:auto">' + res.map(r => '<div style="margin:6px 0"><span class="cf-flag ' + ROT[r.st][0] + '">' + ROT[r.st][1] + '</span> <b>' + esc(r.nome) + '</b><br><small>' + (r.id ? '<a href="/capa-financeira/revisar.php?id=' + r.id + '">capa #' + r.id + '</a> · ' : '') + esc(r.msg) + '</small></div>').join('') + '</div>' +
+      (nOk > 1 ? '<p style="margin-top:10px"><a class="btn" href="/capa-financeira/lote.php">Resolver alertas repetidos em lote</a></p>' : '');
+    await pg.resultado({tipo: erro ? 'erro' : (nOk === res.length ? 'ok' : 'parcial'), titulo: nOk + ' de ' + ids.length + ' capa(s) importadas', html});
+    if (nOk === 1 && ids.length === 1) { location.href = '/capa-financeira/revisar.php?id=' + res.find(r => r.st === 'ok').id; return; }
+    location.reload();
+  });
+  ler(false);
+  setInterval(() => { if (!document.hidden && $('drv-on').style.display !== 'none') ler(false); }, 45000);
+})();
+</script>
 <p style="margin:10px 0"><a class="btn cf-btn-sec" href="/capa-financeira/lote.php" title="resolve de uma vez os alertas que se repetem nas capas em revisão: data da venda com ano arrastado, grafia parecida e condições fora do dicionário">⚡ Resolver alertas repetidos em lote</a></p>
 
 <div class="admin-tabs">
