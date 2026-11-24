@@ -42,9 +42,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (preg_match('~/folders/([A-Za-z0-9_-]{10,})~', $v, $mm)) $v = $mm[1];
             if ($v !== '' && !preg_match('/^[A-Za-z0-9_-]{10,80}$/', $v)) throw new RuntimeException('Não reconheci a pasta. Cole o link da pasta do Drive (https://drive.google.com/drive/folders/…) ou só o código dela.');
             cf_config_set('drive_pasta', $v); $msg = 'Pasta do Drive salva.';
+        } elseif ($op === 'drive_extras') {
+            $ex = [];
+            foreach (preg_split('/\r?\n/', (string)($_POST['extras'] ?? '')) ?: [] as $ln) {
+                $ln = trim($ln); if ($ln === '') continue;
+                [$pst, $ano] = array_pad(array_map('trim', explode(';', $ln, 2)), 2, '');
+                if (preg_match('~/folders/([A-Za-z0-9_-]{10,})~', $pst, $mm)) $pst = $mm[1];
+                if (!preg_match('/^[A-Za-z0-9_-]{10,80}$/', $pst)) throw new RuntimeException('Não reconheci a pasta "' . $ln . '". Use uma linha por pasta: o link (ou o código) e, se quiser, "; 2026" para trazer só as capas com contas a partir desse ano.');
+                if ($ano !== '' && !preg_match('/^20\d\d$/', $ano)) throw new RuntimeException('Ano inválido em "' . $ln . '". Depois do ponto e vírgula vai só o ano, ex.: "; 2026".');
+                $ex[] = ['id' => $pst, 'desde' => $ano !== '' ? $ano . '-01-01' : null];
+            }
+            cf_config_set('drive_extras', $ex); $msg = count($ex) . ' pasta(s) extra(s) salva(s). Lembre de compartilhar cada uma com a conta do portal.';
         } elseif ($op === 'drive_teste') {
             $l = CfDrive::listar();
-            $msg = 'Acesso ao Drive funcionando: pasta "' . $l['pasta'] . '" com ' . count($l['arquivos']) . ' arquivo(s) .xlsx.';
+            $nEx = count(array_filter($l['arquivos'], fn($a) => !empty($a['extra'])));
+            $msg = 'Acesso ao Drive funcionando: pasta "' . $l['pasta'] . '" com ' . (count($l['arquivos']) - $nEx) . ' arquivo(s) .xlsx' . ($nEx ? ' e ' . $nEx . ' nas pastas de anos anteriores' : '') . '.' . (!empty($l['avisos']) ? ' ATENÇÃO: ' . implode(' | ', $l['avisos']) : '');
         } elseif ($op === 'nf_dict') {
             $m = cf_pares((string)($_POST['texto'] ?? ''));
             foreach ($m as $k => $v) if (mb_strlen($v, 'UTF-8') > 20) throw new RuntimeException("\"$v\" passa de 20 caracteres");
@@ -132,6 +144,12 @@ portal_header('Configurações — Capa Financeira', $u);
   <form method="post" class="cf-form" style="margin-top:10px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_pasta">
     <label>Pasta das capas (link ou código) <input type="text" name="pasta" value="<?= h($drvPasta) ?>" placeholder="<?= h(CfDrive::PASTA_PADRAO) ?> (padrão: CAPAS CORRIGIDAS PRA SUBIR NO SISTEMA)" style="width:520px;max-width:100%"></label>
     <button class="btn cf-btn-sec">Salvar pasta</button></form>
+  <?php $drvEx = cf_config('drive_extras'); if (!is_array($drvEx)) $drvEx = CfDrive::EXTRAS_PADRAO; ?>
+  <form method="post" class="cf-form" style="margin-top:10px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_extras">
+    <label>Pastas de anos anteriores (uma por linha: link ou código; opcional "; ano" para trazer só as capas com contas a pagar/receber a partir desse ano)
+      <textarea name="extras" rows="3" style="width:100%"><?= h(implode("\n", array_map(fn($e) => $e['id'] . (!empty($e['desde']) ? ' ; ' . substr((string)$e['desde'], 0, 4) : ''), $drvEx))) ?></textarea></label>
+    <button class="btn cf-btn-sec">Salvar pastas extras</button>
+    <span class="cf-dica">Cada pasta precisa estar compartilhada com a conta do portal (leitor basta; editor se quiser o "ok - " automático).</span></form>
   <?php if ($drvEmail): ?><form method="post" class="cf-form" style="margin-top:10px"><input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>"><input type="hidden" name="op" value="drive_teste"><button class="btn">Testar acesso</button></form><?php endif; ?>
 </section>
 

@@ -136,10 +136,10 @@ portal_header('Capa Financeira', $u);
     contar();
   }
   function contar() { $('drv-n').textContent = marcados.size; $('drv-importar').disabled = !marcados.size || ocupado; }
-  async function ler(manual) {
+  async function ler(manual, cont) {
     if (ocupado) return;
     let j = null;
-    try { const r = await fetch('/capa-financeira/drive.php?acao=listar', {headers: {'Accept': 'application/json'}}); j = await r.json(); } catch (e) { j = null; }
+    try { const r = await fetch('/capa-financeira/drive.php?acao=listar' + (cont ? '&cont=1' : ''), {headers: {'Accept': 'application/json'}}); j = await r.json(); } catch (e) { j = null; }
     $('drv-carregando').style.display = 'none';
     if (!j || !j.ok) {
       const m = j && j.erro ? j.erro : 'Não consegui ler a pasta do Drive agora (sem resposta do portal). Confira sua internet e clique em atualizar.';
@@ -149,8 +149,10 @@ portal_header('Capa Financeira', $u);
     primeira = false;
     if (!j.configurado) { $('drv-off').style.display = ''; return; }
     $('drv-on').style.display = ''; $('drv-pasta').textContent = '· ' + j.pasta; $('drv-quando').textContent = 'lido às ' + j.lido_em;
-    $('drv-aviso').style.display = j.aviso ? '' : 'none'; $('drv-aviso').textContent = j.aviso || '';
-    if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false), 1200); }
+    const avs = [j.aviso].concat(j.avisos || []).filter(Boolean);
+    if (j.antigas && (j.antigas.dentro || j.antigas.aguardando || j.antigas.fora)) $('drv-quando').textContent += ' · pastas de anos anteriores: ' + j.antigas.dentro + ' capa(s) com contas no período' + (j.antigas.aguardando ? ', ' + j.antigas.aguardando + ' ainda sendo lida(s)' : '') + (j.antigas.fora ? ' (' + j.antigas.fora + ' sem contas no período ficaram de fora)' : '');
+    $('drv-aviso').style.display = avs.length ? '' : 'none'; $('drv-aviso').textContent = avs.join(' | ');
+    if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false, true), 1200); }
     if (j.hoje) hoje = j.hoje;
     arquivos = j.arquivos; const validos = new Set(arquivos.filter(escolhivel).map(a => a.id));
     marcados = new Set([...marcados].filter(i => validos.has(i)));

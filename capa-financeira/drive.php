@@ -20,7 +20,7 @@ try {
     require_once __DIR__ . '/_importar.php';
     /* ---------- listar ---------- */
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-        $l = CfDrive::listar();
+        $l = CfDrive::listar(!empty($_GET['cont']) ? 40 : 0);   // 'cont' = chamadas seguidas enquanto lê o conteúdo: reaproveita a lista
         // capas ativas ligadas a um arquivo do Drive (a mais nova de cada arquivo) e nomes de arquivo já importados à mão
         $porDrive = []; $porNome = [];
         foreach ($pdo->query("SELECT c.id, c.status, c.drive_id, c.drive_md5, c.arquivo_nome, c.cod,
@@ -36,7 +36,7 @@ try {
             if (preg_match('/modelo|base-planilha/iu', $a['nome'])) $sit = 'modelo';
             elseif ($c) {
                 $enviada = $c['status'] === 'confirmada' && (int)$c['n_exp'] > 0 && (int)$c['n_pend'] === 0;
-                if ($enviada && !CfDrive::temOk($a['nome']) && $renomeados < 5 && $avisoRen === null) {
+                if ($enviada && !empty($a['editavel']) && !CfDrive::temOk($a['nome']) && $renomeados < 5 && $avisoRen === null) {
                     // capa toda no Omie: marca o arquivo com "ok - " (como já era feito à mão)
                     try { CfDrive::renomear($a['id'], 'ok - ' . ltrim($a['nome'])); $a['nome'] = 'ok - ' . ltrim($a['nome']); $renomeados++; }
                     catch (Throwable $e) { $avisoRen = 'Não consegui renomear arquivos para "ok - …": ' . $e->getMessage(); }
@@ -45,13 +45,15 @@ try {
                 else { $sit = $enviada ? 'enviada' : ($c['status'] === 'confirmada' ? 'confirmada' : 'revisao'); }
             } elseif ($c = ($porNome[CfDrive::nomeBase($a['nome'])] ?? null)) { $sit = 'provavel'; $txt = 'há uma capa enviada pelo computador com este nome de arquivo'; }
             elseif (CfDrive::temOk($a['nome'])) $sit = 'ok';
-            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5']];
+            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5'], 'desde' => $a['desde'] ?? null, 'extra' => !empty($a['extra'])];
         }
         // ficha de cada arquivo (cabeçalho da capa), para filtrar por construtora, COD, bairro…: usa o que já foi lido e lê mais alguns
         // a cada chamada (até ~9 s), começando pelos pendentes; a tela chama de novo enquanto faltar.
         $fichas = CfDrive::fichas(); $novas = []; $faltam = []; $tIdx = microtime(true);
         foreach ($out as $a) if ($a['sit'] !== 'modelo' && (!isset($fichas[$a['id']]) || ($fichas[$a['id']]['md5'] ?? '') !== $a['md5'] || ($fichas[$a['id']]['v'] ?? 1) !== CfDrive::FICHA_V)) $faltam[] = $a;
-        usort($faltam, fn($x, $y) => (int)!in_array($x['sit'], ['pendente', 'alterada'], true) <=> (int)!in_array($y['sit'], ['pendente', 'alterada'], true));
+        // ordem de leitura: pendentes da pasta principal, depois pendentes das pastas antigas, depois o resto
+        $pri = fn($x) => (in_array($x['sit'], ['pendente', 'alterada'], true) ? 0 : 2) + ($x['extra'] ? 1 : 0);
+        usort($faltam, fn($x, $y) => $pri($x) <=> $pri($y));
         $restam = count($faltam);
         if (empty($_GET['sem_indexar'])) foreach ($faltam as $a) {
             if ((microtime(true) - $tIdx) > 9) break;
@@ -59,6 +61,19 @@ try {
         }
         if ($novas || count($fichas) > count($out)) CfDrive::gravarFichas($novas, array_column($out, 'id'));
         foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1, 'v' => 1]); }
+        // pastas de anos anteriores: só ficam as capas com conta a pagar/receber de "desde" em diante. Enquanto o conteúdo de um arquivo
+        // não foi lido não dá para saber, então ele espera fora da lista (contado em $aguardando); o que não é capa também sai.
+        $aguardando = 0; $foraPeriodo = 0;
+        foreach ($out as $i => $a) {
+            if (empty($a['desde'])) continue;
+            if ($a['sit'] === 'modelo') { unset($out[$i]); continue; }
+            $f = $fichas[$a['id']] ?? null;
+            if (!$f || ($f['md5'] ?? '') !== $a['md5'] || ($f['v'] ?? 1) !== CfDrive::FICHA_V) { $aguardando++; unset($out[$i]); continue; }
+            $tem = false; foreach (array_merge($f['dp'] ?? [], $f['dr'] ?? []) as $d) if ($d >= $a['desde']) { $tem = true; break; }
+            if (!$tem) { $foraPeriodo++; unset($out[$i]); }
+        }
+        $out = array_values($out);
+
 
         // Vários arquivos da MESMA venda (mesmos compradores no nome), na pasta que for: só um vale.
         //  - havendo aditivo, vale o aditivo mais recente (substitui a capa original e os aditivos anteriores);
@@ -107,8 +122,9 @@ try {
             $vale = $ord[0];
             foreach ($ids as $i) if ($i !== $vale) $out[$i]['trava'] = ['motivo' => ($out[$i]['md5'] !== '' && $out[$i]['md5'] === $out[$vale]['md5']) ? 'copia' : 'mais_recente'] + $onde($vale);
         }
-        foreach ($out as $i => $a) unset($out[$i]['md5']);
-        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam), 'hoje' => date('Y-m-d')]);
+        foreach ($out as $i => $a) unset($out[$i]['md5'], $out[$i]['desde']);
+        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam), 'hoje' => date('Y-m-d'),
+              'avisos' => $l['avisos'] ?? [], 'antigas' => ['aguardando' => $aguardando, 'fora' => $foraPeriodo, 'dentro' => count(array_filter($out, fn($a) => $a['extra']))]]);
     }
 
     /* ---------- importar ---------- */
