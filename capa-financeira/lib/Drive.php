@@ -189,7 +189,7 @@ final class CfDrive
     }
     /* ---- ficha de cada arquivo: o cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda) lido uma vez e
             guardado por id + md5 — é o que permite filtrar a lista do Drive por construtora, COD etc. sem baixar tudo a cada vez ---- */
-    public const FICHA_V = 2;   // muda quando a ficha ganha campo novo: as antigas são relidas
+    public const FICHA_V = 3;   // muda quando a ficha ganha campo novo: as antigas são relidas
     private static function arqFichas(): string { return cf_data_dir() . '/drive-fichas.json'; }
     public static function fichas(): array
     {
@@ -216,7 +216,14 @@ final class CfDrive
             $dp = []; $dr = [];
             foreach ($r['linhas'] ?? [] as $ln) { $d = (string)($ln['data'] ?? ''); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) continue; if (($ln['tipo'] ?? '') === 'PAGAR') $dp[$d] = 1; else $dr[$d] = 1; }
             ksort($dp); ksort($dr);
-            return ['md5' => $md5, 'v' => self::FICHA_V, 'dp' => array_keys($dp), 'dr' => array_keys($dr), 'cod' => $c['cod'] !== null ? (string)$c['cod'] : '', 'cliente' => (string)($c['cliente'] ?? ''), 'construtora' => (string)($c['construtora'] ?? ''),
+            // linhas compactas [tipo p|r, vencimento, valor, índice do nome em 'q'] — para o filtro "Quem" (favorecido / cliente da linha)
+            $q = []; $lns = [];
+            foreach ($r['linhas'] ?? [] as $ln) {
+                $nome = trim((string)($ln['cf'] ?? '')); if ($nome === '') $nome = trim((string)($ln['favorecido_hist'] ?? ''));
+                $qi = array_search($nome, $q, true); if ($qi === false) { $q[] = $nome; $qi = count($q) - 1; }
+                $lns[] = [($ln['tipo'] ?? '') === 'PAGAR' ? 'p' : 'r', (string)($ln['data'] ?? ''), round((float)($ln['valor'] ?? 0), 2), $qi];
+            }
+            return ['md5' => $md5, 'v' => self::FICHA_V, 'q' => $q, 'ln' => $lns, 'dp' => array_keys($dp), 'dr' => array_keys($dr), 'cod' => $c['cod'] !== null ? (string)$c['cod'] : '', 'cliente' => (string)($c['cliente'] ?? ''), 'construtora' => (string)($c['construtora'] ?? ''),
                     'bairro' => (string)($c['bairro'] ?? ''), 'unidade' => (string)($c['unidade'] ?? ''), 'venda' => (string)($c['data_venda'] ?? ''), 'linhas' => count($r['linhas'] ?? [])];
         } catch (Throwable $e) {
             return ['md5' => $md5, 'v' => self::FICHA_V, 'erro' => mb_substr($e->getMessage(), 0, 160)];
