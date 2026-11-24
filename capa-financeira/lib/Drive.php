@@ -99,11 +99,11 @@ final class CfDrive
         throw new RuntimeException('Erro do Google Drive (HTTP ' . $http . ($m !== '' ? ': ' . $m : '') . '). Tente de novo; se persistir, me avise com esta mensagem.');
     }
 
-    /** pastas de anos anteriores, lidas junto com a principal. "desde": só entram as capas com alguma conta (a pagar ou a receber)
-        dessa data em diante — o resto do ano antigo não interessa para subir agora. Editável em Configurações › Google Drive. */
+    /** pastas de anos anteriores, lidas junto com a principal e mostradas cada uma num bloco recolhível. "desde" (opcional): só entram
+        as capas com alguma conta dessa data em diante; sem ele entram todas (a tela tem filtro por ano/período). Editável em Configurações. */
     public const EXTRAS_PADRAO = [
-        ['id' => '1XvaZmh1rMKe56p1kqAe9JlafUUmPPK8a', 'desde' => '2026-01-01'],   // capas de 2025
-        ['id' => '1voZgj6LZ1zGVNx964im1yL1yitwXRTTY', 'desde' => '2026-01-01'],   // capas de 2024
+        ['id' => '1XvaZmh1rMKe56p1kqAe9JlafUUmPPK8a', 'desde' => null],   // capas de 2025
+        ['id' => '1voZgj6LZ1zGVNx964im1yL1yitwXRTTY', 'desde' => null],   // capas de 2024
     ];
     /** @return list<array{id:string,desde:?string}> a principal primeiro */
     public static function pastas(): array
@@ -147,7 +147,7 @@ final class CfDrive
                             if ($f['mimeType'] === self::PASTA) { $pais[$f['id']] = ($sub !== '' ? $sub . ' / ' : '') . $f['name']; $prox[] = $f['id']; }
                             elseif ($f['mimeType'] === self::XLSX || preg_match('/\.xlsx$/i', (string)$f['name']))
                                 $arquivos[] = ['id' => $f['id'], 'nome' => (string)$f['name'], 'subpasta' => $sub, 'modificado' => (string)($f['modifiedTime'] ?? ''), 'md5' => (string)($f['md5Checksum'] ?? ''),
-                                               'tamanho' => (int)($f['size'] ?? 0), 'desde' => $pst['desde'], 'editavel' => $editavel, 'extra' => $n > 0];
+                                               'tamanho' => (int)($f['size'] ?? 0), 'desde' => $pst['desde'], 'editavel' => $editavel, 'extra' => $n > 0, 'raiz' => $n > 0 ? $nomeRaiz : ''];
                         }
                         $tok = $r['nextPageToken'] ?? null;
                     } while ($tok);
