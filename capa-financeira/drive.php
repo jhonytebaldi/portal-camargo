@@ -50,7 +50,7 @@ try {
         // ficha de cada arquivo (cabeçalho da capa), para filtrar por construtora, COD, bairro…: usa o que já foi lido e lê mais alguns
         // a cada chamada (até ~9 s), começando pelos pendentes; a tela chama de novo enquanto faltar.
         $fichas = CfDrive::fichas(); $novas = []; $faltam = []; $tIdx = microtime(true);
-        foreach ($out as $a) if ($a['sit'] !== 'modelo' && (!isset($fichas[$a['id']]) || ($fichas[$a['id']]['md5'] ?? '') !== $a['md5'])) $faltam[] = $a;
+        foreach ($out as $a) if ($a['sit'] !== 'modelo' && (!isset($fichas[$a['id']]) || ($fichas[$a['id']]['md5'] ?? '') !== $a['md5'] || ($fichas[$a['id']]['v'] ?? 1) !== CfDrive::FICHA_V)) $faltam[] = $a;
         usort($faltam, fn($x, $y) => (int)!in_array($x['sit'], ['pendente', 'alterada'], true) <=> (int)!in_array($y['sit'], ['pendente', 'alterada'], true));
         $restam = count($faltam);
         if (empty($_GET['sem_indexar'])) foreach ($faltam as $a) {
@@ -58,7 +58,7 @@ try {
             $novas[$a['id']] = $fichas[$a['id']] = CfDrive::lerFicha($a['id'], $a['md5']); $restam--;
         }
         if ($novas || count($fichas) > count($out)) CfDrive::gravarFichas($novas, array_column($out, 'id'));
-        foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1]); }
+        foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1, 'v' => 1]); }
 
         // Vários arquivos da MESMA venda (mesmos compradores no nome), na pasta que for: só um vale.
         //  - havendo aditivo, vale o aditivo mais recente (substitui a capa original e os aditivos anteriores);
@@ -108,7 +108,7 @@ try {
             foreach ($ids as $i) if ($i !== $vale) $out[$i]['trava'] = ['motivo' => ($out[$i]['md5'] !== '' && $out[$i]['md5'] === $out[$vale]['md5']) ? 'copia' : 'mais_recente'] + $onde($vale);
         }
         foreach ($out as $i => $a) unset($out[$i]['md5']);
-        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam)]);
+        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam), 'hoje' => date('Y-m-d')]);
     }
 
     /* ---------- importar ---------- */

@@ -65,6 +65,15 @@ portal_header('Capa Financeira', $u);
       <button type="button" class="cf-x" id="drv-atualizar" title="lê a pasta do Drive de novo agora">↻ atualizar</button>
       <span class="cf-raw" id="drv-quando"></span>
     </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:13px">
+      <b>Com contas:</b>
+      <select id="drv-ftipo" class="cf-in" style="padding:3px 6px"><option value="">a pagar ou a receber</option><option value="p">só a pagar</option><option value="r">só a receber</option></select>
+      <label title="pelo menos um vencimento neste ano"><input type="checkbox" id="drv-fano"> em <?= date('Y') ?></label>
+      <label title="pelo menos um vencimento de hoje em diante. A planilha não diz o que já foi pago: aqui 'em aberto' é o que ainda vai vencer."><input type="checkbox" id="drv-faberto"> ainda a vencer (de hoje em diante)</label>
+      <span>de <input type="date" id="drv-fde" class="cf-in" style="padding:3px 6px"> até <input type="date" id="drv-fate" class="cf-in" style="padding:3px 6px"> <small class="cf-raw">(só "de" = a partir da data)</small></span>
+      <button type="button" class="cf-x" id="drv-flimpar" style="display:none">limpar filtros de data</button>
+      <span class="cf-raw" id="drv-fcont"></span>
+    </div>
     <div id="drv-aviso" class="cf-flag cf-leve" style="display:none;margin-bottom:8px"></div>
     <div id="drv-lista" style="max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px"></div>
     <p class="cf-dica">Quando há mais de um arquivo da mesma venda (mesmos compradores no nome, em qualquer pasta), só um fica disponível: o <b>aditivo</b> mais recente, se houver; senão o que já está no portal ou o modificado por último. Os outros aparecem travados com o motivo, apontando para o que vale (dá para liberar). A lista é lida do Drive na hora (e de novo a cada 45 s com esta tela aberta): renomear, mover ou subir arquivo na pasta aparece aqui sem fazer mais nada. As marcadas entram em revisão — nada é confirmado nem enviado ao Omie. Marcando uma só, ela pode virar nova versão de uma capa do mesmo cliente; em lote, COD que já existe fica de fora com o motivo. Quando a capa vai toda para o Omie, o arquivo ganha "ok - " no nome sozinho.</p>
@@ -84,11 +93,29 @@ portal_header('Capa Financeira', $u);
   // texto pesquisável: nome do arquivo + cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda)
   const alvo = a => a._alvo ??= semAc([a.nome, a.subpasta, a.ficha ? ['cod ' + a.ficha.cod, a.ficha.cliente, a.ficha.construtora, a.ficha.bairro, a.ficha.unidade, (a.ficha.venda || '').split('-').reverse().join('/')].join(' ') : ''].join(' '));
   const bate = (a, busca) => !busca || busca.split(/\s+/).every(p => alvo(a).includes(p));
+  // filtros por vencimento das linhas da capa (lidos do conteúdo do arquivo): ano atual, a vencer, e período de/até
+  let hoje = <?= json_encode(date('Y-m-d')) ?>;
+  const ANO = <?= json_encode(date('Y')) ?>;
+  const filtroData = () => ({tipo: $('drv-ftipo').value, ano: $('drv-fano').checked, aberto: $('drv-faberto').checked, de: $('drv-fde').value, ate: $('drv-fate').value});
+  const temFiltroData = f => f.ano || f.aberto || f.de || f.ate;
+  function datasOk(a, f) {
+    if (!temFiltroData(f)) return true;
+    if (!a.ficha) return false;   // conteúdo ainda não lido (ou não é capa): não dá para saber
+    const ds = (f.tipo === 'p' ? [] : (a.ficha.dr || [])).concat(f.tipo === 'r' ? [] : (a.ficha.dp || []));
+    if (f.ano && !ds.some(d => d.startsWith(ANO + '-'))) return false;
+    if (f.aberto && !ds.some(d => d >= hoje)) return false;
+    if ((f.de || f.ate) && !ds.some(d => (!f.de || d >= f.de) && (!f.ate || d <= f.ate))) return false;
+    return true;
+  }
+  const mesAno = d => d ? d.slice(5, 7) + '/' + d.slice(0, 4) : '';
   const escolhivel = a => (a.sit === 'pendente' || a.sit === 'alterada') && !travado(a);
   const pendente = a => a.sit === 'pendente' || a.sit === 'alterada';
   function desenhar() {
     const busca = semAc($('drv-busca').value.trim()), todos = $('drv-todos').checked;
-    const vis = arquivos.filter(a => (todos || pendente(a)) && bate(a, busca));
+    const fd = filtroData(), base = arquivos.filter(a => (todos || pendente(a)) && bate(a, busca));
+    const vis = base.filter(a => datasOk(a, fd));
+    $('drv-flimpar').style.display = temFiltroData(fd) ? '' : 'none';
+    $('drv-fcont').textContent = temFiltroData(fd) ? vis.length + ' de ' + base.length + ' arquivo(s)' + (base.some(a => !a.ficha && a.sit !== 'modelo') ? ' · arquivos ainda não lidos ficam de fora' : '') : '';
     const grupos = {}; vis.forEach(a => (grupos[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
     const nomes = Object.keys(grupos).sort();
     const rolagem = $('drv-lista').scrollTop;
@@ -103,7 +130,7 @@ portal_header('Capa Financeira', $u);
             (a.nao_subir ? ' <span class="cf-flag cf-grave">o nome diz "não subir"</span>' : '') + (a.distrato && !a.nao_subir ? ' <span class="cf-flag cf-leve">distrato</span>' : '') +
             (a.outros && a.outros.length ? ' <span class="cf-flag cf-leve" title="' + esc(a.outros.join(' · ')) + '">há outro arquivo desta venda</span>' : '') +
             (pendente(a) && (a.trava || a.nao_subir) && !liberados.has(a.id) ? ' <button type="button" class="cf-x drv-lib" data-id="' + esc(a.id) + '" title="libera a caixa de seleção deste arquivo mesmo assim">liberar</button>' : '') +
-            ' <small>' + d + (a.ficha ? ' · ' + esc([a.ficha.cod ? 'COD ' + a.ficha.cod : 'sem COD', a.ficha.construtora, a.ficha.bairro].filter(Boolean).join(' · ')) : '') + '</small></label>'; }).join('') + '</details>';
+            ' <small>' + d + (a.ficha ? ' · ' + esc([a.ficha.cod ? 'COD ' + a.ficha.cod : 'sem COD', a.ficha.construtora, a.ficha.bairro, (() => { const ds = (a.ficha.dr || []).concat(a.ficha.dp || []).sort(); return ds.length ? 'contas de ' + mesAno(ds[0]) + ' a ' + mesAno(ds[ds.length - 1]) : ''; })()].filter(Boolean).join(' · ')) : '') + '</small></label>'; }).join('') + '</details>';
     }).join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
     $('drv-lista').scrollTop = rolagem;
     contar();
@@ -124,6 +151,7 @@ portal_header('Capa Financeira', $u);
     $('drv-on').style.display = ''; $('drv-pasta').textContent = '· ' + j.pasta; $('drv-quando').textContent = 'lido às ' + j.lido_em;
     $('drv-aviso').style.display = j.aviso ? '' : 'none'; $('drv-aviso').textContent = j.aviso || '';
     if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false), 1200); }
+    if (j.hoje) hoje = j.hoje;
     arquivos = j.arquivos; const validos = new Set(arquivos.filter(escolhivel).map(a => a.id));
     marcados = new Set([...marcados].filter(i => validos.has(i)));
     desenhar();
@@ -135,9 +163,11 @@ portal_header('Capa Financeira', $u);
       liberados.add(a.id); desenhar(); return; }
     const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
     const busca = semAc($('drv-busca').value.trim());
-    arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && bate(a, busca)).forEach(a => marcados.add(a.id)); desenhar(); });
+    arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && bate(a, busca) && datasOk(a, filtroData())).forEach(a => marcados.add(a.id)); desenhar(); });
   $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g); }, true);
   $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
+  ['drv-ftipo', 'drv-fano', 'drv-faberto', 'drv-fde', 'drv-fate'].forEach(i => $(i).addEventListener('change', desenhar));
+  $('drv-flimpar').addEventListener('click', () => { $('drv-fano').checked = $('drv-faberto').checked = false; $('drv-fde').value = $('drv-fate').value = ''; desenhar(); });
   $('drv-atualizar').addEventListener('click', () => { $('drv-quando').textContent = 'lendo…'; ler(true); });
   $('drv-importar').addEventListener('click', async () => {
     const emp = $('drv-emp').value, ids = [...marcados];
