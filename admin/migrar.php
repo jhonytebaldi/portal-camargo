@@ -205,6 +205,9 @@ try {
     // ---- Alterador Omie (alterador-omie/schema.php): rodadas/itens/receitas + botão na home -----
     require_once dirname(__DIR__) . '/alterador-omie/schema.php';
     foreach (ao_migrar($pdo) as $f) $feitos[] = 'alterador-omie: ' . $f;
+    // ---- Análise de Logs da Raid (raid-logs/schema.php): cache/token + botão na home -----
+    require_once dirname(__DIR__) . '/raid-logs/schema.php';
+    foreach (rl_migrar($pdo) as $f) $feitos[] = 'raid-logs: ' . $f;
 
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
