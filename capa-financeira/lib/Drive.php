@@ -99,34 +99,66 @@ final class CfDrive
         throw new RuntimeException('Erro do Google Drive (HTTP ' . $http . ($m !== '' ? ': ' . $m : '') . '). Tente de novo; se persistir, me avise com esta mensagem.');
     }
 
-    /** todos os .xlsx da pasta e das subpastas (até 2 níveis), com o caminho da subpasta.
-        @return array{pasta:string,arquivos:list<array{id:string,nome:string,subpasta:string,modificado:string,md5:string,tamanho:int}>} */
-    public static function listar(): array
+    /** pastas de anos anteriores, lidas junto com a principal. "desde": só entram as capas com alguma conta (a pagar ou a receber)
+        dessa data em diante — o resto do ano antigo não interessa para subir agora. Editável em Configurações › Google Drive. */
+    public const EXTRAS_PADRAO = [
+        ['id' => '1XvaZmh1rMKe56p1kqAe9JlafUUmPPK8a', 'desde' => '2026-01-01'],   // capas de 2025
+        ['id' => '1voZgj6LZ1zGVNx964im1yL1yitwXRTTY', 'desde' => '2026-01-01'],   // capas de 2024
+    ];
+    /** @return list<array{id:string,desde:?string}> a principal primeiro */
+    public static function pastas(): array
     {
-        $raiz = self::pasta();
-        $info = self::api('GET', 'files/' . rawurlencode($raiz), ['fields' => 'id,name', 'supportsAllDrives' => 'true']);
-        $pais = [$raiz => '']; $arquivos = []; $fila = [$raiz]; $nivel = 0;
-        while ($fila && $nivel < 3) {
-            $prox = [];
-            foreach (array_chunk($fila, 25) as $grupo) {
-                $q = '(' . implode(' or ', array_map(fn($p) => "'" . $p . "' in parents", $grupo)) . ') and trashed = false';
-                $tok = null;
-                do {
-                    $r = self::api('GET', 'files', array_filter(['q' => $q, 'fields' => 'nextPageToken,files(id,name,mimeType,modifiedTime,md5Checksum,size,parents)', 'pageSize' => 1000,
-                        'supportsAllDrives' => 'true', 'includeItemsFromAllDrives' => 'true', 'pageToken' => $tok]));
-                    foreach ($r['files'] ?? [] as $f) {
-                        $pai = $f['parents'][0] ?? $raiz; $sub = $pais[$pai] ?? '';
-                        if ($f['mimeType'] === self::PASTA) { $pais[$f['id']] = ($sub !== '' ? $sub . ' / ' : '') . $f['name']; $prox[] = $f['id']; }
-                        elseif ($f['mimeType'] === self::XLSX || preg_match('/\.xlsx$/i', (string)$f['name']))
-                            $arquivos[] = ['id' => $f['id'], 'nome' => (string)$f['name'], 'subpasta' => $sub, 'modificado' => (string)($f['modifiedTime'] ?? ''), 'md5' => (string)($f['md5Checksum'] ?? ''), 'tamanho' => (int)($f['size'] ?? 0)];
-                    }
-                    $tok = $r['nextPageToken'] ?? null;
-                } while ($tok);
+        $ex = cf_config('drive_extras'); if (!is_array($ex)) $ex = self::EXTRAS_PADRAO;
+        $out = [['id' => self::pasta(), 'desde' => null]];
+        foreach ($ex as $e) if (!empty($e['id']) && $e['id'] !== $out[0]['id']) $out[] = ['id' => (string)$e['id'], 'desde' => !empty($e['desde']) ? (string)$e['desde'] : null];
+        return $out;
+    }
+
+    /** todos os .xlsx da pasta principal e das pastas extras (subpastas até 4 níveis), com o caminho da subpasta.
+        Pasta extra sem acesso não derruba a lista: vira aviso. $cacheSeg > 0 reaproveita a última leitura (chamadas seguidas da indexação).
+        @return array{pasta:string,arquivos:list<array>,avisos:list<string>} */
+    public static function listar(int $cacheSeg = 0): array
+    {
+        $arqCache = cf_data_dir() . '/drive-lista.json';
+        if ($cacheSeg > 0 && is_file($arqCache) && (time() - filemtime($arqCache)) < $cacheSeg) { $j = json_decode((string)@file_get_contents($arqCache), true); if (is_array($j) && isset($j['arquivos'])) return $j; }
+        $arquivos = []; $avisos = []; $nomePrincipal = '';
+        foreach (self::pastas() as $n => $pst) {
+            $raiz = $pst['id'];
+            try {
+                $info = self::api('GET', 'files/' . rawurlencode($raiz), ['fields' => 'id,name,capabilities(canAddChildren)', 'supportsAllDrives' => 'true']);
+            } catch (Throwable $e) {
+                if ($n === 0) throw $e;
+                $avisos[] = 'Pasta extra ' . $raiz . ' fora da lista: ' . $e->getMessage();
+                continue;
             }
-            $fila = $prox; $nivel++;
+            $nomeRaiz = (string)($info['name'] ?? ''); if ($n === 0) $nomePrincipal = $nomeRaiz;
+            $editavel = !empty($info['capabilities']['canAddChildren']);
+            $pais = [$raiz => $n === 0 ? '' : $nomeRaiz]; $fila = [$raiz]; $nivel = 0;
+            while ($fila && $nivel < 4) {
+                $prox = [];
+                foreach (array_chunk($fila, 25) as $grupo) {
+                    $q = '(' . implode(' or ', array_map(fn($p) => "'" . $p . "' in parents", $grupo)) . ') and trashed = false';
+                    $tok = null;
+                    do {
+                        $r = self::api('GET', 'files', array_filter(['q' => $q, 'fields' => 'nextPageToken,files(id,name,mimeType,modifiedTime,md5Checksum,size,parents)', 'pageSize' => 1000,
+                            'supportsAllDrives' => 'true', 'includeItemsFromAllDrives' => 'true', 'pageToken' => $tok]));
+                        foreach ($r['files'] ?? [] as $f) {
+                            $pai = $f['parents'][0] ?? $raiz; $sub = $pais[$pai] ?? ($pais[$raiz] ?? '');
+                            if ($f['mimeType'] === self::PASTA) { $pais[$f['id']] = ($sub !== '' ? $sub . ' / ' : '') . $f['name']; $prox[] = $f['id']; }
+                            elseif ($f['mimeType'] === self::XLSX || preg_match('/\.xlsx$/i', (string)$f['name']))
+                                $arquivos[] = ['id' => $f['id'], 'nome' => (string)$f['name'], 'subpasta' => $sub, 'modificado' => (string)($f['modifiedTime'] ?? ''), 'md5' => (string)($f['md5Checksum'] ?? ''),
+                                               'tamanho' => (int)($f['size'] ?? 0), 'desde' => $pst['desde'], 'editavel' => $editavel, 'extra' => $n > 0];
+                        }
+                        $tok = $r['nextPageToken'] ?? null;
+                    } while ($tok);
+                }
+                $fila = $prox; $nivel++;
+            }
         }
-        usort($arquivos, fn($a, $b) => [$a['subpasta'], mb_strtolower($a['nome'])] <=> [$b['subpasta'], mb_strtolower($b['nome'])]);
-        return ['pasta' => (string)($info['name'] ?? ''), 'arquivos' => $arquivos];
+        usort($arquivos, fn($a, $b) => [(int)$a['extra'], $a['subpasta'], mb_strtolower($a['nome'])] <=> [(int)$b['extra'], $b['subpasta'], mb_strtolower($b['nome'])]);
+        $res = ['pasta' => $nomePrincipal, 'arquivos' => $arquivos, 'avisos' => $avisos];
+        @file_put_contents($arqCache, json_encode($res, JSON_UNESCAPED_UNICODE), LOCK_EX);
+        return $res;
     }
 
     /** nome, md5 e pasta-mãe de um arquivo */
