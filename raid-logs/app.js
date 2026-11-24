@@ -12,6 +12,17 @@
   const COR_CLASSE = { DeathKnight: '#C41E3A', DemonHunter: '#A330C9', Druid: '#FF7C0A', Evoker: '#33937F', Hunter: '#AAD372', Mage: '#3FC7EB', Monk: '#00FF98', Paladin: '#F48CBA', Priest: '#FFFFFF', Rogue: '#FFF468', Shaman: '#0070DD', Warlock: '#8788EE', Warrior: '#C69B6D' };
   const selo = (nome, classe) => '<span class="selo" style="background:' + (COR_CLASSE[classe] || '#888') + '"></span>' + esc(nome);
 
+  // Nome de habilidade com link para o Wowhead (o script deles abre a tooltip ao passar o mouse).
+  let IDS = {}, NOMES_RE = null;
+  const hab = (nome, id) => { id = id || IDS[nome]; return id ? '<a class="wh" href="https://www.wowhead.com/pt/spell=' + id + '" target="_blank" rel="noopener">' + esc(nome) + '</a>' : esc(nome); };
+  const linkTexto = txt => { const e = esc(txt); return NOMES_RE ? e.replace(NOMES_RE, m => { const k = m.replace(/&#39;|&quot;/g, "'"); return IDS[m] || IDS[k] ? hab(IDS[m] ? m : k) : m; }) : e; };
+  function montarIds(ls) {
+    IDS = {}; for (const c of C.CDS) if (!IDS[c.nome]) IDS[c.nome] = c.id;
+    for (const l of ls) { for (const h of l.habs) if (h.id > 1 && !IDS[h.nome]) IDS[h.nome] = h.id; for (const m of l.mortes) { if (m.golpeId > 1 && !IDS[m.golpe]) IDS[m.golpe] = m.golpeId; for (const d of m.dano) if (d.id > 1 && !IDS[d.nome]) IDS[d.nome] = d.id; } }
+    const nomes = Object.keys(IDS).filter(n => n.length > 3).sort((a, b) => b.length - a.length).map(n => esc(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    NOMES_RE = nomes.length ? new RegExp('(?<![\\w>])(' + nomes.join('|') + ')(?![\\w<])', 'g') : null;
+  }
+
   const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
 
   async function gql(query, variables) {
@@ -113,9 +124,11 @@
       return '<div class="linha semana"><label class="chip forte"><input type="checkbox" data-sem="' + sm + '"' + (todas ? ' checked' : '') + '> Semana ' + sm + '</label>' +
         rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + '</label>').join('') + '</div>'; }).join('');
     document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === est.aba));
+    montarIds(ls);
     const el = $('conteudo');
     if (!ls.length) { el.innerHTML = '<p class="sub">Nenhuma try para os filtros escolhidos.</p>'; return; }
     el.innerHTML = ({ geral: abaGeral, mortes: abaMortes, dano: abaDano, healers: abaHealers, plano: abaPlano, ultima: abaUltima })[est.aba](ls);
+    try { if (window.$WowheadPower) window.$WowheadPower.refreshLinks(); } catch (e) { }
   }
 
   // ---------- Visao geral ----------
@@ -156,12 +169,12 @@
       (est.golpe ? '<span class="sub">' + m.porTry.length + ' de ' + m.wipes + ' wipes tiveram morte inicial por ' + esc(est.golpe) + '.</span>' : '') + '</div>';
     h += '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
     h += '<div class="duas"><div><h2>O que mata primeiro</h2><table><tr><th>Habilidade</th><th class="n">Mortes</th><th class="n">Tries afetadas</th><th class="n">Foi a 1ª morte</th></tr>' +
-      m.causas.slice(0, 14).map(c => '<tr><td>' + esc(c.nome) + '</td><td class="n">' + c.mortes + '</td><td class="n">' + c.tries + ' (' + Math.round(100 * c.tries / m.wipes) + '%)</td><td class="n">' + c.primeira + '</td></tr>').join('') + '</table></div>';
+      m.causas.slice(0, 14).map(c => '<tr><td>' + hab(c.nome) + '</td><td class="n">' + c.mortes + '</td><td class="n">' + c.tries + ' (' + Math.round(100 * c.tries / m.wipes) + '%)</td><td class="n">' + c.primeira + '</td></tr>').join('') + '</table></div>';
     h += '<div><h2>Quem morre primeiro</h2><table><tr><th>Jogador</th><th class="n">Mortes iniciais</th><th class="n">Foi a 1ª morte</th><th class="n">Tries presentes</th><th class="n">Mortes por try</th></tr>' +
       m.quem.slice(0, 14).map(q => { const j = ls.map(l => l.jogadores.find(x => x.nome === q.nome)).find(Boolean) || {}; return '<tr><td>' + selo(q.nome, j.classe) + '</td><td class="n">' + q.mortes + '</td><td class="n">' + q.primeira + '</td><td class="n">' + q.presente + '</td><td class="n">' + (q.mortes / q.presente).toFixed(2).replace('.', ',') + '</td></tr>'; }).join('') + '</table></div></div>';
     h += '<h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Boss</th><th>Fase</th><th>Primeiras mortes</th></tr>' +
       m.porTry.map(({ l, prim }) => '<tr><td>' + dataBR(l.data) + '</td><td class="n">' + l.id + '</td><td class="n">' + mmss(l.durS) + '</td><td class="n">' + pct(l.pct) + '</td><td>' + l.ultFase + '</td><td>' +
-        prim.map(d => (est.golpe && d.golpe === est.golpe ? '<b>' + esc(d.nome) + '</b>' : esc(d.nome)) + ' <span class="sub">(' + esc(d.golpe) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
+        prim.map(d => (est.golpe && d.golpe === est.golpe ? '<b>' + esc(d.nome) + '</b>' : esc(d.nome)) + ' <span class="sub">(' + hab(d.golpe, d.golpeId) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
     return h;
   }
 
@@ -204,12 +217,12 @@
       pk.map((p, i) => {
         const perto = uso.linhas.filter(ln => ln.tipo === 'raid').map(ln => { const n = new Set(ln.usos.filter(u => u.t >= p.t - 8 && u.t <= p.t + 3).map(u => u.rel + ':' + u.luta)).size; return { ln, n }; })
           .filter(o => o.n >= Math.max(3, p.tries * 0.25)).sort((a, b) => b.n - a.n);
-        return '<tr><td class="n">' + (i + 1) + '</td><td class="n">' + mmss(p.t) + '</td><td class="n">' + num(p.dtps) + '/s</td><td class="n">' + Math.round((p.rel - 1) * 100) + '% acima</td><td>' + esc(p.hab || '') + '</td><td>' +
+        return '<tr><td class="n">' + (i + 1) + '</td><td class="n">' + mmss(p.t) + '</td><td class="n">' + num(p.dtps) + '/s</td><td class="n">' + Math.round((p.rel - 1) * 100) + '% acima</td><td>' + hab(p.hab || '') + '</td><td>' +
           (perto.length ? perto.map(o => esc(o.ln.quem + ' ' + o.ln.nome) + ' <span class="sub">(' + Math.round(100 * o.n / p.tries) + '%)</span>').join(' · ') : '<span class="alerta">⚠ Nenhum CD de raid costuma cair aqui</span>') + '</td></tr>';
       }).join('') + '</table>';
     // tabela de uso
     h += '<h2>Regularidade de cada CD</h2><table><tr><th>Jogador</th><th>CD</th><th class="n">Usou em</th><th>Usos (momento mediano, do mais cedo ao mais tarde)</th></tr>' +
-      linhas.map(ln => '<tr><td>' + selo(ln.quem, ln.classe) + '</td><td>' + esc(ln.nome) + '</td><td class="n">' + ln.tries + ' de ' + ln.presente + ' (' + Math.round(100 * ln.tries / ln.presente) + '%)</td><td>' +
+      linhas.map(ln => '<tr><td>' + selo(ln.quem, ln.classe) + '</td><td>' + hab(ln.nome, ln.id) + '</td><td class="n">' + ln.tries + ' de ' + ln.presente + ' (' + Math.round(100 * ln.tries / ln.presente) + '%)</td><td>' +
         ln.ordens.map(o => o.ordem + 'º: ' + mmss(o.med) + ' <span class="sub">(' + mmss(o.min) + '–' + mmss(o.max) + ', ' + o.n + '×)</span>').join(' · ') + '</td></tr>').join('') + '</table>';
     return h;
   }
@@ -303,7 +316,7 @@
     const cds = C.cdsDoJogador(ls, est.jogador);
     h += '<h2>Aproveitamento dos CDs de ' + esc(est.jogador) + '</h2><div class="sub">Usos feitos contra o máximo que o cooldown permitiria até o wipe, somando as tries de pelo menos 1 minuto. Um defensivo ou externo guardado de propósito aparece baixo aqui, e isso pode estar certo.</div>' +
       '<table><tr><th>CD</th><th class="n">Cooldown</th><th class="n">Usos</th><th class="n">Possíveis</th><th class="n">Aproveitamento</th></tr>' +
-      cds.map(c => '<tr><td>' + esc(c.nome) + '</td><td class="n">' + mmss(c.cd) + '</td><td class="n">' + c.usos + '</td><td class="n">' + c.possiveis + '</td><td class="n">' + Math.round(100 * c.usos / c.possiveis) + '%</td></tr>').join('') + '</table>';
+      cds.map(c => '<tr><td>' + hab(c.nome, c.id) + '</td><td class="n">' + mmss(c.cd) + '</td><td class="n">' + c.usos + '</td><td class="n">' + c.possiveis + '</td><td class="n">' + Math.round(100 * c.usos / c.possiveis) + '%</td></tr>').join('') + '</table>';
     return h;
   }
 
@@ -314,8 +327,8 @@
       '<div class="linha"><button id="usarColada">Usar a note colada</button><button id="usarPlano" class="sec">Começar pelo plano do zero</button><span class="sub" id="okBase"></span></div>';
     h += '<h2>Plano do zero: janelas de dano e CDs sugeridos</h2><div class="sub">Em cada janela os CDs entram em sequência. "Hoje" é quando o jogador costuma usar aquele CD.</div>' +
       '<table><tr><th class="n">Janela</th><th class="n">Dano na raid</th><th>Principais fontes</th><th>CDs sugeridos</th><th>Nas kills de referência</th></tr>' +
-      p.janelas.map(j => '<tr><td class="n">' + mmss(j.a) + '–' + mmss(j.b) + (j.projetada ? '<div class="sub">projetada</div>' : '') + '</td><td class="n">' + num(j.dtps) + '/s</td><td>' + esc(j.fontes.join(' + ')) + '</td><td>' +
-        (j.atrib.length ? j.atrib.map(a => '<div>' + mmss(a.t) + ' · ' + selo(a.quem, a.classe) + ' — ' + esc(a.nome) + (a.habito != null && !j.projetada ? ' <span class="sub">(hoje ' + mmss(a.habito) + ')</span>' : '') + '</div>').join('') : '<span class="alerta">⚠ Nenhum CD livre para esta janela</span>') + '</td><td class="sub">' +
+      p.janelas.map(j => '<tr><td class="n">' + mmss(j.a) + '–' + mmss(j.b) + (j.projetada ? '<div class="sub">projetada</div>' : '') + '</td><td class="n">' + num(j.dtps) + '/s</td><td>' + j.fontes.map(f => hab(f)).join(' + ') + '</td><td>' +
+        (j.atrib.length ? j.atrib.map(a => '<div>' + mmss(a.t) + ' · ' + selo(a.quem, a.classe) + ' — ' + hab(a.nome, a.id) + (a.habito != null && !j.projetada ? ' <span class="sub">(hoje ' + mmss(a.habito) + ')</span>' : '') + '</div>').join('') : '<span class="alerta">⚠ Nenhum CD livre para esta janela</span>') + '</td><td class="sub">' +
         ((j.refCds || []).map(r => esc(r.spec + ': ' + r.nome) + ' (' + r.n + ' de ' + p.nRefs + ')').join('<br>') || '') + '</td></tr>').join('') + '</table>' +
       '<textarea id="notePlano" class="note" spellcheck="false" readonly>' + esc(p.note) + '</textarea>';
     return h;
@@ -328,8 +341,8 @@
       '<textarea id="note" class="note" spellcheck="false">' + esc(est.nota) + '</textarea>' +
       '<div class="linha"><button class="copiar" data-alvo="note">Copiar note</button><button id="trocarNota" class="sec">Trocar a note de base</button><span class="sub" id="okNote">' + r.nEntradas + ' CDs de raid reconhecidos na note.</span></div>';
     h += '<h2>Cobertura da note em cada janela de dano</h2><table><tr><th class="n">Janela</th><th class="n">Dano na raid</th><th>Principais fontes</th><th>CDs na note</th><th>Situação</th><th>Nas kills de referência</th></tr>' +
-      r.cobertura.map(c => { const j = c.j; return '<tr><td class="n">' + mmss(j.a) + '–' + mmss(j.b) + (j.projetada ? '<div class="sub">projetada</div>' : '') + '</td><td class="n">' + num(j.dtps) + '/s</td><td>' + esc(j.fontes.join(' + ')) + '</td><td>' +
-        (c.es.map(e => '<div>' + mmss(e.t) + ' · ' + (e.jog ? selo(e.jog.nome, e.jog.classe) : esc(e.tag)) + ' — ' + esc(e.def.nome) + '</div>').join('') || '<span class="sub">nenhum</span>') + '</td><td>' + SIT[c.estado] + '</td><td class="sub">' +
+      r.cobertura.map(c => { const j = c.j; return '<tr><td class="n">' + mmss(j.a) + '–' + mmss(j.b) + (j.projetada ? '<div class="sub">projetada</div>' : '') + '</td><td class="n">' + num(j.dtps) + '/s</td><td>' + j.fontes.map(f => hab(f)).join(' + ') + '</td><td>' +
+        (c.es.map(e => '<div>' + mmss(e.t) + ' · ' + (e.jog ? selo(e.jog.nome, e.jog.classe) : esc(e.tag)) + ' — ' + hab(e.def.nome, e.id) + '</div>').join('') || '<span class="sub">nenhum</span>') + '</td><td>' + SIT[c.estado] + '</td><td class="sub">' +
         ((j.refCds || []).map(x => esc(x.spec + ': ' + x.nome) + ' (' + x.n + ' de ' + p.nRefs + ')').join('<br>') || '') + '</td></tr>'; }).join('') + '</table>';
     h += '<h2>Sugestões</h2><div class="sub">Cada sugestão é independente: aceite, recuse com um motivo (ela não volta a aparecer) ou deixe para conversar com a pessoa. Aceitar pode mudar as outras sugestões, porque a cobertura muda.</div>';
     if (!r.sugs.length) h += '<p class="sub">Nenhuma sugestão em aberto para esta note.</p>';
@@ -338,7 +351,7 @@
     for (const g of ordem) {
       const jog = p.elenco.find(x => x.nome === g);
       h += '<div class="grupo"><div class="linha"><b>' + (g === 'RL' ? 'Para o RL' : selo(g, jog && jog.classe)) + '</b><span class="sub">' + grupos[g].length + ' sugest' + (grupos[g].length > 1 ? 'ões' : 'ão') + '</span><button class="link copiarSug" data-para="' + esc(g) + '">Copiar texto para enviar</button><span class="sub"></span></div>' +
-        grupos[g].map(({ s, i }) => '<div class="sug"><div><span class="tipo">' + esc(s.tipo) + '</span> ' + esc(s.texto) + '</div><div class="linha">' +
+        grupos[g].map(({ s, i }) => '<div class="sug"><div><span class="tipo">' + esc(s.tipo) + '</span> ' + linkTexto(s.texto) + '</div><div class="linha">' +
           (s.acao ? '<button class="aceitar" data-i="' + i + '">Aceitar e alterar a note</button>' : '') +
           '<input class="motivo" id="mot' + i + '" placeholder="Motivo da recusa (opcional)"><button class="sec recusar" data-i="' + i + '">Recusar</button></div></div>').join('') + '</div>';
     }
@@ -391,7 +404,7 @@
     const rs = C.rendimentoCds(ls, nome, c.series, C.curva(ls, 0));
     if (!rs.length) return h + '<div class="sub">Ainda não há usos suficientes para comparar.</div>';
     return h + '<table><tr><th>CD</th><th class="n">Uso</th><th class="n">Momento típico</th><th class="n">Vezes</th><th class="n">HPS na janela</th><th class="n">vs. média dele na try</th><th class="n">Dano na raid no momento</th></tr>' +
-      rs.map(r => '<tr><td>' + esc(r.nome) + '</td><td class="n">' + r.ordem + 'º</td><td class="n">' + mmss(r.t) + '</td><td class="n">' + r.n + '</td><td class="n">' + num(r.hps) + '</td><td class="n">' + (r.rel >= 1 ? '+' : '−') + Math.abs(Math.round((r.rel - 1) * 100)) + '%</td><td class="n">' +
+      rs.map(r => '<tr><td>' + hab(r.nome, r.id) + '</td><td class="n">' + r.ordem + 'º</td><td class="n">' + mmss(r.t) + '</td><td class="n">' + r.n + '</td><td class="n">' + num(r.hps) + '</td><td class="n">' + (r.rel >= 1 ? '+' : '−') + Math.abs(Math.round((r.rel - 1) * 100)) + '%</td><td class="n">' +
         (r.dano == null ? '—' : num(r.dano) + '/s <span class="sub">(' + (r.danoRel >= 1 ? '+' : '−') + Math.abs(Math.round((r.danoRel - 1) * 100)) + '% vs. média)</span>') + '</td></tr>').join('') + '</table>';
   }
 
@@ -406,14 +419,14 @@
       '<div class="card"><div class="k">Terminou na</div><div class="v" style="font-size:16px;line-height:36px">' + esc(nomeFase(l, l.ultFase).split(':')[0]) + '</div></div>' +
       '<div class="card"><div class="k">Melhor try até agora</div><div class="v">' + pct(melhor) + '</div></div></div>';
     h += '<h2>Primeiras mortes</h2>' + (l.mortes.length ? '<table><tr><th class="n">Momento</th><th>Jogador</th><th>Golpe final</th><th>Maior dano antes de morrer</th></tr>' +
-      l.mortes.slice(0, 5).map((m, i) => { const j = l.jogadores.find(x => x.nome === m.nome) || {}; return '<tr' + (i >= 3 ? ' class="apagado"' : '') + '><td class="n">' + mmss(m.t) + '</td><td>' + selo(m.nome, j.classe) + '</td><td>' + esc(m.golpe) + '</td><td>' + m.dano.map(d => esc(d.nome) + ' ' + num(d.total)).join(' · ') + '</td></tr>'; }).join('') + '</table>' : '<div class="sub">Ninguém morreu.</div>');
+      l.mortes.slice(0, 5).map((m, i) => { const j = l.jogadores.find(x => x.nome === m.nome) || {}; return '<tr' + (i >= 3 ? ' class="apagado"' : '') + '><td class="n">' + mmss(m.t) + '</td><td>' + selo(m.nome, j.classe) + '</td><td>' + hab(m.golpe, m.golpeId) + '</td><td>' + m.dano.map(d => hab(d.nome, d.id) + ' ' + num(d.total)).join(' · ') + '</td></tr>'; }).join('') + '</table>' : '<div class="sub">Ninguém morreu.</div>');
     const nota = est.nota || planoAtual(ls).note, ad = C.aderencia(l, C.lerNote(nota));
     h += '<h2>CDs da note nesta try</h2><div class="sub">' + (est.nota ? 'Comparado com a note marcada como "em uso".' : 'Nenhuma note marcada como "em uso"; comparando com o plano sugerido atual.') + ' Só entram os CDs previstos até a 4ª morte (' + mmss(fim) + ').</div>';
     if (!ad.length) h += '<div class="sub">Nenhum CD da note cabia nesta try.</div>';
     else h += '<table><tr><th class="n">Previsto</th><th>Jogador</th><th>CD</th><th class="n">Usou em</th><th>Resultado</th></tr>' +
       ad.map(a => { const j = l.jogadores.find(x => x.nome.toLowerCase() === a.quem.toLowerCase()) || {};
         const res = !a.presente ? '<span class="sub">Jogador fora da try</span>' : a.real == null ? '<span class="alerta">✕ Não usou</span>' : Math.abs(a.delta) <= 5 ? '✓ Na hora' : '<span class="atencao">▲ ' + Math.abs(Math.round(a.delta)) + 's ' + (a.delta > 0 ? 'atrasado' : 'adiantado') + '</span>';
-        return '<tr><td class="n">' + mmss(a.plano) + '</td><td>' + selo(j.nome || a.quem, j.classe) + '</td><td>' + esc(a.nome) + '</td><td class="n">' + (a.real == null ? '—' : mmss(a.real)) + '</td><td>' + res + '</td></tr>'; }).join('') + '</table>';
+        return '<tr><td class="n">' + mmss(a.plano) + '</td><td>' + selo(j.nome || a.quem, j.classe) + '</td><td>' + hab(a.nome, a.id) + '</td><td class="n">' + (a.real == null ? '—' : mmss(a.real)) + '</td><td>' + res + '</td></tr>'; }).join('') + '</table>';
     const pes = l.cds.filter(c => (C.CD_POR_ID[c.id] || {}).tipo === 'pess' && c.t <= fim), quemUsou = new Set(pes.map(c => c.quem));
     const semDef = l.jogadores.filter(j => !quemUsou.has(j.nome)).map(j => selo(j.nome, j.classe));
     if (l.durS >= 60) h += '<h2>Defensivos pessoais</h2><div class="sub">' + quemUsou.size + ' de ' + l.jogadores.length + ' jogadores usaram pelo menos um defensivo pessoal.' + (semDef.length ? ' Não usaram: ' : '') + '</div>' + (semDef.length ? '<div style="margin-top:6px;line-height:1.9">' + semDef.join(' &nbsp; ') + '</div>' : '');

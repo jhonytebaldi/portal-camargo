@@ -66,6 +66,7 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   .tipo { display: inline-block; border: 1px solid var(--borda); border-radius: 4px; padding: 0 6px; font-size: 12px; color: var(--txt2); margin-right: 4px; }
   .motivo { background: var(--sup2); color: inherit; border: 1px solid var(--borda); border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 13.5px; width: 260px; }
   .semana { margin: 6px 0; } .chip.forte { border-color: var(--mudo); font-weight: 600; }
+  a.wh { color: inherit; text-decoration: underline dotted var(--mudo); text-underline-offset: 3px; } a.wh:hover { color: var(--s1); }
   .note { height: 300px; } .note.curta { height: 110px; }
   @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .duas { grid-template-columns: 1fr; } }
 </style>
@@ -94,6 +95,8 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   </div>
 </div>
 </main>
+<script>const whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false };</script>
+<script src="https://wow.zamimg.com/js/tooltips.js" async></script>
 <script src="core.js?v=<?= $v ?>"></script>
 <script src="app.js?v=<?= $v ?>"></script>
 </body>

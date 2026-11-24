@@ -109,8 +109,8 @@
       }).sort((a, b) => b.total - a.total);
       const mortes = ((((r['d' + f.id] || {}).data || {}).entries) || []).map(e => ({
         nome: e.name, t: (e.timestamp - f.startTime) / 1000,
-        golpe: (e.killingBlow && e.killingBlow.name) || '?',
-        dano: (((e.damage || {}).abilities) || []).slice(0, 3).map(a => ({ nome: a.name, total: a.total })),
+        golpe: (e.killingBlow && e.killingBlow.name) || '?', golpeId: (e.killingBlow && e.killingBlow.guid) || null,
+        dano: (((e.damage || {}).abilities) || []).slice(0, 3).map(a => ({ nome: a.name, id: a.guid, total: a.total })),
       })).sort((a, b) => a.t - b.t);
       const cura = ((((r['h' + f.id] || {}).data || {}).entries) || []).map(e => ({ nome: e.name, total: e.total, over: e.overheal || 0, ativo: e.activeTime || 0 }));
       const cds = casts.filter(e => e.fight === f.id).map(e => ({
