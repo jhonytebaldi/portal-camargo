@@ -62,7 +62,7 @@ portal_header('Capa Financeira', $u);
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <select id="drv-emp" class="cf-in"><option value="">— empresa da importação —</option><?php foreach ($empresas as $e): ?><option value="<?= h($e['id']) ?>"><?= h($e['nome']) ?></option><?php endforeach; ?></select>
       <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar: nome, construtora, COD, bairro, unidade…" title="A busca ignora acentos e aceita grafias parecidas: Felipe acha Filipe, Ferreira acha Fereira, Matheus acha Mateus, Souza acha Sousa." style="width:330px">
-      <label style="font-size:13px"><input type="checkbox" id="drv-todos"> mostrar também as já importadas, "ok" e modelos</label>
+      <label style="font-size:13px"><input type="checkbox" id="drv-ocultar"> ocultar as já importadas, "ok" e modelos</label>
       <button type="button" class="btn" id="drv-importar" disabled>Importar marcadas (<span id="drv-n">0</span>)</button>
       <button type="button" class="cf-x" id="drv-atualizar" title="lê a pasta do Drive de novo agora">↻ atualizar</button>
       <span class="cf-raw" id="drv-quando"></span>
@@ -153,7 +153,7 @@ portal_header('Capa Financeira', $u);
   const escolhivel = a => (a.sit === 'pendente' || a.sit === 'alterada') && !travado(a);
   const pendente = a => a.sit === 'pendente' || a.sit === 'alterada';
   function desenhar() {
-    const busca = semAc($('drv-busca').value.trim()), todos = $('drv-todos').checked;
+    const busca = semAc($('drv-busca').value.trim()), todos = !$('drv-ocultar').checked;
     const fd = filtroData(), base = arquivos.filter(a => (todos || pendente(a)) && bate(a, busca));
     const vis = base.filter(a => datasOk(a, fd));
     $('drv-flimpar').style.display = temFiltroData(fd) ? '' : 'none';
@@ -186,7 +186,7 @@ portal_header('Capa Financeira', $u);
       const aberto = anoEstado.has(rz) ? anoEstado.get(rz) : (rz === '' || filtrando);   // sem escolha da pessoa: ano atual aberto; os outros só abrem quando há busca/filtro
       return '<details class="drv-ano" data-ano="' + esc(rz) + '"' + (aberto ? ' open' : '') + '><summary>📁 ' + esc(rz || ANO) + ' <small class="cf-raw">' + todosAno.length + ' arquivo(s)' + (nPend ? ' · ' + nPend + ' pendente(s) disponíveis' : '') + '</small></summary>' + inner + '</details>';
     });
-    $('drv-lista').innerHTML = partes.length ? partes.join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    $('drv-lista').innerHTML = partes.length ? partes.join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo com esse filtro.' + ($('drv-ocultar').checked ? ' Desmarque "ocultar as já importadas" para ver todos.' : '') : 'A pasta não tem arquivos .xlsx.') + '</p>';
     const nDisp = arquivos.filter(escolhivel).length;
     $('drv-resumo').textContent = '· ' + nDisp + ' capa(s) pendente(s) disponíveis' + (marcados.size ? ' · ' + marcados.size + ' marcada(s)' : '');
     desenhouEm = Date.now();
@@ -231,7 +231,7 @@ portal_header('Capa Financeira', $u);
   $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (Date.now() - desenhouEm <= 250) return;
     if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g);
     else if (d.classList && d.classList.contains('drv-ano')) anoEstado.set(d.dataset.ano, d.open); }, true);
-  $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
+  $('drv-busca').addEventListener('input', desenhar); $('drv-ocultar').addEventListener('change', desenhar);
   ['drv-ftipo', 'drv-fano', 'drv-faberto', 'drv-fde', 'drv-fate'].forEach(i => $(i).addEventListener('change', desenhar));
   // "quem": as linhas das capas só vêm do servidor quando o filtro é usado; na primeira vez busca e redesenha
   let tQuem = null;
