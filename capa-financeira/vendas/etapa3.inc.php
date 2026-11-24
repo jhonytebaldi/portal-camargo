@@ -116,6 +116,24 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
       + '<option value="construtora"' + (sel === 'construtora' ? ' selected' : '') + '>Construtora — ' + esc(nomeCons()) + ' (repasse +7 dias)</option>'
       + '<option value="outro"' + (sel === 'outro' ? ' selected' : '') + '>Outro pagador (parente, empresa…)</option>';
   }
+  // Uma parcela (ou o gerador) foi posta para a CONSTRUTORA sem que o cadastro dela no Omie tenha sido escolhido — acontece quando
+  // "quem paga" é o cliente e só uma parcela é da construtora. Abre o seletor do Omie ali mesmo; cancelar devolve o pagador anterior.
+  async function escolherConstrutora() {
+    const termo = (QP.sugestao && QP.sugestao.cadastro && QP.sugestao.cadastro.nome) || QP.construtora || '';
+    const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo, titulo: 'Construtora que paga a parcela — cadastro no Omie'});
+    if (!c) return false;
+    construtoraCad = c;
+    // o nome da construtora aparece nas opções de todas as linhas e na barra: atualiza
+    tb.querySelectorAll('[data-f=pagador]').forEach(x => x.innerHTML = optsPag(x.value));
+    g('pagador').innerHTML = optsPag(g('pagador').value); barraQP(); mudou();
+    return true;
+  }
+  async function garanteConstrutora(sel) {
+    if (sel.value !== 'construtora' || (construtoraCad && construtoraCad.codigo)) { sel.dataset.ant = sel.value; return; }
+    if (await escolherConstrutora()) { sel.dataset.ant = 'construtora'; return; }
+    const ant = sel.dataset.ant && sel.dataset.ant !== 'construtora' ? sel.dataset.ant : 'c0';
+    sel.value = ant; sel.dispatchEvent(new Event('change', {bubbles: true}));
+  }
   function addParc(p) {
     const tr = document.createElement('tr'); tr.dataset.k = k++;
     const conta = p.conta || contaPadrao;
@@ -129,6 +147,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
       + '<td class="n" data-pct>—</td><td><button type="button" class="cf-x">✕</button></td>';
     const sel = tr.querySelector('[data-f=pagador]'), outro = tr.querySelector('[data-outro]');
     const mostra = () => outro.style.display = sel.value === 'outro' ? '' : 'none'; mostra(); sel.addEventListener('change', mostra);
+    sel.dataset.ant = sel.value; sel.addEventListener('change', () => garanteConstrutora(sel));
     tr.querySelector('[data-outro-omie]').onclick = async () => {
       const c = await CFOmie.escolher({empresa: QP.empresa, empresaNome: QP.empresaNome, termo: tr.querySelector('[data-f=outro_nome]').value || '', doc: tr.querySelector('[data-f=outro_doc]').value, titulo: 'Quem paga esta parcela — cadastro no Omie'});
       if (c) { tr.querySelector('[data-f=outro_nome]').value = c.nome; tr.querySelector('[data-f=outro_doc]').value = c.doc; mudou(); }
@@ -158,6 +177,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
   g('pagador').innerHTML = optsPag(padraoPag());
   const gOutro = ger.querySelector('[data-g-outro]');
   g('pagador').addEventListener('change', () => gOutro.style.display = g('pagador').value === 'outro' ? '' : 'none');
+  g('pagador').dataset.ant = g('pagador').value; g('pagador').addEventListener('change', () => garanteConstrutora(g('pagador')));
   g('conta').innerHTML = contas.map(c => '<option' + (c === contaPadrao ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
   g('valor').addEventListener('blur', e => CV.numBlur(e.target, false));
   g('passo').addEventListener('change', () => { if (!g('refpasso').dataset.mexeu) g('refpasso').value = g('passo').value; previaGer(); });
@@ -253,6 +273,11 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
     } else txt = '<b>Quem paga as parcelas:</b> definido parcela a parcela';
     b.innerHTML = '<span style="font-size:13.5px">' + txt + '</span>' + (CV.somenteLeitura ? '' : '<button type="button" class="cv-mini-btn" id="cv-qp-trocar">trocar quem paga em todas as parcelas…</button>');
     const bt = document.getElementById('cv-qp-trocar'); if (bt) bt.onclick = () => modalQP(false);
+    // venda já salva com parcela para a construtora e sem o cadastro dela escolhido: oferece escolher aqui
+    if (!CV.somenteLeitura && !(construtoraCad && construtoraCad.codigo) && [...tb.querySelectorAll('[data-f=pagador]')].some(x => x.value === 'construtora')) {
+      const bx = document.createElement('button'); bx.type = 'button'; bx.className = 'cv-mini-btn'; bx.textContent = '⚠ escolher o cadastro da construtora no Omie';
+      bx.title = 'há parcela para a construtora, mas falta dizer qual cadastro do Omie é o dela'; bx.onclick = escolherConstrutora; b.appendChild(bx);
+    }
   }
   function modalQP(obrigatorio) {
     return new Promise(res => {
@@ -372,6 +397,23 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
     };
   }
   const bs = document.getElementById('cv-salvar3'); if (bs) bs.onclick = () => salvar('salvar3');
-  const bc = document.getElementById('cv-concluir3'); if (bc) bc.onclick = () => salvar('concluir3');
+  // Ao concluir: se a resposta geral de "quem paga" foi o cliente (ou outro pagador) e alguma parcela está com pagador de outro
+  // tipo (ex.: a última pela construtora), só AVISA e deixa seguir — é uma situação válida, não um erro.
+  async function concluir() {
+    const classe = v => v === 'construtora' ? 'construtora' : v === 'outro' ? 'outro' : 'comprador';
+    const rotClasse = {comprador: 'o cliente', construtora: 'a construtora (' + nomeCons() + ')', outro: 'outro pagador'};
+    if (quemPaga && quemPaga.modo !== 'construtora' && window.CFModal) {
+      const dif = [...tb.querySelectorAll('tr')].map((tr, i) => ({i: i + 1, pag: tr.querySelector('[data-f=pagador]').value, data: tr.querySelector('[data-f=data]').value, valor: tr.querySelector('[data-f=valor]').value, nome: tr.querySelector('[data-f=outro_nome]').value}))
+        .filter(x => classe(x.pag) !== quemPaga.modo);
+      if (dif.length) {
+        const html = '<p style="margin:0 0 8px">Você indicou que quem paga as parcelas é <b>' + esc(rotClasse[quemPaga.modo]) + '</b>, mas ' + (dif.length === 1 ? 'esta parcela está' : 'estas ' + dif.length + ' parcelas estão') + ' com outro pagador:</p><ul style="margin:0 0 8px 18px;text-align:left">'
+          + dif.map(x => '<li>Parcela ' + x.i + (x.data ? ' · ' + esc(x.data.split('-').reverse().join('/')) : '') + (x.valor ? ' · R$ ' + esc(x.valor) : '') + ' → <b>' + esc(x.pag === 'outro' ? (x.nome || 'outro pagador') : rotClasse[classe(x.pag)]) + '</b></li>').join('')
+          + '</ul><p style="margin:0">Se é isso mesmo, pode continuar: cada conta a receber sai em nome de quem está na linha.</p>';
+        if (!await CFModal.pergunta({tipo: 'parcial', titulo: 'Parcela com pagador diferente', html, ok: 'Confirmar e continuar', cancelar: 'Voltar e revisar'})) return;
+      }
+    }
+    salvar('concluir3');
+  }
+  const bc = document.getElementById('cv-concluir3'); if (bc) bc.onclick = concluir;
 })();
 </script>
