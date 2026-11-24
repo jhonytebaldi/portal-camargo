@@ -14,7 +14,25 @@
 
   // Nome de habilidade com link para o Wowhead (o script deles abre a tooltip ao passar o mouse).
   let IDS = {}, NOMES_RE = null;
-  const hab = (nome, id) => { id = id || IDS[nome]; return id ? '<a class="wh" href="https://www.wowhead.com/pt/spell=' + id + '" target="_blank" rel="noopener">' + esc(nome) + '</a>' : esc(nome); };
+  // PT = nomes em portugues vindos do Wowhead (id -> nome), guardados no cache do servidor.
+  let PT = {}; const pendPt = new Set(); let buscandoPt = false;
+  const hab = (nome, id) => {
+    id = id || IDS[nome]; if (!id) return esc(nome);
+    const pt = PT[id]; if (pt === undefined) pendPt.add(id);
+    return '<a class="wh" href="https://www.wowhead.com/pt/spell=' + id + '" target="_blank" rel="noopener">' + esc(pt || nome) + '</a>' + (pt && pt !== nome ? ' <span class="en">(' + esc(nome) + ')</span>' : '');
+  };
+  async function buscarPt() {
+    if (buscandoPt || !pendPt.size) return; buscandoPt = true;
+    const ids = [...pendPt]; pendPt.clear(); let novos = 0;
+    for (let i = 0; i < ids.length; i += 8) await Promise.all(ids.slice(i, i + 8).map(async id => {
+      try { const r = await fetch('https://nether.wowhead.com/tooltip/spell/' + id + '?dataEnv=1&locale=8'); PT[id] = r.ok ? ((await r.json()).name || '') : ''; } catch (e) { PT[id] = ''; }
+      if (PT[id]) novos++;
+    }));
+    buscandoPt = false;
+    await gravarArq('nomes_pt', PT);
+    const foco = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+    if (novos && !foco) desenhar();
+  }
   const linkTexto = txt => { const e = esc(txt); return NOMES_RE ? e.replace(NOMES_RE, m => { const k = m.replace(/&#39;|&quot;/g, "'"); return IDS[m] || IDS[k] ? hab(IDS[m] ? m : k) : m; }) : e; };
   function montarIds(ls) {
     IDS = {}; for (const c of C.CDS) if (!IDS[c.nome]) IDS[c.nome] = c.id;
@@ -129,6 +147,7 @@
     if (!ls.length) { el.innerHTML = '<p class="sub">Nenhuma try para os filtros escolhidos.</p>'; return; }
     el.innerHTML = ({ geral: abaGeral, mortes: abaMortes, dano: abaDano, healers: abaHealers, plano: abaPlano, ultima: abaUltima })[est.aba](ls);
     try { if (window.$WowheadPower) window.$WowheadPower.refreshLinks(); } catch (e) { }
+    buscarPt();
   }
 
   // ---------- Visao geral ----------
@@ -165,7 +184,7 @@
     const todas = C.mortes(ls).causas;
     if (est.golpe && !todas.some(c => c.nome === est.golpe)) est.golpe = '';
     const m = C.mortes(ls, est.golpe);
-    let h = '<div class="linha" style="margin-top:14px"><span class="sub">Habilidade que matou:</span><select id="golpe"><option value="">Todas</option>' + todas.map(c => '<option value="' + esc(c.nome) + '"' + (c.nome === est.golpe ? ' selected' : '') + '>' + esc(c.nome) + ' (' + c.mortes + ')</option>').join('') + '</select>' +
+    let h = '<div class="linha" style="margin-top:14px"><span class="sub">Habilidade que matou:</span><select id="golpe"><option value="">Todas</option>' + todas.map(c => '<option value="' + esc(c.nome) + '"' + (c.nome === est.golpe ? ' selected' : '') + '>' + esc(PT[IDS[c.nome]] ? PT[IDS[c.nome]] + ' / ' + c.nome : c.nome) + ' (' + c.mortes + ')</option>').join('') + '</select>' +
       (est.golpe ? '<span class="sub">' + m.porTry.length + ' de ' + m.wipes + ' wipes tiveram morte inicial por ' + esc(est.golpe) + '.</span>' : '') + '</div>';
     h += '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
     h += '<div class="duas"><div><h2>O que mata primeiro</h2><table><tr><th>Habilidade</th><th class="n">Mortes</th><th class="n">Tries afetadas</th><th class="n">Foi a 1ª morte</th></tr>' +
@@ -479,6 +498,7 @@
       else if (est.noites.size) carregar({ codes: [...est.noites] });
       else status('Cole o link de um relatório do Warcraft Logs.', true);
     };
+    PT = (await lerArq('nomes_pt')) || {};
     const cat = await lerArq('relatorios'); est.catalogo = (cat && cat.lista) || [];
     if (est.catalogo.length) {
       const ult = Math.max(...est.catalogo.map(r => C.semanaDe(r.inicio)));
