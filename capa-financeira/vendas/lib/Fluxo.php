@@ -149,7 +149,7 @@ final class Fluxo
             if (!$p['valor'] || $p['valor'] <= 0) $e[] = "$q: falta o valor.";
             $pg = self::pagador($p, $comp, $d);
             if ($p['pagador'] === 'construtora') {
-                if (empty($d['construtora_cad']['codigo'])) $e[] = "$q: escolha o cadastro da construtora no Omie (botão \"quem paga\").";
+                if (empty($d['construtora_cad']['codigo'])) $e[] = "$q: está para a construtora, mas falta escolher o cadastro dela no Omie — use o botão \"escolher o cadastro da construtora no Omie\", ao lado de \"quem paga as parcelas\".";
             } elseif ($p['pagador'] === 'outro') {
                 if ($p['outro_nome'] === '' || count(explode(' ', $p['outro_nome'])) < 2) $e[] = "$q: informe o nome completo de quem paga.";
                 if ($p['outro_doc'] === '') $e[] = "$q: falta o CPF/CNPJ de quem paga.";
