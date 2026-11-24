@@ -80,13 +80,14 @@ portal_header('Capa Financeira', $u);
   </div>
   <div id="drv-carregando" class="cf-raw">lendo a pasta do Drive…</div>
 </section>
-<style>.drv-g{margin:6px 0}.drv-g>summary{cursor:pointer;font-weight:600;padding:4px 0}.drv-a{display:flex;gap:8px;align-items:center;padding:3px 0 3px 18px;font-size:14px}.drv-a:hover{background:rgba(0,0,0,.03)}.drv-a .cf-flag{font-size:11px;padding:1px 7px;margin:0}.drv-a small{color:#778}</style>
+<style>.drv-ano{margin:10px 0;border-top:1px solid var(--line);padding-top:6px}.drv-ano>summary{cursor:pointer;font-weight:700;font-size:15px;padding:4px 0}.drv-ano .drv-g{margin-left:14px}.drv-g{margin:6px 0}.drv-g>summary{cursor:pointer;font-weight:600;padding:4px 0}.drv-a{display:flex;gap:8px;align-items:center;padding:3px 0 3px 18px;font-size:14px}.drv-a:hover{background:rgba(0,0,0,.03)}.drv-a .cf-flag{font-size:11px;padding:1px 7px;margin:0}.drv-a small{color:#778}</style>
 <script>
 (() => {
   const csrf = <?= json_encode(csrf_token()) ?>, $ = id => document.getElementById(id), esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const SIT = {pendente: ['cf-leve', 'pendente'], revisao: ['cf-ok', 'em revisão'], confirmada: ['cf-ok', 'confirmada'], enviada: ['cf-ok', 'no Omie'], alterada: ['cf-grave', 'mudou no Drive'], provavel: ['cf-ok', 'já enviada à mão?'], ok: ['cf-ok', 'ok no nome'], modelo: ['', 'modelo']};
   let arquivos = [], marcados = new Set(), fechados = new Set(), ocupado = false, primeira = true;
-  const liberados = new Set();
+  const liberados = new Set(), anosAbertos = new Set();
+  let desenhouEm = 0;   // os blocos recém-desenhados disparam 'toggle' sozinhos: só vale o abrir/fechar feito pela pessoa
   const travado = a => (a.trava || a.nao_subir) && !liberados.has(a.id);
   const TRV = {aditivo: ['substituída pelo aditivo', 'o aditivo substitui esta capa: suba só o aditivo'], copia: ['cópia idêntica', 'é uma cópia exata de outro arquivo desta venda'], mais_recente: ['há versão mais recente', 'existe outro arquivo desta venda modificado depois deste'], copia_importada: ['cópia de arquivo já importado', 'cópia exata de um arquivo desta venda que já está no portal'], ja_importada: ['venda já no portal', 'esta venda já está no portal por outro arquivo; liberar importa este como nova versão']};
   const semAc = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -116,12 +117,11 @@ portal_header('Capa Financeira', $u);
     const vis = base.filter(a => datasOk(a, fd));
     $('drv-flimpar').style.display = temFiltroData(fd) ? '' : 'none';
     $('drv-fcont').textContent = temFiltroData(fd) ? vis.length + ' de ' + base.length + ' arquivo(s)' + (base.some(a => !a.ficha && a.sit !== 'modelo') ? ' · arquivos ainda não lidos ficam de fora' : '') : '';
-    const grupos = {}; vis.forEach(a => (grupos[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
-    const nomes = Object.keys(grupos).sort();
-    const rolagem = $('drv-lista').scrollTop;
-    $('drv-lista').innerHTML = nomes.length ? nomes.map(g => {
-      const its = grupos[g], esc_g = esc(g), nEsc = its.filter(escolhivel).length;
-      return '<details class="drv-g" data-g="' + esc_g + '"' + (fechados.has(g) ? '' : ' open') + '><summary>' + esc_g + ' <small class="cf-raw">' + its.length + ' arquivo(s)</small>' + (nEsc ? ' <button type="button" class="cf-x drv-mes" data-g="' + esc_g + '">marcar os ' + nEsc + ' pendentes</button>' : '') + '</summary>' +
+    // um bloco por subpasta; as pastas de anos anteriores ficam cada uma dentro de um bloco do ano, fechado até você abrir
+    // (abre sozinho quando a busca ou um filtro de data está ativo, para os resultados aparecerem)
+    const htmlGrupo = (g, its, rotulo) => {
+      const esc_g = esc(g), nEsc = its.filter(escolhivel).length;
+      return '<details class="drv-g" data-g="' + esc_g + '"' + (fechados.has(g) ? '' : ' open') + '><summary>' + esc(rotulo) + ' <small class="cf-raw">' + its.length + ' arquivo(s)</small>' + (nEsc ? ' <button type="button" class="cf-x drv-mes" data-g="' + esc_g + '">marcar os ' + nEsc + ' pendentes</button>' : '') + '</summary>' +
         its.map(a => { const s = SIT[a.sit] || ['', a.sit]; const d = a.modificado ? new Date(a.modificado).toLocaleDateString('pt-BR') : '';
           return '<label class="drv-a" title="' + esc(a.txt || '') + '"><input type="checkbox" class="drv-c" value="' + esc(a.id) + '"' + (marcados.has(a.id) ? ' checked' : '') + (escolhivel(a) ? '' : ' disabled') + '> <span>' + esc(a.nome) + '</span> <span class="cf-flag ' + s[0] + '">' + s[1] + '</span>' +
             (a.capa ? ' <a href="/capa-financeira/revisar.php?id=' + a.capa + '">capa #' + a.capa + '</a>' : '') +
@@ -131,7 +131,18 @@ portal_header('Capa Financeira', $u);
             (a.outros && a.outros.length ? ' <span class="cf-flag cf-leve" title="' + esc(a.outros.join(' · ')) + '">há outro arquivo desta venda</span>' : '') +
             (pendente(a) && (a.trava || a.nao_subir) && !liberados.has(a.id) ? ' <button type="button" class="cf-x drv-lib" data-id="' + esc(a.id) + '" title="libera a caixa de seleção deste arquivo mesmo assim">liberar</button>' : '') +
             ' <small>' + d + (a.ficha ? ' · ' + esc([a.ficha.cod ? 'COD ' + a.ficha.cod : 'sem COD', a.ficha.construtora, a.ficha.bairro, (() => { const ds = (a.ficha.dr || []).concat(a.ficha.dp || []).sort(); return ds.length ? 'contas de ' + mesAno(ds[0]) + ' a ' + mesAno(ds[ds.length - 1]) : ''; })()].filter(Boolean).join(' · ')) : '') + '</small></label>'; }).join('') + '</details>';
-    }).join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    };
+    const porRaiz = {}; vis.forEach(a => ((porRaiz[a.raiz || ''] ??= {})[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
+    const filtrando = !!busca || temFiltroData(fd);
+    const rolagem = $('drv-lista').scrollTop;
+    const partes = Object.keys(porRaiz).sort().map(rz => {
+      const gs = porRaiz[rz], inner = Object.keys(gs).sort().map(g => htmlGrupo(g, gs[g], rz && g.startsWith(rz) ? (g.slice(rz.length).replace(/^\s*\/\s*/, '') || '(raiz da pasta)') : g)).join('');
+      if (!rz) return inner;
+      const todosAno = Object.values(gs).flat(), nPend = todosAno.filter(escolhivel).length;
+      return '<details class="drv-ano" data-ano="' + esc(rz) + '"' + (anosAbertos.has(rz) || filtrando ? ' open' : '') + '><summary>📁 ' + esc(rz) + ' <small class="cf-raw">' + todosAno.length + ' arquivo(s)' + (nPend ? ' · ' + nPend + ' pendente(s) disponíveis' : '') + '</small></summary>' + inner + '</details>';
+    });
+    $('drv-lista').innerHTML = partes.length ? partes.join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    desenhouEm = Date.now();
     $('drv-lista').scrollTop = rolagem;
     contar();
   }
@@ -150,7 +161,7 @@ portal_header('Capa Financeira', $u);
     if (!j.configurado) { $('drv-off').style.display = ''; return; }
     $('drv-on').style.display = ''; $('drv-pasta').textContent = '· ' + j.pasta; $('drv-quando').textContent = 'lido às ' + j.lido_em;
     const avs = [j.aviso].concat(j.avisos || []).filter(Boolean);
-    if (j.antigas && (j.antigas.dentro || j.antigas.aguardando || j.antigas.fora)) $('drv-quando').textContent += ' · pastas de anos anteriores: ' + j.antigas.dentro + ' capa(s) com contas no período' + (j.antigas.aguardando ? ', ' + j.antigas.aguardando + ' ainda sendo lida(s)' : '') + (j.antigas.fora ? ' (' + j.antigas.fora + ' sem contas no período ficaram de fora)' : '');
+    if (j.antigas && (j.antigas.aguardando || j.antigas.fora)) $('drv-quando').textContent += ' · pastas com corte por ano: ' + (j.antigas.aguardando ? j.antigas.aguardando + ' ainda sendo lida(s)' : '') + (j.antigas.fora ? ' ' + j.antigas.fora + ' sem contas no período ficaram de fora' : '');
     $('drv-aviso').style.display = avs.length ? '' : 'none'; $('drv-aviso').textContent = avs.join(' | ');
     if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false, true), 1200); }
     if (j.hoje) hoje = j.hoje;
@@ -166,7 +177,8 @@ portal_header('Capa Financeira', $u);
     const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
     const busca = semAc($('drv-busca').value.trim());
     arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && bate(a, busca) && datasOk(a, filtroData())).forEach(a => marcados.add(a.id)); desenhar(); });
-  $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g); }, true);
+  $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g);
+    else if (d.classList && d.classList.contains('drv-ano') && Date.now() - desenhouEm > 250) d.open ? anosAbertos.add(d.dataset.ano) : anosAbertos.delete(d.dataset.ano); }, true);
   $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
   ['drv-ftipo', 'drv-fano', 'drv-faberto', 'drv-fde', 'drv-fate'].forEach(i => $(i).addEventListener('change', desenhar));
   $('drv-flimpar').addEventListener('click', () => { $('drv-fano').checked = $('drv-faberto').checked = false; $('drv-fde').value = $('drv-fate').value = ''; desenhar(); });

@@ -45,7 +45,7 @@ try {
                 else { $sit = $enviada ? 'enviada' : ($c['status'] === 'confirmada' ? 'confirmada' : 'revisao'); }
             } elseif ($c = ($porNome[CfDrive::nomeBase($a['nome'])] ?? null)) { $sit = 'provavel'; $txt = 'há uma capa enviada pelo computador com este nome de arquivo'; }
             elseif (CfDrive::temOk($a['nome'])) $sit = 'ok';
-            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5'], 'desde' => $a['desde'] ?? null, 'extra' => !empty($a['extra'])];
+            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5'], 'desde' => $a['desde'] ?? null, 'extra' => !empty($a['extra']), 'raiz' => (string)($a['raiz'] ?? '')];
         }
         // ficha de cada arquivo (cabeçalho da capa), para filtrar por construtora, COD, bairro…: usa o que já foi lido e lê mais alguns
         // a cada chamada (até ~9 s), começando pelos pendentes; a tela chama de novo enquanto faltar.
