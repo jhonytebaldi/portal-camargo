@@ -17,6 +17,7 @@ $falha = fn(string $m, int $c = 400) => $sai(['ok' => false, 'erro' => $m], $c);
 try {
     if (!CfDrive::configurado()) $sai(['ok' => true, 'configurado' => false]);
 
+    require_once __DIR__ . '/_importar.php';
     /* ---------- listar ---------- */
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $l = CfDrive::listar();
@@ -44,8 +45,50 @@ try {
                 else { $sit = $enviada ? 'enviada' : ($c['status'] === 'confirmada' ? 'confirmada' : 'revisao'); }
             } elseif ($c = ($porNome[CfDrive::nomeBase($a['nome'])] ?? null)) { $sit = 'provavel'; $txt = 'há uma capa enviada pelo computador com este nome de arquivo'; }
             elseif (CfDrive::temOk($a['nome'])) $sit = 'ok';
-            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null];
+            $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5']];
         }
+        // Vários arquivos da MESMA venda (mesmos compradores no nome), na pasta que for: só um vale.
+        //  - havendo aditivo, vale o aditivo mais recente (substitui a capa original e os aditivos anteriores);
+        //  - sem aditivo: se um dos arquivos já está no portal, os outros são cópia/versão dele; senão vale o modificado por último.
+        // Quem não vale fica travado na tela, com o motivo e apontando para o que vale (dá para liberar).
+        $vd = [];
+        foreach ($out as $i => $a) if ($a['sit'] !== 'modelo') { $vd[$i] = CfDrive::venda($a['nome']); $out[$i]['aditivo'] = $vd[$i]['aditivo']; $out[$i]['nao_subir'] = $vd[$i]['nao_subir']; $out[$i]['distrato'] = $vd[$i]['distrato']; }
+        $porChave = []; foreach ($vd as $i => $x) if ($x['chave'] !== '') $porChave[$x['chave']][] = $i;
+        $chaves = array_keys($porChave); $pai = array_combine($chaves, $chaves);
+        $raiz = function (string $k) use (&$pai) { while ($pai[$k] !== $k) $k = $pai[$k]; return $k; };
+        for ($a = 0, $n = count($chaves); $a < $n; $a++) for ($b = $a + 1; $b < $n; $b++) if (CfDrive::mesmaVenda($chaves[$a], $chaves[$b])) $pai[$raiz($chaves[$b])] = $raiz($chaves[$a]);
+        $porGrupo = []; foreach ($porChave as $k => $ids) foreach ($ids as $i) $porGrupo[$raiz($k)][] = $i;
+        $onde = fn(int $i) => ['nome' => $out[$i]['nome'], 'subpasta' => $out[$i]['subpasta']];
+        $pend = fn(int $i) => in_array($out[$i]['sit'], ['pendente', 'alterada'], true);
+        foreach ($porGrupo as $ids) {
+            if (count($ids) < 2) continue;
+            $ads = array_values(array_filter($ids, fn($i) => $vd[$i]['aditivo']));
+            if ($ads) {
+                usort($ads, fn($a, $b) => [$vd[$b]['n'], $out[$b]['modificado']] <=> [$vd[$a]['n'], $out[$a]['modificado']]);
+                $vale = $ads[0];
+                $capaAnt = null; foreach ($ids as $i) if ($i !== $vale && $out[$i]['capa']) $capaAnt = $out[$i]['capa'];
+                $out[$vale]['substitui'] = ['n' => count($ids) - 1, 'capa' => $capaAnt];
+                foreach ($ids as $i) if ($i !== $vale) $out[$i]['trava'] = ['motivo' => 'aditivo'] + $onde($vale);
+                continue;
+            }
+            // distrato e arquivo marcado "incompleto" não disputam: não travam ninguém nem são travados, só ganham o aviso de que há outro arquivo
+            $esp = array_values(array_filter($ids, fn($i) => $vd[$i]['distrato'] || $vd[$i]['incompleto']));
+            if ($esp) {
+                foreach ($ids as $i) $out[$i]['outros'] = array_values(array_map(fn($j) => $out[$j]['nome'] . ($out[$j]['subpasta'] !== '' ? ' (' . $out[$j]['subpasta'] . ')' : ''), array_filter($ids, fn($j) => $j !== $i)));
+                $ids = array_values(array_diff($ids, $esp));
+                if (count($ids) < 2) continue;
+            }
+            $noPortal = array_values(array_filter($ids, fn($i) => $out[$i]['capa'] !== null));
+            if ($noPortal) {
+                $ref = $noPortal[0];
+                foreach ($ids as $i) if ($pend($i)) $out[$i]['trava'] = ['motivo' => ($out[$i]['md5'] !== '' && $out[$i]['md5'] === $out[$ref]['md5']) ? 'copia_importada' : 'ja_importada', 'capa' => $out[$ref]['capa']] + $onde($ref);
+                continue;
+            }
+            $ord = $ids; usort($ord, fn($a, $b) => [$out[$b]['modificado'], strlen($out[$a]['nome'])] <=> [$out[$a]['modificado'], strlen($out[$b]['nome'])]);
+            $vale = $ord[0];
+            foreach ($ids as $i) if ($i !== $vale) $out[$i]['trava'] = ['motivo' => ($out[$i]['md5'] !== '' && $out[$i]['md5'] === $out[$vale]['md5']) ? 'copia' : 'mais_recente'] + $onde($vale);
+        }
+        foreach ($out as $i => $a) unset($out[$i]['md5']);
         $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s')]);
     }
 
@@ -60,7 +103,6 @@ try {
     if (!$ids) $falha('Nenhum arquivo marcado — marque pelo menos um na lista do Drive.');
     $unico = !empty($in['unico']) && count($ids) === 1;
 
-    require_once __DIR__ . '/_importar.php';
     @set_time_limit(110);
     $t0 = microtime(true); $res = []; $restantes = [];
     $dir = cf_data_dir() . '/capas/' . date('Y/m');
@@ -79,7 +121,7 @@ try {
             $seguro = preg_replace('/[^A-Za-z0-9._ -]+/u', '_', $nome) ?: 'capa.xlsx';
             $destino = $dir . '/' . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6) . '-' . $seguro;
             CfDrive::baixar($id, $destino);
-            if ($unico) {
+            if ($unico || CfDrive::venda($nome)['aditivo']) {   // aditivo substitui a capa da mesma venda: entra como nova versão mesmo num lote
                 // um arquivo só: pode virar nova versão de uma capa do mesmo cliente; o que pede decisão continua indo pelo campo de arquivo
                 $capaUp = cf_parser()->parse($destino)['capa']; $codUp = $capaUp['cod'] ?? null; $r = null;
                 if ($codUp !== null && $codUp !== '') {

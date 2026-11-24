@@ -67,7 +67,7 @@ portal_header('Capa Financeira', $u);
     </div>
     <div id="drv-aviso" class="cf-flag cf-leve" style="display:none;margin-bottom:8px"></div>
     <div id="drv-lista" style="max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px"></div>
-    <p class="cf-dica">A lista é lida do Drive na hora (e de novo a cada 45 s com esta tela aberta): renomear, mover ou subir arquivo na pasta aparece aqui sem fazer mais nada. As marcadas entram em revisão — nada é confirmado nem enviado ao Omie. Marcando uma só, ela pode virar nova versão de uma capa do mesmo cliente; em lote, COD que já existe fica de fora com o motivo. Quando a capa vai toda para o Omie, o arquivo ganha "ok - " no nome sozinho.</p>
+    <p class="cf-dica">Quando há mais de um arquivo da mesma venda (mesmos compradores no nome, em qualquer pasta), só um fica disponível: o <b>aditivo</b> mais recente, se houver; senão o que já está no portal ou o modificado por último. Os outros aparecem travados com o motivo, apontando para o que vale (dá para liberar). A lista é lida do Drive na hora (e de novo a cada 45 s com esta tela aberta): renomear, mover ou subir arquivo na pasta aparece aqui sem fazer mais nada. As marcadas entram em revisão — nada é confirmado nem enviado ao Omie. Marcando uma só, ela pode virar nova versão de uma capa do mesmo cliente; em lote, COD que já existe fica de fora com o motivo. Quando a capa vai toda para o Omie, o arquivo ganha "ok - " no nome sozinho.</p>
   </div>
   <div id="drv-carregando" class="cf-raw">lendo a pasta do Drive…</div>
 </section>
@@ -77,10 +77,14 @@ portal_header('Capa Financeira', $u);
   const csrf = <?= json_encode(csrf_token()) ?>, $ = id => document.getElementById(id), esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const SIT = {pendente: ['cf-leve', 'pendente'], revisao: ['cf-ok', 'em revisão'], confirmada: ['cf-ok', 'confirmada'], enviada: ['cf-ok', 'no Omie'], alterada: ['cf-grave', 'mudou no Drive'], provavel: ['cf-ok', 'já enviada à mão?'], ok: ['cf-ok', 'ok no nome'], modelo: ['', 'modelo']};
   let arquivos = [], marcados = new Set(), fechados = new Set(), ocupado = false, primeira = true;
-  const escolhivel = a => a.sit === 'pendente' || a.sit === 'alterada';
+  const liberados = new Set();
+  const travado = a => (a.trava || a.nao_subir) && !liberados.has(a.id);
+  const TRV = {aditivo: ['substituída pelo aditivo', 'o aditivo substitui esta capa: suba só o aditivo'], copia: ['cópia idêntica', 'é uma cópia exata de outro arquivo desta venda'], mais_recente: ['há versão mais recente', 'existe outro arquivo desta venda modificado depois deste'], copia_importada: ['cópia de arquivo já importado', 'cópia exata de um arquivo desta venda que já está no portal'], ja_importada: ['venda já no portal', 'esta venda já está no portal por outro arquivo; liberar importa este como nova versão']};
+  const escolhivel = a => (a.sit === 'pendente' || a.sit === 'alterada') && !travado(a);
+  const pendente = a => a.sit === 'pendente' || a.sit === 'alterada';
   function desenhar() {
     const busca = $('drv-busca').value.trim().toLowerCase(), todos = $('drv-todos').checked;
-    const vis = arquivos.filter(a => (todos || escolhivel(a)) && (!busca || a.nome.toLowerCase().includes(busca)));
+    const vis = arquivos.filter(a => (todos || pendente(a)) && (!busca || a.nome.toLowerCase().includes(busca)));
     const grupos = {}; vis.forEach(a => (grupos[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
     const nomes = Object.keys(grupos).sort();
     $('drv-lista').innerHTML = nomes.length ? nomes.map(g => {
@@ -88,7 +92,13 @@ portal_header('Capa Financeira', $u);
       return '<details class="drv-g" data-g="' + esc_g + '"' + (fechados.has(g) ? '' : ' open') + '><summary>' + esc_g + ' <small class="cf-raw">' + its.length + ' arquivo(s)</small>' + (nEsc ? ' <button type="button" class="cf-x drv-mes" data-g="' + esc_g + '">marcar os ' + nEsc + ' pendentes</button>' : '') + '</summary>' +
         its.map(a => { const s = SIT[a.sit] || ['', a.sit]; const d = a.modificado ? new Date(a.modificado).toLocaleDateString('pt-BR') : '';
           return '<label class="drv-a" title="' + esc(a.txt || '') + '"><input type="checkbox" class="drv-c" value="' + esc(a.id) + '"' + (marcados.has(a.id) ? ' checked' : '') + (escolhivel(a) ? '' : ' disabled') + '> <span>' + esc(a.nome) + '</span> <span class="cf-flag ' + s[0] + '">' + s[1] + '</span>' +
-            (a.capa ? ' <a href="/capa-financeira/revisar.php?id=' + a.capa + '">capa #' + a.capa + '</a>' : '') + ' <small>' + d + '</small></label>'; }).join('') + '</details>';
+            (a.capa ? ' <a href="/capa-financeira/revisar.php?id=' + a.capa + '">capa #' + a.capa + '</a>' : '') +
+            (a.aditivo && a.substitui ? ' <span class="cf-flag cf-ok" title="este aditivo é o arquivo que vale para a venda">aditivo — substitui ' + a.substitui.n + ' arquivo(s)' + (a.substitui.capa ? ' e a capa #' + a.substitui.capa : '') + '</span>' : (a.aditivo ? ' <span class="cf-flag cf-ok">aditivo</span>' : '')) +
+            (a.trava ? ' <span class="cf-flag cf-grave" title="' + esc(TRV[a.trava.motivo][1]) + '">' + TRV[a.trava.motivo][0] + '</span> <small>vale: ' + esc(a.trava.nome) + (a.trava.subpasta ? ' (' + esc(a.trava.subpasta) + ')' : '') + (a.trava.capa ? ' · <a href="/capa-financeira/revisar.php?id=' + a.trava.capa + '">capa #' + a.trava.capa + '</a>' : '') + '</small>' : '') +
+            (a.nao_subir ? ' <span class="cf-flag cf-grave">o nome diz "não subir"</span>' : '') + (a.distrato && !a.nao_subir ? ' <span class="cf-flag cf-leve">distrato</span>' : '') +
+            (a.outros && a.outros.length ? ' <span class="cf-flag cf-leve" title="' + esc(a.outros.join(' · ')) + '">há outro arquivo desta venda</span>' : '') +
+            (pendente(a) && (a.trava || a.nao_subir) && !liberados.has(a.id) ? ' <button type="button" class="cf-x drv-lib" data-id="' + esc(a.id) + '" title="libera a caixa de seleção deste arquivo mesmo assim">liberar</button>' : '') +
+            ' <small>' + d + '</small></label>'; }).join('') + '</details>';
     }).join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
     contar();
   }
@@ -112,7 +122,11 @@ portal_header('Capa Financeira', $u);
     desenhar();
   }
   $('drv-lista').addEventListener('change', e => { if (!e.target.classList.contains('drv-c')) return; e.target.checked ? marcados.add(e.target.value) : marcados.delete(e.target.value); contar(); });
-  $('drv-lista').addEventListener('click', e => { const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
+  $('drv-lista').addEventListener('click', async e => { const lb = e.target.closest('.drv-lib');
+    if (lb) { e.preventDefault(); const a = arquivos.find(x => x.id === lb.dataset.id); if (!a) return;
+      if (!await CFModal.pergunta({tipo: 'parcial', titulo: 'Liberar este arquivo?', html: '<p style="margin:0">' + (a.trava ? esc(TRV[a.trava.motivo][1].charAt(0).toUpperCase() + TRV[a.trava.motivo][1].slice(1)) + ' (<b>' + esc(a.trava.nome) + '</b>). O normal é importar só o arquivo que vale.' : 'O nome do arquivo diz para não subir.') + ' Liberar mesmo assim?</p>', ok: 'Liberar'})) return;
+      liberados.add(a.id); desenhar(); return; }
+    const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
     const busca = $('drv-busca').value.trim().toLowerCase();
     arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && (!busca || a.nome.toLowerCase().includes(busca))).forEach(a => marcados.add(a.id)); desenhar(); });
   $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g); }, true);

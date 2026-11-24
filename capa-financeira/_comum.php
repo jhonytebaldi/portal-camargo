@@ -204,7 +204,7 @@ function cf_nivel_flag(string $f): string
     return str_starts_with($f, 'GRAVE:') ? 'grave' : 'leve';
 }
 /** Flags que não são alerta para conferir (informativas ou resolvidas por outro campo). */
-const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE', 'CONDICAO_DO_BLOCO_CORRETORES', 'AJUSTE_ADMIN'];
+const CF_FLAGS_INFO = ['PESSOA_NAO_IDENTIFICADA', 'REPASSE', 'CONDICAO_DO_BLOCO_CORRETORES', 'AJUSTE_ADMIN', 'DUP_MANUAL_LIBERADA'];
 /** código curto do alerta (sem GRAVE:, sem detalhes) */
 function cf_flag_codigo(string $f): string
 {
@@ -254,6 +254,7 @@ function cf_flag_curto(string $f): string
         case 'FLUXO_NAO_PAREADO': return 'Recebimentos não batem com o bloco FLUXO DE PAGAMENTO';
         case 'REPASSE': return 'Repasse a terceiro (não é comissão)';
         case 'NF_CORTADA_20': return 'Nota Fiscal cortada em 20 caracteres';
+        case 'DUP_MANUAL_LIBERADA': return 'Envio liberado: ' . $q($det('DUP_MANUAL_LIBERADA'));
         case 'AJUSTE_ADMIN': return 'Ajuste de admin na exportação: ' . $q($det('AJUSTE_ADMIN'));
     }
     if (str_starts_with($f, 'CONDICAO_DESCONHECIDA')) return 'Condição fora do dicionário: ' . substr($f, strpos($f, ':') + 1);
@@ -315,6 +316,7 @@ function cf_flag_texto(string $f): string
     if (isset($map[$f])) return $map[$f];
     if (str_starts_with($f, 'GRAVE:FAVORECIDO_DIVERGE')) return 'Favorecido da coluna C é DIFERENTE do nome no histórico ' . substr($f, strlen('GRAVE:FAVORECIDO_DIVERGE '));
     if (str_starts_with($f, 'GRAVE:COD_REPETIDO_OUTRO_CLIENTE')) return 'Esta capa foi importada com um COD que já pertence à capa de outro cliente (provavelmente copiado de outra planilha). Corrija o COD no campo da capa — o aviso some ao trocar; se o COD estiver certo, confirme o aviso ' . substr($f, strlen('GRAVE:COD_REPETIDO_OUTRO_CLIENTE '));
+    if (str_starts_with($f, 'DUP_MANUAL_LIBERADA')) return 'Havia no Omie um título parecido lançado à mão; o envio desta linha foi liberado ' . substr($f, strlen('DUP_MANUAL_LIBERADA '));
     if (str_starts_with($f, 'AJUSTE_ADMIN')) return 'Título ajustado por um administrador direto na tela de exportação (valor/vencimento alterado ou título excluído) ' . substr($f, strlen('AJUSTE_ADMIN '));
     if (str_starts_with($f, 'REPASSE')) return 'Repasse a terceiro (construtora): não é comissão — favorecido é a coluna C, sem função; confira a categoria (Repasse a Terceiros / Futuro)';
     if (str_starts_with($f, 'FAVORECIDO_ABREVIADO')) return 'Nome abreviado no histórico ' . substr($f, strlen('FAVORECIDO_ABREVIADO '));

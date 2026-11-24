@@ -74,7 +74,44 @@ function cf_exp_conferir_api(PDO $pdo, string $empresa, string $tipo, array $l, 
 {
     $p = $l['pessoa_id'] ? ($pessoas[(int)$l['pessoa_id']] ?? null) : null;
     $m = Exportacao::montar($l, cf_exp_capa($l), $p, $emp, $opts);
-    return OmieEnvio::conferir($empresa, $tipo, $l, cf_exp_capa($l), $p, $emp, $m, $opts, $cat, $porQuem);
+    $r = OmieEnvio::conferir($empresa, $tipo, $l, cf_exp_capa($l), $p, $emp, $m, $opts, $cat, $porQuem);
+    // linha ainda não enviada: já está no Omie lançada à mão (sem o nosso código)? — processos antigos
+    $r['dup'] = null;
+    $forn = (int)($r['pedido']['codigo_cliente_fornecedor'] ?? 0);
+    if (($l['status'] ?? '') === 'confirmado' && !$r['erros'] && empty($r['existente']) && $forn && !str_contains((string)($l['flags'] ?? ''), 'DUP_MANUAL_LIBERADA')) {
+        $capa = cf_exp_capa($l);
+        $cp = is_string($capa['compradores'] ?? null) ? (json_decode((string)$capa['compradores'], true) ?: []) : (array)($capa['compradores'] ?? []);
+        $nomes = array_column($cp, 'nome') ?: (preg_split('/\s+E\s+|\s*,\s*|\s*\/\s*/u', (string)$capa['cliente']) ?: []);
+        $repetivel = $tipo === 'P' ? (($p['tipo'] ?? 'equipe') !== 'terceiro') : (strlen(preg_replace('/\D+/', '', (string)($r['cadastro']['cnpj_cpf'] ?? ''))) === 14);
+        $venc = (string)($r['pedido']['data_vencimento'] ?? '');
+        $usados = cf_exp_omie_usados($pdo);
+        $d = OmieEnvio::duplicataManual($empresa, $tipo, $forn, (float)$l['valor'], $venc, $nomes, $repetivel, $repetivel ? cf_exp_sinal_capa($pdo, $empresa, $l, $usados) : false, $usados);
+        if ($d) { $r['dup'] = $d; if ($d['nivel'] === 'bloqueio') $r['erros'][] = $d['msg']; else $r['avisos'][] = $d['msg']; }
+    }
+    return $r;
+}
+/** títulos do Omie que o portal já conhece (ligados a alguma linha): não contam como "lançados à mão" */
+function cf_exp_omie_usados(PDO $pdo, bool $recarregar = false): array
+{
+    static $u = null;
+    if ($u === null || $recarregar) $u = array_fill_keys(array_map('intval', $pdo->query('SELECT omie_id FROM cf_lancamentos WHERE omie_id IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN)), true);
+    return $u;
+}
+/** a venda desta linha já dá sinal de estar no Omie? = o comprador tem conta a receber lançada à mão com o valor de alguma parcela da capa */
+function cf_exp_sinal_capa(PDO $pdo, string $empresa, array $l, array $usados): bool
+{
+    static $cache = [];
+    $cid = (int)$l['capa_id'];
+    if (isset($cache[$cid])) return $cache[$cid];
+    $capa = cf_exp_capa($l);
+    try {
+        $doc = Exportacao::cpfPrimeiroComprador($capa);
+        $loc = OmieEnvio::localizarCadastro($empresa, $doc, Exportacao::clientePadrao((string)$capa['cliente']), true);
+        if (!in_array($loc['status'], ['ok', 'so_nome'], true)) return $cache[$cid] = false;
+        $st = $pdo->prepare("SELECT DISTINCT valor FROM cf_lancamentos WHERE capa_id = ? AND tipo = 'R' AND status IN ('confirmado','exportado')"); $st->execute([$cid]);
+        foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $v) if (OmieEnvio::manuaisIguais($empresa, 'R', (int)$loc['cadastro']['codigo_cliente_omie'], (float)$v, $usados)) return $cache[$cid] = true;
+    } catch (OmieContinuar $e) { throw $e; } catch (Throwable $e) { /* sem sinal: segue só com a regra do vencimento igual */ }
+    return $cache[$cid] = false;
 }
 function cf_exp_log_envio(PDO $pdo, ?int $expId, array $l, string $empresa, string $tipo, string $acao, string $status, ?int $omieId, ?array $pedido, ?array $resposta, ?string $msg, int $por, bool $verificado = false): void
 {
@@ -227,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($orcamento()) { $restantes[] = (int)$l['id']; continue; }
                     try { $r = cf_exp_conferir_api($pdo, $empresa, $tipo, $l, $pessoas, $empresas[$empresa], $opts, $cat, $porQuem); }
                     catch (OmieContinuar $e) { $restantes[] = (int)$l['id']; continue; }   // lista grande no meio do caminho: esta e as próximas voltam no próximo bloco
-                    $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente'])];
+                    $res[(int)$l['id']] = ['erros' => $r['erros'], 'avisos' => $r['avisos'], 'fornecedor' => $r['pedido']['codigo_cliente_fornecedor'] ?? null, 'existente' => !empty($r['existente']), 'dup' => $r['dup'] ?? null, 'capa' => (string)$l['capa_cod'], 'codigo' => (string)$l['codigo_integracao']];
                     // conferiu sem erro: o erro do último envio (ex. "cliente não encontrado") já não vale — limpa para não ficar aparecendo
                     if (!$r['erros'] && !empty($l['omie_erro'])) $pdo->prepare('UPDATE cf_lancamentos SET omie_erro = NULL WHERE id = ?')->execute([(int)$l['id']]);
                 }
@@ -497,6 +534,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $up = $pdo->prepare('UPDATE cf_lancamentos SET cliente_omie = ? WHERE id = ?'); foreach ($ids as $i) $up->execute([$valor, $i]);
             if (count($ids) > 1) $msg .= ' — aplicado em ' . count($ids) . ' linhas';
             exit(json_encode(['ok' => true, 'msg' => $msg, 'valor' => $valor, 'nome' => (string)$cad['razao_social'], 'linhas' => count($ids)], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'vincular_manual') {
+            // a linha já está no Omie, lançada à mão: o portal adota o título existente (não cria nem altera nada no Omie)
+            $empresa = (string)($in['empresa'] ?? ''); if (!isset($empresas[$empresa])) $falha('empresa inválida — recarregue a página');
+            $id = (int)($in['id'] ?? 0); $omieId = (int)($in['omie_id'] ?? 0);
+            $st = $pdo->prepare("SELECT l.* FROM cf_lancamentos l JOIN cf_capas c ON c.id = l.capa_id WHERE l.id = ? AND l.status = 'confirmado' AND c.empresa = ?"); $st->execute([$id, $empresa]);
+            if (!($l = $st->fetch()) || !$omieId) $falha('A linha não está mais pendente de envio (ou faltou o título) — recarregue a página e confira de novo.');
+            $st = $pdo->prepare('SELECT id, codigo_integracao FROM cf_lancamentos WHERE omie_id = ? AND id <> ? LIMIT 1'); $st->execute([$omieId, $id]);
+            if ($o = $st->fetch()) $falha('Este título do Omie (cód. ' . $omieId . ') já está vinculado à linha ' . $o['codigo_integracao'] . '. Confira de novo para o portal procurar outro título.');
+            $tipoL = $l['tipo'] === 'R' ? 'R' : 'P';
+            try { $t = OmieEnvio::consultarPorOmieId($empresa, $tipoL, $omieId); }
+            catch (Throwable $e) { $falha('Não consegui consultar o título no Omie agora: ' . $e->getMessage() . '. Aguarde um minuto e tente de novo — nada foi alterado.'); }
+            if (!$t) $falha('O título cód. ' . $omieId . ' não existe mais no Omie (foi excluído?). Confira de novo antes de enviar.');
+            if ((string)($t['codigo_lancamento_integracao'] ?? '') !== '') $falha('O título cód. ' . $omieId . ' já tem código de integração (' . $t['codigo_lancamento_integracao'] . ') — pertence a outra linha do portal.');
+            if (abs((float)($t['valor_documento'] ?? 0) - (float)$l['valor']) > 0.005) $falha('O valor do título no Omie (R$ ' . number_format((float)$t['valor_documento'], 2, ',', '.') . ') é diferente do da linha (' . cf_brl($l['valor']) . '). Não vinculei: corrija um dos dois primeiro.');
+            $pdo->prepare("UPDATE cf_lancamentos SET status = 'exportado', omie_id = ?, omie_erro = NULL, snapshot_exp = ?, alteracao_pos_exportacao = 0 WHERE id = ?")->execute([$omieId, json_encode(cf_retrato($l), JSON_UNESCAPED_UNICODE), $id]);
+            cf_exp_log_envio($pdo, null, $l, $empresa, $tipoL, 'incluir', 'ok', $omieId, null, ['data_vencimento' => $t['data_vencimento'] ?? null, 'status_titulo' => $t['status_titulo'] ?? null],
+                'vinculado a título já lançado à mão no Omie (venc. ' . ($t['data_vencimento'] ?? '?') . ', ' . ($t['status_titulo'] ?? '?') . ') por ' . ($u['nome'] ?? '') . ' — nada foi criado nem alterado no Omie', (int)$u['id'], true);
+            exit(json_encode(['ok' => true, 'msg' => $l['codigo_integracao'] . ' vinculado ao título ' . $omieId . ' do Omie.'], JSON_UNESCAPED_UNICODE));
+        }
+        if ($acao === 'liberar_dup') {
+            // o usuário conferiu: o título parecido do Omie é OUTRO pagamento → esta linha pode ser enviada
+            $id = (int)($in['id'] ?? 0);
+            $st = $pdo->prepare("SELECT * FROM cf_lancamentos WHERE id = ? AND status = 'confirmado'"); $st->execute([$id]);
+            if (!($l = $st->fetch())) $falha('A linha não está mais pendente de envio — recarregue a página.');
+            $fl = json_decode((string)$l['flags'], true) ?: [];
+            $fl[] = 'DUP_MANUAL_LIBERADA (título parecido no Omie conferido por ' . ($u['nome'] ?? '') . ' em ' . date('d/m/Y H:i') . ': é outro pagamento)';
+            $pdo->prepare('UPDATE cf_lancamentos SET flags = ? WHERE id = ?')->execute([json_encode($fl, JSON_UNESCAPED_UNICODE), $id]);
+            exit(json_encode(['ok' => true]));
         }
         if ($acao === 'vincular_linha') {
             // título existe no Omie com nosso código mas com valor/vencimento diferentes: o usuário decide que o Omie está certo → só guarda o vínculo
@@ -1146,10 +1212,47 @@ document.getElementById('exp-forcar').onclick = async () => {
       r.erros.forEach(e => html += '<div class="cf-flag cf-grave">API: ' + e.replace(/</g, '&lt;') + '</div>');
       r.avisos.forEach(a => html += '<div class="cf-flag cf-leve">API: ' + a.replace(/</g, '&lt;') + '</div>');
       if (!r.erros.length) { html += '<div class="cf-flag cf-ok">API: ' + (r.existente ? 'já está no Omie — ao enviar, só vincula' : 'pronto para enviar') + (r.fornecedor ? ' (fornecedor cód. ' + r.fornecedor + ')' : '') + '</div>'; tr.querySelectorAll('.cf-flag[title="último envio pela API"]').forEach(x => x.remove()); }
+      if (r.dup) html += '<div class="exp-dup" style="margin:4px 0;font-size:12.5px">' + r.dup.titulos.map(t => '<div>Omie cód. ' + t.omie_id + ' · venc. ' + t.venc + ' · ' + brl(t.valor) + ' · ' + String(t.status).replace(/</g, '&lt;') + ' <small class="cf-raw">(' + String(t.porque).replace(/</g, '&lt;') + ')</small> <button type="button" class="cf-x exp-dup-vinc" data-omie="' + t.omie_id + '" title="o portal adota este título como o desta linha: ela sai da fila como enviada. Nada é criado nem alterado no Omie.">🔗 vincular</button></div>').join('')
+        + '<button type="button" class="cf-x exp-dup-lib" title="o título parecido do Omie é outro pagamento: libera esta linha para envio (fica registrado na linha)">é outro pagamento — liberar envio</button></div>';
       box.innerHTML = html;
-      const sel = tr.querySelector('.exp-sel'); if (r.erros.length) { sel.checked = false; nErr++; } else nOk++;
+      const sel = tr.querySelector('.exp-sel'); if (r.erros.length) { sel.checked = false; nErr++; } else { nOk++; if (r.dup) sel.checked = false; }
     });
     soma(); return {nOk, nErr};
+  }
+  // duplicata de título lançado à mão: vincular ao existente ou liberar o envio
+  async function vincularManual(id, omie) { return await post({acao: 'vincular_manual', id, omie_id: omie}); }
+  document.getElementById('tbl-exp') && document.getElementById('tbl-exp').addEventListener('click', async e => {
+    const bv = e.target.closest('.exp-dup-vinc'), bl = e.target.closest('.exp-dup-lib'); if (!bv && !bl) return;
+    const tr = e.target.closest('tr'), id = +tr.dataset.id;
+    if (bv) {
+      if (!await pergunta('A linha ' + tr.dataset.codigo + ' passa a apontar para o título cód. ' + bv.dataset.omie + ' que já está no Omie e sai da fila como enviada.\n\nNada é criado nem alterado no Omie.', 'Vincular ao título existente?', 'Sim, vincular')) return;
+      bv.disabled = true; const j = await vincularManual(id, +bv.dataset.omie); if (!j) { bv.disabled = false; return; }
+      tr.style.opacity = .5; tr.querySelector('.exp-sel').checked = false; tr.querySelector('.exp-sel').disabled = true; tr.querySelector('.exp-omie').innerHTML = '<div class="cf-flag cf-ok">vinculado ao título ' + bv.dataset.omie + ' do Omie</div>'; soma();
+    } else {
+      if (!await pergunta('Você conferiu no Omie que o título parecido é OUTRO pagamento?\n\nA linha ' + tr.dataset.codigo + ' fica liberada e, ao enviar, cria um título novo no Omie.', 'Liberar o envio desta linha?', 'Sim, é outro pagamento', 'parcial')) return;
+      bl.disabled = true; const j = await post({acao: 'liberar_dup', id}); if (!j) { bl.disabled = false; return; }
+      tr.querySelector('.exp-omie').innerHTML = '<div class="cf-flag cf-leve">liberada — clique em "Conferir para envio" de novo</div>';
+    }
+  });
+  // depois da conferência: resumo por capa do que já está no Omie lançado à mão, com a opção de vincular tudo de uma vez
+  async function resumoDuplicatas(linhas) {
+    const certos = Object.entries(linhas).filter(([, r]) => r.dup && r.dup.nivel === 'bloqueio' && r.dup.titulos.length && r.dup.titulos[0].certo);
+    const avisos = Object.values(linhas).filter(r => r.dup && r.dup.nivel === 'aviso').length;
+    if (!certos.length && !avisos) return;
+    const porCapa = {}; certos.forEach(([, r]) => porCapa[r.capa] = (porCapa[r.capa] || 0) + 1);
+    const txt = (certos.length ? certos.length + ' linha(s) já estão no Omie, lançadas à mão (sem o código do portal). Enviar criaria duplicata, então ficaram bloqueadas.' : '') + (avisos ? ' ' + avisos + ' linha(s) têm título parecido no Omie e ficaram desmarcadas para você conferir.' : '')
+      + (certos.length ? '\n\n' + Object.entries(porCapa).map(([c, n]) => 'capa ' + c + ': ' + n + ' linha(s)').join('\n') : '');
+    if (!certos.length) { await aviso('parcial', 'Títulos parecidos no Omie', txt.trim()); return; }
+    if (!await pergunta(txt.trim() + '\n\nVincular todas agora? Cada linha passa a apontar para o título que já existe e sai da fila. Nada é criado nem alterado no Omie.', 'Processo já lançado no Omie', 'Vincular as ' + certos.length, 'parcial')) return;
+    const pg = CFModal.progresso({titulo: 'Vinculando aos títulos do Omie'}); let ok = 0, usados = new Set();
+    for (const [id, r] of certos) {
+      const t = r.dup.titulos.find(x => x.certo && !usados.has(x.omie_id)); if (!t) continue;
+      pg.pct(100 * ok / certos.length, r.codigo + '…');
+      const j = await postRaw({acao: 'vincular_manual', id: +id, omie_id: t.omie_id});
+      if (j && j.ok) { ok++; usados.add(t.omie_id); } else if (j && /bloquead|indispon|REDUNDANT|MISUSE/i.test(j.erro || '')) { await pg.resultado({tipo: 'erro', titulo: 'Parou em ' + ok + ' de ' + certos.length, texto: j.erro}); location.reload(); return; }
+    }
+    await pg.resultado({tipo: ok === certos.length ? 'ok' : 'parcial', titulo: ok + ' de ' + certos.length + ' linha(s) vinculadas', texto: 'A página vai recarregar. As que não vincularam continuam na fila: confira de novo para ver o motivo.'});
+    location.reload();
   }
   // aquece as listas do Omie antes de conferir/enviar; uma lista grande (1ª leitura completa) vem em várias requisições ("continuar")
   async function preparar(prog){
@@ -1184,6 +1287,7 @@ document.getElementById('exp-forcar').onclick = async () => {
     const r = mostraConferencia(linhas); toast(r.nOk + ' linha(s) prontas' + (r.nErr ? ', ' + r.nErr + ' com erro (desmarcadas)' : ''));
     const tot = r.nOk + r.nErr;
     banner(r.nErr === 0 ? 'ok' : (r.nOk ? 'parcial' : 'erro'), r.nErr === 0 ? '✔ Conferência: ' + tot + ' de ' + tot + ' título(s) prontos para envio (100%)' : '⚠ Conferência: ' + r.nOk + ' pronto(s) · ' + r.nErr + ' para revisar (desmarcados — veja o motivo em vermelho na linha)');
+    await resumoDuplicatas(linhas);
   });
   function banner(tipo, texto, detalhe){
     const b = document.getElementById('exp-resultado'); if (!b) return;
