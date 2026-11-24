@@ -59,7 +59,7 @@ portal_header('Capa Financeira', $u);
   <div id="drv-on" style="display:none">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <select id="drv-emp" class="cf-in"><option value="">— empresa da importação —</option><?php foreach ($empresas as $e): ?><option value="<?= h($e['id']) ?>"><?= h($e['nome']) ?></option><?php endforeach; ?></select>
-      <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar por nome" style="width:220px">
+      <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar: nome, construtora, COD, bairro, unidade…" style="width:330px">
       <label style="font-size:13px"><input type="checkbox" id="drv-todos"> mostrar também as já importadas, "ok" e modelos</label>
       <button type="button" class="btn" id="drv-importar" disabled>Importar marcadas (<span id="drv-n">0</span>)</button>
       <button type="button" class="cf-x" id="drv-atualizar" title="lê a pasta do Drive de novo agora">↻ atualizar</button>
@@ -80,13 +80,18 @@ portal_header('Capa Financeira', $u);
   const liberados = new Set();
   const travado = a => (a.trava || a.nao_subir) && !liberados.has(a.id);
   const TRV = {aditivo: ['substituída pelo aditivo', 'o aditivo substitui esta capa: suba só o aditivo'], copia: ['cópia idêntica', 'é uma cópia exata de outro arquivo desta venda'], mais_recente: ['há versão mais recente', 'existe outro arquivo desta venda modificado depois deste'], copia_importada: ['cópia de arquivo já importado', 'cópia exata de um arquivo desta venda que já está no portal'], ja_importada: ['venda já no portal', 'esta venda já está no portal por outro arquivo; liberar importa este como nova versão']};
+  const semAc = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  // texto pesquisável: nome do arquivo + cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda)
+  const alvo = a => a._alvo ??= semAc([a.nome, a.subpasta, a.ficha ? ['cod ' + a.ficha.cod, a.ficha.cliente, a.ficha.construtora, a.ficha.bairro, a.ficha.unidade, (a.ficha.venda || '').split('-').reverse().join('/')].join(' ') : ''].join(' '));
+  const bate = (a, busca) => !busca || busca.split(/\s+/).every(p => alvo(a).includes(p));
   const escolhivel = a => (a.sit === 'pendente' || a.sit === 'alterada') && !travado(a);
   const pendente = a => a.sit === 'pendente' || a.sit === 'alterada';
   function desenhar() {
-    const busca = $('drv-busca').value.trim().toLowerCase(), todos = $('drv-todos').checked;
-    const vis = arquivos.filter(a => (todos || pendente(a)) && (!busca || a.nome.toLowerCase().includes(busca)));
+    const busca = semAc($('drv-busca').value.trim()), todos = $('drv-todos').checked;
+    const vis = arquivos.filter(a => (todos || pendente(a)) && bate(a, busca));
     const grupos = {}; vis.forEach(a => (grupos[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
     const nomes = Object.keys(grupos).sort();
+    const rolagem = $('drv-lista').scrollTop;
     $('drv-lista').innerHTML = nomes.length ? nomes.map(g => {
       const its = grupos[g], esc_g = esc(g), nEsc = its.filter(escolhivel).length;
       return '<details class="drv-g" data-g="' + esc_g + '"' + (fechados.has(g) ? '' : ' open') + '><summary>' + esc_g + ' <small class="cf-raw">' + its.length + ' arquivo(s)</small>' + (nEsc ? ' <button type="button" class="cf-x drv-mes" data-g="' + esc_g + '">marcar os ' + nEsc + ' pendentes</button>' : '') + '</summary>' +
@@ -98,8 +103,9 @@ portal_header('Capa Financeira', $u);
             (a.nao_subir ? ' <span class="cf-flag cf-grave">o nome diz "não subir"</span>' : '') + (a.distrato && !a.nao_subir ? ' <span class="cf-flag cf-leve">distrato</span>' : '') +
             (a.outros && a.outros.length ? ' <span class="cf-flag cf-leve" title="' + esc(a.outros.join(' · ')) + '">há outro arquivo desta venda</span>' : '') +
             (pendente(a) && (a.trava || a.nao_subir) && !liberados.has(a.id) ? ' <button type="button" class="cf-x drv-lib" data-id="' + esc(a.id) + '" title="libera a caixa de seleção deste arquivo mesmo assim">liberar</button>' : '') +
-            ' <small>' + d + '</small></label>'; }).join('') + '</details>';
+            ' <small>' + d + (a.ficha ? ' · ' + esc([a.ficha.cod ? 'COD ' + a.ficha.cod : 'sem COD', a.ficha.construtora, a.ficha.bairro].filter(Boolean).join(' · ')) : '') + '</small></label>'; }).join('') + '</details>';
     }).join('') : '<p class="cf-raw">' + (arquivos.length ? 'Nenhum arquivo pendente com esse filtro. Marque "mostrar também as já importadas" para ver todos.' : 'A pasta não tem arquivos .xlsx.') + '</p>';
+    $('drv-lista').scrollTop = rolagem;
     contar();
   }
   function contar() { $('drv-n').textContent = marcados.size; $('drv-importar').disabled = !marcados.size || ocupado; }
@@ -117,6 +123,7 @@ portal_header('Capa Financeira', $u);
     if (!j.configurado) { $('drv-off').style.display = ''; return; }
     $('drv-on').style.display = ''; $('drv-pasta').textContent = '· ' + j.pasta; $('drv-quando').textContent = 'lido às ' + j.lido_em;
     $('drv-aviso').style.display = j.aviso ? '' : 'none'; $('drv-aviso').textContent = j.aviso || '';
+    if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false), 1200); }
     arquivos = j.arquivos; const validos = new Set(arquivos.filter(escolhivel).map(a => a.id));
     marcados = new Set([...marcados].filter(i => validos.has(i)));
     desenhar();
@@ -127,8 +134,8 @@ portal_header('Capa Financeira', $u);
       if (!await CFModal.pergunta({tipo: 'parcial', titulo: 'Liberar este arquivo?', html: '<p style="margin:0">' + (a.trava ? esc(TRV[a.trava.motivo][1].charAt(0).toUpperCase() + TRV[a.trava.motivo][1].slice(1)) + ' (<b>' + esc(a.trava.nome) + '</b>). O normal é importar só o arquivo que vale.' : 'O nome do arquivo diz para não subir.') + ' Liberar mesmo assim?</p>', ok: 'Liberar'})) return;
       liberados.add(a.id); desenhar(); return; }
     const b = e.target.closest('.drv-mes'); if (!b) return; e.preventDefault();
-    const busca = $('drv-busca').value.trim().toLowerCase();
-    arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && (!busca || a.nome.toLowerCase().includes(busca))).forEach(a => marcados.add(a.id)); desenhar(); });
+    const busca = semAc($('drv-busca').value.trim());
+    arquivos.filter(a => (a.subpasta || '(raiz da pasta)') === b.dataset.g && escolhivel(a) && bate(a, busca)).forEach(a => marcados.add(a.id)); desenhar(); });
   $('drv-lista').addEventListener('toggle', e => { const d = e.target; if (d.classList && d.classList.contains('drv-g')) d.open ? fechados.delete(d.dataset.g) : fechados.add(d.dataset.g); }, true);
   $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
   $('drv-atualizar').addEventListener('click', () => { $('drv-quando').textContent = 'lendo…'; ler(true); });

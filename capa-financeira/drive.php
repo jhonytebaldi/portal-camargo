@@ -47,17 +47,36 @@ try {
             elseif (CfDrive::temOk($a['nome'])) $sit = 'ok';
             $out[] = ['id' => $a['id'], 'nome' => $a['nome'], 'subpasta' => $a['subpasta'], 'modificado' => $a['modificado'], 'sit' => $sit, 'txt' => $txt, 'capa' => $c ? (int)$c['id'] : null, 'md5' => $a['md5']];
         }
+        // ficha de cada arquivo (cabeçalho da capa), para filtrar por construtora, COD, bairro…: usa o que já foi lido e lê mais alguns
+        // a cada chamada (até ~9 s), começando pelos pendentes; a tela chama de novo enquanto faltar.
+        $fichas = CfDrive::fichas(); $novas = []; $faltam = []; $tIdx = microtime(true);
+        foreach ($out as $a) if ($a['sit'] !== 'modelo' && (!isset($fichas[$a['id']]) || ($fichas[$a['id']]['md5'] ?? '') !== $a['md5'])) $faltam[] = $a;
+        usort($faltam, fn($x, $y) => (int)!in_array($x['sit'], ['pendente', 'alterada'], true) <=> (int)!in_array($y['sit'], ['pendente', 'alterada'], true));
+        $restam = count($faltam);
+        if (empty($_GET['sem_indexar'])) foreach ($faltam as $a) {
+            if ((microtime(true) - $tIdx) > 9) break;
+            $novas[$a['id']] = $fichas[$a['id']] = CfDrive::lerFicha($a['id'], $a['md5']); $restam--;
+        }
+        if ($novas || count($fichas) > count($out)) CfDrive::gravarFichas($novas, array_column($out, 'id'));
+        foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1]); }
+
         // Vários arquivos da MESMA venda (mesmos compradores no nome), na pasta que for: só um vale.
         //  - havendo aditivo, vale o aditivo mais recente (substitui a capa original e os aditivos anteriores);
         //  - sem aditivo: se um dos arquivos já está no portal, os outros são cópia/versão dele; senão vale o modificado por último.
         // Quem não vale fica travado na tela, com o motivo e apontando para o que vale (dá para liberar).
         $vd = [];
         foreach ($out as $i => $a) if ($a['sit'] !== 'modelo') { $vd[$i] = CfDrive::venda($a['nome']); $out[$i]['aditivo'] = $vd[$i]['aditivo']; $out[$i]['nao_subir'] = $vd[$i]['nao_subir']; $out[$i]['distrato'] = $vd[$i]['distrato']; }
+        $idx = array_keys($vd); $pai = array_combine($idx, $idx);
+        $raiz = function (int $k) use (&$pai) { while ($pai[$k] !== $k) $k = $pai[$k]; return $k; };
         $porChave = []; foreach ($vd as $i => $x) if ($x['chave'] !== '') $porChave[$x['chave']][] = $i;
-        $chaves = array_keys($porChave); $pai = array_combine($chaves, $chaves);
-        $raiz = function (string $k) use (&$pai) { while ($pai[$k] !== $k) $k = $pai[$k]; return $k; };
-        for ($a = 0, $n = count($chaves); $a < $n; $a++) for ($b = $a + 1; $b < $n; $b++) if (CfDrive::mesmaVenda($chaves[$a], $chaves[$b])) $pai[$raiz($chaves[$b])] = $raiz($chaves[$a]);
-        $porGrupo = []; foreach ($porChave as $k => $ids) foreach ($ids as $i) $porGrupo[$raiz($k)][] = $i;
+        foreach ($porChave as $ids) foreach ($ids as $i) $pai[$raiz($i)] = $raiz($ids[0]);                     // mesmo nome
+        $chaves = array_keys($porChave);
+        for ($a = 0, $n = count($chaves); $a < $n; $a++) for ($b = $a + 1; $b < $n; $b++) if (CfDrive::mesmaVenda($chaves[$a], $chaves[$b])) $pai[$raiz($porChave[$chaves[$b]][0])] = $raiz($porChave[$chaves[$a]][0]);
+        // mesmo COD dentro da capa E clientes da mesma venda (COD sozinho não basta: há COD copiado de outra planilha)
+        $porCod = []; foreach ($idx as $i) if (($out[$i]['ficha']['cod'] ?? '') !== '') $porCod[$out[$i]['ficha']['cod']][] = $i;
+        foreach ($porCod as $ids) for ($a = 0, $n = count($ids); $a < $n; $a++) for ($b = $a + 1; $b < $n; $b++)
+            if ($raiz($ids[$a]) !== $raiz($ids[$b]) && cf_mesmo_cliente((string)$out[$ids[$a]]['ficha']['cliente'], (string)$out[$ids[$b]]['ficha']['cliente'])) $pai[$raiz($ids[$b])] = $raiz($ids[$a]);
+        $porGrupo = []; foreach ($idx as $i) if ($vd[$i]['chave'] !== '' || isset($out[$i]['ficha'])) $porGrupo[$raiz($i)][] = $i;
         $onde = fn(int $i) => ['nome' => $out[$i]['nome'], 'subpasta' => $out[$i]['subpasta']];
         $pend = fn(int $i) => in_array($out[$i]['sit'], ['pendente', 'alterada'], true);
         foreach ($porGrupo as $ids) {
@@ -89,7 +108,7 @@ try {
             foreach ($ids as $i) if ($i !== $vale) $out[$i]['trava'] = ['motivo' => ($out[$i]['md5'] !== '' && $out[$i]['md5'] === $out[$vale]['md5']) ? 'copia' : 'mais_recente'] + $onde($vale);
         }
         foreach ($out as $i => $a) unset($out[$i]['md5']);
-        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s')]);
+        $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam)]);
     }
 
     /* ---------- importar ---------- */
