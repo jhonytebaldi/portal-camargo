@@ -61,7 +61,7 @@ portal_header('Capa Financeira', $u);
   <div id="drv-on" style="display:none">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <select id="drv-emp" class="cf-in"><option value="">— empresa da importação —</option><?php foreach ($empresas as $e): ?><option value="<?= h($e['id']) ?>"><?= h($e['nome']) ?></option><?php endforeach; ?></select>
-      <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar: nome, construtora, COD, bairro, unidade…" style="width:330px">
+      <input type="text" id="drv-busca" class="cf-in" placeholder="filtrar: nome, construtora, COD, bairro, unidade…" title="A busca ignora acentos e aceita grafias parecidas: Felipe acha Filipe, Ferreira acha Fereira, Matheus acha Mateus, Souza acha Sousa." style="width:330px">
       <label style="font-size:13px"><input type="checkbox" id="drv-todos"> mostrar também as já importadas, "ok" e modelos</label>
       <button type="button" class="btn" id="drv-importar" disabled>Importar marcadas (<span id="drv-n">0</span>)</button>
       <button type="button" class="cf-x" id="drv-atualizar" title="lê a pasta do Drive de novo agora">↻ atualizar</button>
@@ -98,7 +98,32 @@ portal_header('Capa Financeira', $u);
   const semAc = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   // texto pesquisável: nome do arquivo + cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda)
   const alvo = a => a._alvo ??= semAc([a.nome, a.subpasta, a.ficha ? ['cod ' + a.ficha.cod, a.ficha.cliente, a.ficha.construtora, a.ficha.bairro, a.ficha.unidade, (a.ficha.venda || '').split('-').reverse().join('/')].join(' ') : ''].join(' '));
-  const bate = (a, busca) => !busca || busca.split(/\s+/).every(p => alvo(a).includes(p));
+  // grafia parecida (a mesma regra do Busca Bancos, BbBusca::chave/mesmoNome): th→t, ph→f, y→i, z→s, k→c, w→v, h mudo,
+  // letra dobrada vale uma (Ferreira/Fereira, Matheus/Mateus, Souza/Sousa) e vogal trocada no meio do nome (Felipe/Filipe, Manoel/Manuel).
+  // Palavra com número (COD, unidade, data) só vale exata.
+  const chaveG = w => /\d/.test(w) ? w : w.replace(/ph|th|ck|ct|y|z|k|w/g, m => ({ph: 'f', th: 't', ck: 'c', ct: 't', y: 'i', z: 's', k: 'c', w: 'v'})[m]).replace(/(^|[^cln])h/g, '$1').replace(/(.)\1+/g, '$1');
+  const cacheG = new Map();
+  const palavrasG = t => { let r = cacheG.get(t); if (!r) { if (cacheG.size > 6000) cacheG.clear(); r = [...new Set(t.split(/[^a-z0-9]+/).filter(Boolean).map(chaveG))]; cacheG.set(t, r); } return r; };
+  const vogalTrocada = (c, w) => {   // c = o digitado; w = palavra do texto (pode ser mais comprida: nome ainda sendo digitado)
+    const n = c.length; if (n < 5 || w.length < n || c[0] !== w[0]) return false;
+    let dif = -1;
+    for (let i = 0; i < n; i++) if (c[i] !== w[i]) { if (dif >= 0) return false; dif = i; }
+    return dif > 0 && dif < n - 1 && 'aeiou'.includes(c[dif]) && 'aeiou'.includes(w[dif]);
+  };
+  const letraAMenos = (c, w) => {   // nome comprido com uma letra sobrando ou faltando (Staranscheck/Staransheck)
+    const [m, M] = c.length < w.length ? [c, w] : [w, c];
+    if (m.length < 6 || M.length !== m.length + 1 || m[0] !== M[0]) return false;
+    let i = 0; while (i < m.length && m[i] === M[i]) i++;
+    return m.slice(i) === M.slice(i + 1);
+  };
+  // a palavra digitada (já sem acento/minúscula) aparece no texto? 1º exata; depois pela grafia parecida
+  const temPalavra = (t, p) => {
+    if (t.includes(p)) return true;
+    if (/\d/.test(p) || p.length < 3) return false;
+    const c = chaveG(p), ws = palavrasG(t);
+    return ws.some(w => w.includes(c)) || ws.some(w => vogalTrocada(c, w) || letraAMenos(c, w)) || t.split(/[^a-z]+/).some(w => letraAMenos(p, w));
+  };
+  const bate = (a, busca) => !busca || busca.split(/\s+/).every(p => temPalavra(alvo(a), p));
   // filtros por vencimento das linhas da capa (lidos do conteúdo do arquivo): ano atual, a vencer, e período de/até
   let hoje = <?= json_encode(date('Y-m-d')) ?>;
   const ANO = <?= json_encode(date('Y')) ?>;
@@ -109,7 +134,7 @@ portal_header('Capa Financeira', $u);
   function linhasQuem(a, f) {
     const fi = a.ficha; if (!fi || !fi.ln) return null;
     const pal = f.quem.split(/\s+/);
-    const qOk = (fi.q || []).map((n, i) => { const t = semAc(n) + ' ' + (pessoasTxt[(fi.qp || [])[i]] || ''); return pal.every(p => t.includes(p)); });
+    const qOk = (fi.q || []).map((n, i) => { const t = semAc(n) + ' ' + (pessoasTxt[(fi.qp || [])[i]] || ''); return pal.every(p => temPalavra(t, p)); });
     return fi.ln.filter(l => qOk[l[3]] && (!f.tipo || l[0] === f.tipo) && (!f.ano || l[1].startsWith(ANO + '-')) && (!f.aberto || l[1] >= hoje) && (!f.de || l[1] >= f.de) && (!f.ate || (l[1] && l[1] <= f.ate)));
   }
   function datasOk(a, f) {
