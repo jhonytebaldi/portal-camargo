@@ -288,10 +288,10 @@ final class BbOmie
         $contas = [];
         $st = $pdo->prepare("SELECT id, omie_cc FROM bb_contas WHERE empresa = ? AND omie_cc IS NOT NULL AND banco <> 'omie-cash'"); $st->execute([$empresa]);
         foreach ($st as $c) $contas[(int)$c['id']] = (string)$c['omie_cc'];
-        if (!$contas) return ['ligados' => 0, 'sem_par' => 0, 'detalhe' => []];
+        if (!$contas) return ['ligados' => 0, 'duvida' => 0, 'sem_par' => 0, 'detalhe' => []];
         $st = $pdo->query("SELECT id, conta_id, data, valor FROM bb_lanc WHERE conta_id IN (" . implode(',', array_keys($contas)) . ") AND valor > 0 AND omie_titulo IS NULL AND categoria = 'boleto' AND contraparte = '' ORDER BY data");
         $banco = $st->fetchAll();
-        if (!$banco) return ['ligados' => 0, 'sem_par' => 0, 'detalhe' => []];
+        if (!$banco) return ['ligados' => 0, 'duvida' => 0, 'sem_par' => 0, 'detalhe' => []];
         $de = date('Y-m-d', strtotime(min(array_column($banco, 'data')) . ' -6 days')); $ate = max(array_column($banco, 'data'));
         // recebimentos do Omie no período (paginado)
         $omie = []; $pag = 1;
@@ -307,6 +307,9 @@ final class BbOmie
             }
             $tot = (int)($r['nTotPaginas'] ?? 1); $pag++;
         } while ($pag <= $tot && $pag <= 40);
+        // títulos do Omie que já estão ligados a algum crédito não entram de novo
+        $jaUsados = array_flip(array_map('intval', $pdo->query('SELECT omie_titulo FROM bb_lanc WHERE omie_titulo > 0')->fetchAll(PDO::FETCH_COLUMN)));
+        $omie = array_values(array_filter($omie, fn($o) => !isset($jaUsados[$o['titulo']])));
         // candidatos dos dois lados
         $doBanco = []; $doOmie = [];
         foreach ($banco as $b) foreach ($omie as $k => $o) {
@@ -330,18 +333,77 @@ final class BbOmie
                 $pares[$bid] = $k; $usadoO[$k] = 1; $mudou = true;
             }
         } while ($mudou);
-        $up = $pdo->prepare('UPDATE bb_lanc SET omie_titulo = ?, omie_nome = ?, omie_doc = ?, omie_info = ?, omie_busca = ? WHERE id = ? AND omie_titulo IS NULL');
+        $cache = [];
+        $dados = function (array $o) use ($pdo, $empresa, &$cache): array {
+            if (!isset($cache[$o['titulo']])) {
+                try { $cli = $o['cliente'] ? OmieApi::fornecedor($pdo, $empresa, $o['cliente']) : []; } catch (Throwable $e) { $cli = []; }
+                $nome = trim((string)(($cli['razao_social'] ?? '') ?: ($cli['nome_fantasia'] ?? '')));
+                $cache[$o['titulo']] = ['titulo' => $o['titulo'], 'nome' => $nome, 'doc' => $o['doc'] ?: preg_replace('/\D+/', '', (string)($cli['cnpj_cpf'] ?? '')),
+                    'num' => $o['num'], 'boleto' => $o['boleto'], 'pago' => $o['pago'],
+                    'info' => 'título ' . $o['num'] . ($o['parcela'] !== '' ? ' · parcela ' . $o['parcela'] : '') . ($o['boleto'] !== '' ? ' · boleto ' . $o['boleto'] : '') . ' · pago em ' . BbTexto::dataBr($o['pago'])];
+            }
+            return $cache[$o['titulo']];
+        };
         $det = [];
-        foreach ($pares as $bid => $k) {
-            $o = $omie[$k];
-            try { $cli = $o['cliente'] ? OmieApi::fornecedor($pdo, $empresa, $o['cliente']) : []; } catch (Throwable $e) { $cli = []; }
-            $nome = trim((string)(($cli['razao_social'] ?? '') ?: ($cli['nome_fantasia'] ?? '')));
-            $doc = $o['doc'] ?: preg_replace('/\D+/', '', (string)($cli['cnpj_cpf'] ?? ''));
-            $info = 'título ' . $o['num'] . ($o['parcela'] !== '' ? ' · parcela ' . $o['parcela'] : '') . ($o['boleto'] !== '' ? ' · boleto ' . $o['boleto'] : '') . ' · pago em ' . BbTexto::dataBr($o['pago']);
-            $up->execute([$o['titulo'], mb_substr($nome, 0, 200), substr($doc, 0, 14), mb_substr($info, 0, 200), mb_substr(BbTexto::norm($nome . ' ' . $o['num'] . ' ' . $o['boleto']) . ' ' . $doc, 0, 400), $bid]);
-            $det[] = $nome . ' (' . $o['num'] . ')';
+        foreach ($pares as $bid => $k) { $x = $dados($omie[$k]); self::ligarTitulo($pdo, $bid, $x); $det[] = $x['nome'] . ' (' . $x['num'] . ')'; }
+        // créditos com MAIS DE UM título possível: ficam esperando alguém escolher (aviso no topo da busca)
+        $st = $pdo->prepare('DELETE p FROM bb_omie_pend p JOIN bb_lanc l ON l.id = p.lanc_id WHERE p.empresa = ? OR l.omie_titulo IS NOT NULL'); $st->execute([$empresa]);
+        $ins = $pdo->prepare('INSERT INTO bb_omie_pend (lanc_id, empresa, candidatos, criado_em) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE candidatos = VALUES(candidatos), criado_em = VALUES(criado_em)');
+        $duvida = 0;
+        foreach ($doBanco as $bid => $cands) {
+            if (isset($pares[$bid])) continue;
+            $livres = array_diff_key($cands, $usadoO);
+            if (!$livres) continue;
+            asort($livres);   // os pagos mais perto da data do crédito primeiro
+            $ins->execute([$bid, $empresa, json_encode(array_values(array_map(fn($k) => $dados($omie[$k]), array_keys($livres))), JSON_UNESCAPED_UNICODE), date('Y-m-d H:i:s')]);
+            $duvida++;
         }
-        return ['ligados' => count($pares), 'sem_par' => count($banco) - count($pares), 'detalhe' => $det];
+        return ['ligados' => count($pares), 'duvida' => $duvida, 'sem_par' => count($banco) - count($pares) - $duvida, 'detalhe' => $det];
+    }
+
+    /** grava no lançamento do banco quem pagou (dados de um título do Omie, no formato de identificarRecebimentos) */
+    public static function ligarTitulo(PDO $pdo, int $lancId, array $x): void
+    {
+        $pdo->prepare('UPDATE bb_lanc SET omie_titulo = ?, omie_nome = ?, omie_doc = ?, omie_info = ?, omie_busca = ? WHERE id = ?')
+            ->execute([$x['titulo'], mb_substr($x['nome'], 0, 200), substr((string)$x['doc'], 0, 14), mb_substr($x['info'], 0, 200),
+                mb_substr(BbTexto::norm($x['nome'] . ' ' . $x['num'] . ' ' . $x['boleto']) . ' ' . $x['doc'], 0, 400), $lancId]);
+        $pdo->prepare('DELETE FROM bb_omie_pend WHERE lanc_id = ?')->execute([$lancId]);
+    }
+
+    /**
+     * Escolha manual num crédito com mais de um título possível. $titulo = 0: "nenhum destes" (o crédito sai da lista e não é
+     * mais oferecido). Depois tira o título escolhido das outras dúvidas; a que ficar com uma opção só, e essa opção não
+     * estiver em nenhuma outra dúvida, é ligada sozinha. Devolve quantas foram ligadas automaticamente em seguida.
+     */
+    public static function escolherTitulo(PDO $pdo, int $lancId, int $titulo): int
+    {
+        $st = $pdo->prepare('SELECT candidatos FROM bb_omie_pend WHERE lanc_id = ?'); $st->execute([$lancId]);
+        $cands = json_decode((string)$st->fetchColumn(), true) ?: [];
+        if ($titulo === 0) { $pdo->prepare('UPDATE bb_lanc SET omie_titulo = 0 WHERE id = ?')->execute([$lancId]); $pdo->prepare('DELETE FROM bb_omie_pend WHERE lanc_id = ?')->execute([$lancId]); return 0; }
+        $x = null; foreach ($cands as $c) if ((int)$c['titulo'] === $titulo) $x = $c;
+        if (!$x) throw new RuntimeException('Esse título não é uma das opções deste crédito.');
+        $st = $pdo->prepare('SELECT COUNT(*) FROM bb_lanc WHERE omie_titulo = ?'); $st->execute([$titulo]);
+        if ((int)$st->fetchColumn()) throw new RuntimeException('Esse título do Omie já está ligado a outro crédito.');
+        self::ligarTitulo($pdo, $lancId, $x);
+        $auto = 0;
+        do { $mudou = false;
+            $pend = []; foreach ($pdo->query('SELECT lanc_id, candidatos FROM bb_omie_pend') as $r) $pend[(int)$r['lanc_id']] = json_decode((string)$r['candidatos'], true) ?: [];
+            $usados = array_flip(array_map('intval', $pdo->query('SELECT omie_titulo FROM bb_lanc WHERE omie_titulo > 0')->fetchAll(PDO::FETCH_COLUMN)));
+            $up = $pdo->prepare('UPDATE bb_omie_pend SET candidatos = ? WHERE lanc_id = ?');
+            foreach ($pend as $lid => $cs) {
+                $resto = array_values(array_filter($cs, fn($c) => !isset($usados[(int)$c['titulo']])));
+                if (count($resto) !== count($cs)) { if (!$resto) { $pdo->prepare('DELETE FROM bb_omie_pend WHERE lanc_id = ?')->execute([$lid]); continue; } $up->execute([json_encode($resto, JSON_UNESCAPED_UNICODE), $lid]); }
+                $pend[$lid] = $resto;
+            }
+            foreach ($pend as $lid => $cs) {
+                if (count($cs) !== 1) continue;
+                $t = (int)$cs[0]['titulo']; $outros = 0;
+                foreach ($pend as $l2 => $cs2) if ($l2 !== $lid) foreach ($cs2 as $c2) if ((int)$c2['titulo'] === $t) $outros++;
+                if ($outros) continue;
+                self::ligarTitulo($pdo, $lid, $cs[0]); $auto++; $mudou = true; break;
+            }
+        } while ($mudou);
+        return $auto;
     }
 
     /**

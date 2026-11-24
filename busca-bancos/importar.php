@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach (BbOmie::vincular($pdo, $porEmp) as $v) $ligadas[] = $v;
         // quem pagou os boletos (crédito de cobrança sem nome no extrato × título recebido no Omie)
         foreach (array_keys($porEmp) as $emp) {
-            try { $x = BbOmie::identificarRecebimentos($pdo, $emp); if ($x['ligados'] || $x['sem_par']) $boletos[] = BbImportador::EMPRESAS[$emp] . ': ' . $x['ligados'] . ' crédito(s) de boleto identificados' . ($x['sem_par'] ? ', ' . $x['sem_par'] . ' ainda sem título correspondente no Omie' : '') . ($x['detalhe'] ? ' — ' . implode(', ', array_slice($x['detalhe'], 0, 12)) . (count($x['detalhe']) > 12 ? '…' : '') : ''); }
+            try { $x = BbOmie::identificarRecebimentos($pdo, $emp); if ($x['ligados'] || $x['sem_par'] || $x['duvida']) $boletos[] = BbImportador::EMPRESAS[$emp] . ': ' . $x['ligados'] . ' crédito(s) de boleto identificados' . ($x['duvida'] ? ', ' . $x['duvida'] . ' com mais de um cliente possível (escolha em "Ligar boletos", no aviso do topo)' : '') . ($x['sem_par'] ? ', ' . $x['sem_par'] . ' ainda sem título correspondente no Omie' : '') . ($x['detalhe'] ? ' — ' . implode(', ', array_slice($x['detalhe'], 0, 12)) . (count($x['detalhe']) > 12 ? '…' : '') : ''); }
             catch (Throwable $ex) { $erros[] = 'Boletos da ' . h(BbImportador::EMPRESAS[$emp]) . ': ' . h($ex->getMessage()); }
         }
         BbImportador::configSet($pdo, 'omie_cash_ultima', date('Y-m-d H:i:s'));

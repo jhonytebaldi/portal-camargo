@@ -47,6 +47,8 @@ function bb_cabecalho(string $ativo, array $u): void
     echo '</nav></header>';
     $pend = (int)db()->query("SELECT COUNT(*) FROM bb_contas WHERE empresa = ''")->fetchColumn();
     if ($pend && $ativo !== 'contas') echo '<div class="bb-alerta">' . $pend . ' conta(s) ainda sem empresa definida. <a href="/busca-bancos/contas.php">Informar em Contas</a></div>';
+    try { $bol = (int)db()->query('SELECT COUNT(*) FROM bb_omie_pend')->fetchColumn(); } catch (Throwable $e) { $bol = 0; }
+    if ($bol && $ativo !== 'boletos') echo '<div class="bb-alerta"><b>' . $bol . ' crédito' . ($bol > 1 ? 's' : '') . ' de boleto com mais de um cliente possível no Omie</b> (mesmo valor, mesma data). Escolha quem pagou cada um para que apareçam na busca pelo nome. <a href="/busca-bancos/boletos.php">Ligar agora →</a></div>';
 }
 
 function bb_rodape(): void
