@@ -65,6 +65,7 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   .sug .linha { margin: 8px 0 6px; }
   .tipo { display: inline-block; border: 1px solid var(--borda); border-radius: 4px; padding: 0 6px; font-size: 12px; color: var(--txt2); margin-right: 4px; }
   .motivo { background: var(--sup2); color: inherit; border: 1px solid var(--borda); border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 13.5px; width: 260px; }
+  .semana { margin: 6px 0; } .chip.forte { border-color: var(--mudo); font-weight: 600; }
   .note { height: 300px; } .note.curta { height: 110px; }
   @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .duas { grid-template-columns: 1fr; } }
 </style>
@@ -77,14 +78,10 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   <div id="loginOutros" hidden><p class="erro">A ferramenta ainda não está conectada ao Warcraft Logs. Peça ao administrador para conectar.</p></div>
 </div>
 <div id="app" hidden>
-  <label for="links" class="sub">Links dos relatórios (um por linha)</label>
-  <textarea id="links">https://www.warcraftlogs.com/reports/8h9HGPWr4mLaDpkf
-https://www.warcraftlogs.com/reports/w74JX8KBVH6abThY
-https://www.warcraftlogs.com/reports/Rkqhb6BCTXwj1apY
-https://www.warcraftlogs.com/reports/8T3nMPAgyqY9cvDw</textarea>
-  <div class="linha"><button id="carregar">Carregar</button><span id="progresso" class="sub"></span></div>
+  <div class="linha"><input id="links" class="motivo" style="width:420px" placeholder="Link de um relatório do Warcraft Logs" aria-label="Link do relatório"><button id="carregar">Adicionar / atualizar</button><span id="progresso" class="sub"></span></div>
   <div id="filtros" hidden>
-    <div class="linha"><select id="boss" aria-label="Boss"></select><span class="sub">Noites:</span><span id="noites" class="linha" style="margin:0"></span></div>
+    <div id="noites"></div>
+    <div class="linha"><span class="sub">Boss:</span><select id="boss" aria-label="Boss"></select></div>
     <div class="abas">
       <button class="aba" data-aba="geral">Visão geral</button>
       <button class="aba" data-aba="mortes">Mortes</button>

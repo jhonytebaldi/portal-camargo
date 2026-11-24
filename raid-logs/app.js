@@ -12,7 +12,7 @@
   const COR_CLASSE = { DeathKnight: '#C41E3A', DemonHunter: '#A330C9', Druid: '#FF7C0A', Evoker: '#33937F', Hunter: '#AAD372', Mage: '#3FC7EB', Monk: '#00FF98', Paladin: '#F48CBA', Priest: '#FFFFFF', Rogue: '#FFF468', Shaman: '#0070DD', Warlock: '#8788EE', Warrior: '#C69B6D' };
   const selo = (nome, classe) => '<span class="selo" style="background:' + (COR_CLASSE[classe] || '#888') + '"></span>' + esc(nome);
 
-  const est = { rels: [], lutas: [], porRel: {}, enc: null, noites: new Set(), noitesVistas: new Set(), aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
+  const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
 
   async function gql(query, variables) {
     const r = await fetch('api.php?a=graphql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
@@ -37,60 +37,81 @@
 
   const status = (msg, erro) => { const s = $('progresso'); s.textContent = msg || ''; s.className = erro ? 'erro' : 'sub'; };
 
+  const SEIS_H = 6 * 3600e3;
+  const salvarCatalogo = () => gravarArq('relatorios', { lista: est.catalogo });
+  // Carrega relatorios (codes) para a memoria. Relatorio encerrado e ja baixado vem so do cache, sem gastar cota.
   async function carregar(opcoes) {
-    const aoVivo = !!(opcoes && opcoes.aoVivo);
-    const codes = [...new Set($('links').value.split(/\s+/).map(C.codigoDoLink).filter(Boolean))];
-    if (!codes.length) { status('Cole pelo menos um link de relatório.', true); return; }
-    if (est.carregando) return; est.carregando = true;
-    try { localStorage.setItem('links', $('links').value); } catch (e) { }
+    opcoes = opcoes || {};
+    const aoVivo = !!opcoes.aoVivo;
+    const codes = opcoes.codes || [...est.noites];
+    if (!codes.length || est.carregando) return; est.carregando = true;
     $('carregar').disabled = true;
-    let cota = null, avisoCota = false;
+    let cota = null, avisoCota = false, mudouCat = false;
     const antes = est.lutas.length;
     try {
       for (const code of codes) {
         const ja = est.porRel[code];
-        // ao vivo: relatorio que terminou ha mais de 6 horas nao muda mais, entao nao gasta cota de novo
-        if (aoVivo && ja && ja.rel.fim < Date.now() - 6 * 3600e3) continue;
+        if (ja && ja.rel.fim < Date.now() - SEIS_H && (aoVivo || ja.completo)) continue;
         if (!aoVivo) status('Lendo relatório ' + code + '…');
-        const rel = await C.listarRelatorio(gql, code); cota = rel.cota;
         const cache = (await lerCache(code)) || { v: C.VERSAO_CACHE, lutas: {} };
-        const faltam = rel.lutas.filter(f => !cache.lutas[f.id]);
-        for (let i = 0; i < faltam.length; i += 6) {
-          status(rel.titulo + ' (' + dataBR(rel.inicio) + '): baixando tries ' + (i + 1) + '–' + Math.min(i + 6, faltam.length) + ' de ' + faltam.length + '…');
-          try {
-            const novos = await C.buscarLutas(gql, rel, faltam.slice(i, i + 6));
-            for (const l of novos) cache.lutas[l.id] = l;
-            await gravarCache(code, cache);
-          } catch (e) { if (e.message === 'COTA') { avisoCota = true; break; } throw e; }
+        let rel = cache.rel;
+        const fechado = rel && rel.fim < Date.now() - SEIS_H && rel.lutas.every(f => cache.lutas[f.id]);
+        if (!fechado) {
+          rel = await C.listarRelatorio(gql, code); cota = rel.cota;
+          const faltam = rel.lutas.filter(f => !cache.lutas[f.id]);
+          const semRel = !cache.rel || cache.rel.lutas.length !== rel.lutas.length || cache.rel.fim !== rel.fim;
+          cache.rel = rel;
+          for (let i = 0; i < faltam.length; i += 6) {
+            status(rel.titulo + ' (' + dataBR(rel.inicio) + '): baixando tries ' + (i + 1) + '–' + Math.min(i + 6, faltam.length) + ' de ' + faltam.length + '…');
+            try {
+              const novos = await C.buscarLutas(gql, rel, faltam.slice(i, i + 6));
+              for (const l of novos) cache.lutas[l.id] = l;
+              await gravarCache(code, cache);
+            } catch (e) { if (e.message === 'COTA') { avisoCota = true; break; } throw e; }
+          }
+          if (semRel && !faltam.length) await gravarCache(code, cache);
         }
-        est.porRel[code] = { rel, lutas: rel.lutas.filter(f => cache.lutas[f.id]).map(f => cache.lutas[f.id]) };
+        est.porRel[code] = { rel, lutas: rel.lutas.filter(f => cache.lutas[f.id]).map(f => cache.lutas[f.id]), completo: rel.lutas.every(f => cache.lutas[f.id]) };
+        const item = { code, titulo: rel.titulo, inicio: rel.inicio, fim: rel.fim, tries: rel.lutas.length }, k = est.catalogo.findIndex(x => x.code === code);
+        if (k < 0) { est.catalogo.push(item); mudouCat = true; } else if (est.catalogo[k].tries !== item.tries || est.catalogo[k].fim !== item.fim) { est.catalogo[k] = item; mudouCat = true; }
+        if (!aoVivo || !ja) est.noites.add(code);
         if (avisoCota) break;
       }
-      const usados = codes.filter(c => est.porRel[c]);
+      if (mudouCat) { est.catalogo.sort((a, b) => a.inicio - b.inicio); await salvarCatalogo(); }
+      const usados = Object.keys(est.porRel);
       est.rels = usados.map(c => est.porRel[c].rel).sort((a, b) => a.inicio - b.inicio);
       est.lutas = usados.flatMap(c => est.porRel[c].lutas).sort((a, b) => a.data - b.data || a.id - b.id);
-      const encs = {}; for (const l of est.lutas) { const k = l.enc + ':' + l.dif; (encs[k] = encs[k] || { k, boss: l.boss, dif: l.dif, n: 0 }).n++; }
-      const lista = Object.values(encs).sort((a, b) => b.n - a.n);
-      const encAntes = est.enc;
-      $('boss').innerHTML = lista.map(e => '<option value="' + e.k + '">' + esc(e.boss) + ' ' + (DIF[e.dif] || '') + ' (' + e.n + ' tries)</option>').join('');
-      if (!aoVivo || !lista.some(e => e.k === encAntes)) { est.enc = lista.length ? lista[0].k : null; est.refs = undefined; est.nota = undefined; }
-      $('boss').value = est.enc;
-      if (!aoVivo) est.noites = new Set(est.rels.map(r => r.code)); else for (const r of est.rels) if (!est.noitesVistas.has(r.code)) est.noites.add(r.code);
-      est.noitesVistas = new Set(est.rels.map(r => r.code));
+      montarBosses();
       $('filtros').hidden = false;
-      status(avisoCota ? MSG_COTA.replace('Tente de novo', 'Clique em Carregar de novo')
+      status(avisoCota ? MSG_COTA.replace('Tente de novo', 'Clique em Atualizar')
         : est.lutas.length + ' tries carregadas' + (aoVivo ? ' (ao vivo, atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ')' : '') + '.' + (cota ? ' Cota da API nesta hora: ' + Math.round(cota.pointsSpentThisHour) + ' de ' + cota.limitPerHour + '.' : ''), avisoCota);
       if (est.enc && est.nota === undefined) await carregarNota();
       if (!aoVivo || est.lutas.length !== antes) desenhar();
     } catch (e) { status(e.message === 'COTA' ? MSG_COTA : 'Erro: ' + e.message, true); }
     $('carregar').disabled = false; est.carregando = false;
   }
+  // Opcoes de boss a partir das noites marcadas; mantem o boss atual se ele ainda existir.
+  function montarBosses() {
+    const encs = {}; for (const l of est.lutas) { if (!est.noites.has(l.rel)) continue; const k = l.enc + ':' + l.dif; (encs[k] = encs[k] || { k, boss: l.boss, dif: l.dif, n: 0 }).n++; }
+    const lista = Object.values(encs).sort((a, b) => b.n - a.n);
+    $('boss').innerHTML = lista.map(e => '<option value="' + e.k + '">' + esc(e.boss) + ' ' + (DIF[e.dif] || '') + ' (' + e.n + ' tries)</option>').join('');
+    if (!lista.some(e => e.k === est.enc)) { est.enc = lista.length ? lista[0].k : null; est.refs = undefined; est.nota = undefined; }
+    if (est.enc) $('boss').value = est.enc;
+  }
+  async function marcarNoites(codes, ligar) {
+    for (const c of codes) ligar ? est.noites.add(c) : est.noites.delete(c);
+    const falta = codes.filter(c => ligar && !est.porRel[c]);
+    if (falta.length) await carregar({ codes: falta }); else { montarBosses(); if (est.enc && est.nota === undefined) await carregarNota(); desenhar(); }
+  }
 
   const lutasAtuais = () => est.lutas.filter(l => (l.enc + ':' + l.dif) === est.enc && est.noites.has(l.rel));
 
   function desenhar() {
     const ls = lutasAtuais();
-    $('noites').innerHTML = est.rels.map(r => '<label class="chip"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + '</label>').join('');
+    const sems = {}; for (const r of est.catalogo) (sems[C.semanaDe(r.inicio)] = sems[C.semanaDe(r.inicio)] || []).push(r);
+    $('noites').innerHTML = Object.keys(sems).map(Number).sort((a, b) => b - a).map(sm => { const rs = sems[sm], todas = rs.every(r => est.noites.has(r.code));
+      return '<div class="linha semana"><label class="chip forte"><input type="checkbox" data-sem="' + sm + '"' + (todas ? ' checked' : '') + '> Semana ' + sm + '</label>' +
+        rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + '</label>').join('') + '</div>'; }).join('');
     document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === est.aba));
     const el = $('conteudo');
     if (!ls.length) { el.innerHTML = '<p class="sub">Nenhuma try para os filtros escolhidos.</p>'; return; }
@@ -128,15 +149,19 @@
 
   // ---------- Mortes ----------
   function abaMortes(ls) {
-    const m = C.mortes(ls);
-    let h = '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
+    const todas = C.mortes(ls).causas;
+    if (est.golpe && !todas.some(c => c.nome === est.golpe)) est.golpe = '';
+    const m = C.mortes(ls, est.golpe);
+    let h = '<div class="linha" style="margin-top:14px"><span class="sub">Habilidade que matou:</span><select id="golpe"><option value="">Todas</option>' + todas.map(c => '<option value="' + esc(c.nome) + '"' + (c.nome === est.golpe ? ' selected' : '') + '>' + esc(c.nome) + ' (' + c.mortes + ')</option>').join('') + '</select>' +
+      (est.golpe ? '<span class="sub">' + m.porTry.length + ' de ' + m.wipes + ' wipes tiveram morte inicial por ' + esc(est.golpe) + '.</span>' : '') + '</div>';
+    h += '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
     h += '<div class="duas"><div><h2>O que mata primeiro</h2><table><tr><th>Habilidade</th><th class="n">Mortes</th><th class="n">Tries afetadas</th><th class="n">Foi a 1ª morte</th></tr>' +
       m.causas.slice(0, 14).map(c => '<tr><td>' + esc(c.nome) + '</td><td class="n">' + c.mortes + '</td><td class="n">' + c.tries + ' (' + Math.round(100 * c.tries / m.wipes) + '%)</td><td class="n">' + c.primeira + '</td></tr>').join('') + '</table></div>';
     h += '<div><h2>Quem morre primeiro</h2><table><tr><th>Jogador</th><th class="n">Mortes iniciais</th><th class="n">Foi a 1ª morte</th><th class="n">Tries presentes</th><th class="n">Mortes por try</th></tr>' +
       m.quem.slice(0, 14).map(q => { const j = ls.map(l => l.jogadores.find(x => x.nome === q.nome)).find(Boolean) || {}; return '<tr><td>' + selo(q.nome, j.classe) + '</td><td class="n">' + q.mortes + '</td><td class="n">' + q.primeira + '</td><td class="n">' + q.presente + '</td><td class="n">' + (q.mortes / q.presente).toFixed(2).replace('.', ',') + '</td></tr>'; }).join('') + '</table></div></div>';
     h += '<h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Boss</th><th>Fase</th><th>Primeiras mortes</th></tr>' +
       m.porTry.map(({ l, prim }) => '<tr><td>' + dataBR(l.data) + '</td><td class="n">' + l.id + '</td><td class="n">' + mmss(l.durS) + '</td><td class="n">' + pct(l.pct) + '</td><td>' + l.ultFase + '</td><td>' +
-        prim.map(d => esc(d.nome) + ' <span class="sub">(' + esc(d.golpe) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
+        prim.map(d => (est.golpe && d.golpe === est.golpe ? '<b>' + esc(d.nome) + '</b>' : esc(d.nome)) + ' <span class="sub">(' + esc(d.golpe) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
     return h;
   }
 
@@ -419,7 +444,9 @@
   });
   document.addEventListener('change', e => {
     const t = e.target;
-    if (t.dataset.n) { t.checked ? est.noites.add(t.dataset.n) : est.noites.delete(t.dataset.n); desenhar(); }
+    if (t.dataset.n) marcarNoites([t.dataset.n], t.checked);
+    else if (t.dataset.sem) marcarNoites(est.catalogo.filter(r => C.semanaDe(r.inicio) === +t.dataset.sem).map(r => r.code), t.checked);
+    else if (t.id === 'golpe') { est.golpe = t.value; desenhar(); }
     else if (t.id === 'boss') { est.enc = t.value; est.fase = null; est.refs = undefined; est.refsMsg = null; carregarNota().then(desenhar); }
     else if (t.id === 'aoVivo') { if (t.checked) est.aoVivo = setInterval(() => carregar({ aoVivo: true }), 60000); else { clearInterval(est.aoVivo); est.aoVivo = null; } }
     else if (t.id === 'comDps') { est.comDps = t.checked; desenhar(); }
@@ -433,7 +460,19 @@
     if (!s.logado) { $('login').hidden = false; $(s.admin ? 'loginAdmin' : 'loginOutros').hidden = false; return; }
     if (s.admin) $('adminBar').hidden = false;
     $('app').hidden = false;
-    try { const v = localStorage.getItem('links'); if (v) $('links').value = v; } catch (e) { }
-    $('carregar').onclick = () => carregar();
+    $('carregar').onclick = () => {
+      const novos = [...new Set($('links').value.split(/[\s,]+/).map(C.codigoDoLink).filter(Boolean))];
+      if (novos.length) { $('links').value = ''; carregar({ codes: novos }); }
+      else if (est.noites.size) carregar({ codes: [...est.noites] });
+      else status('Cole o link de um relatório do Warcraft Logs.', true);
+    };
+    const cat = await lerArq('relatorios'); est.catalogo = (cat && cat.lista) || [];
+    if (est.catalogo.length) {
+      const ult = Math.max(...est.catalogo.map(r => C.semanaDe(r.inicio)));
+      await carregar({ codes: est.catalogo.filter(r => C.semanaDe(r.inicio) === ult).map(r => r.code) });
+    } else {
+      try { const v = localStorage.getItem('links'); if (v) $('links').value = v.split(/\s+/).join(' '); } catch (e) { }
+      status('Nenhum relatório guardado ainda. Cole um ou mais links e clique em Adicionar.');
+    }
   })();
 })();

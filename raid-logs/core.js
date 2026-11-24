@@ -157,14 +157,17 @@
     return { noites, tries: lutas.length, melhor: lutas.length ? Math.min(...lutas.map(l => l.pct)) : null };
   }
 
-  function mortes(lutas) {
+  // filtro: nome da habilidade; com ele, so entram as mortes iniciais causadas por ela (e as tries em que ocorreu).
+  function mortes(lutas, filtro) {
     const causas = {}, quem = {}, porTry = [];
     const wipes = lutas.filter(l => !l.kill);
     for (const l of wipes) {
       const prim = l.mortes.slice(0, N_MORTES_WIPE - 1);
+      if (filtro && !prim.some(m => m.golpe === filtro)) continue;
       porTry.push({ l, prim });
       const vistos = new Set();
       prim.forEach((m, i) => {
+        if (filtro && m.golpe !== filtro) return;
         const c = causas[m.golpe] = causas[m.golpe] || { nome: m.golpe, mortes: 0, tries: 0, primeira: 0 };
         c.mortes++; if (!vistos.has(m.golpe)) { c.tries++; vistos.add(m.golpe); } if (i === 0) c.primeira++;
         const q = quem[m.nome] = quem[m.nome] || { nome: m.nome, mortes: 0, primeira: 0, presente: 0 };
@@ -176,6 +179,10 @@
       causas: Object.values(causas).sort((a, b) => b.mortes - a.mortes),
       quem: Object.values(quem).sort((a, b) => b.mortes - a.mortes), porTry };
   }
+
+  // Semana de raid: semana 1 = abertura da temporada (reset de terca, 15:00 UTC nas Americas).
+  const SEMANA_1 = Date.UTC(2026, 7, 18, 15);
+  const semanaDe = ms => Math.floor((ms - SEMANA_1) / (7 * 86400e3)) + 1;
 
   // Curva media de dano recebido pela raid, alinhada no inicio da fase.
   function curva(lutas, faseId) {
@@ -622,5 +629,5 @@
     return Object.values(out).sort((a, b) => a.cd - b.cd);
   }
 
-  return { sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
+  return { semanaDe, sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
 });
