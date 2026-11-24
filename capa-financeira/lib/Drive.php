@@ -155,5 +155,34 @@ final class CfDrive
         $n = preg_replace('/^\s*ok\b[\s\-–_:]*/iu', '', $n) ?? $n;
         return CapaParser::key($n);
     }
+    /** o que o NOME do arquivo diz sobre a venda: chave dos clientes (sem "ok", "aditivo", "cópia de"…), se é aditivo (e qual nº),
+        e se o próprio nome manda não subir. @return array{chave:string,aditivo:bool,n:int,nao_subir:bool,distrato:bool} */
+    public static function venda(string $nome): array
+    {
+        $k = CapaParser::key(preg_replace('/\.xlsx$/i', '', trim($nome)) ?? $nome);
+        $naoSubir = (bool)preg_match('/\bNAO SUBIR\b/', $k);
+        $distrato = (bool)preg_match('/\bDISTRAT/', $k);
+        $incompleto = (bool)preg_match('/\bINCOMPLET/', $k);
+        $adit = (bool)preg_match('/\b(?:ADITIVO|ADITVO|ADTVO|ADTIVO|ADIT)\b\s*(\d{1,2})?/', $k, $m);
+        $n = $adit ? max(1, (int)($m[1] ?? 1)) : 0;
+        $k = preg_replace('/\bNAO SUBIR( NO OMIE)?\b|\bDISTRAT\w*|\b(?:ADITIVO|ADITVO|ADTVO|ADTIVO|ADIT)\b\s*\d{0,2}|\bCOPIA DE\b|\bATUALIZAD[OA]\b|\bMANTER\b|\bINCOMPLET[OA]\b|\bXLSX\b|\(\d+\)/', ' ', $k) ?? $k;
+        $k = preg_replace('/^[\s\-–_:,.]*OK\b/', ' ', $k) ?? $k;                      // "ok - ", "OK "
+        $k = preg_replace('/^[\s\-–_:,.]*[A-Z]{2,4}\s+-\s+/', ' ', $k) ?? $k;          // iniciais de quem lançou: "ISA - ", "TAI - "
+        $k = trim(preg_replace('/\s+/', ' ', preg_replace('/[\-–_:,.]+/', ' ', $k) ?? $k) ?? $k);
+        return ['chave' => $k, 'aditivo' => $adit, 'n' => $n, 'nao_subir' => $naoSubir, 'distrato' => $distrato, 'incompleto' => $incompleto];
+    }
+    /** duas chaves de nome de arquivo são da mesma venda? Critério estreito de propósito (um falso positivo trava um arquivo válido):
+        nomes iguais, com diferença de digitação, ou a lista de compradores de um contida exatamente na do outro. */
+    public static function mesmaVenda(string $a, string $b): bool
+    {
+        if ($a === '' || $b === '') return false;
+        if ($a === $b || CapaParser::grafiaParecida($a, $b)) return true;
+        $p = fn(string $s) => array_values(array_filter(array_map('trim', preg_split('/\s+E\s+/', $s) ?: [])));
+        $pa = $p($a); $pb = $p($b);
+        [$men, $mai] = count($pa) <= count($pb) ? [$pa, $pb] : [$pb, $pa];
+        if (!$men || count($men) === count($mai)) return false;
+        foreach ($men as $x) if (count(explode(' ', $x)) < 3 || !in_array($x, $mai, true)) return false;
+        return true;
+    }
     public static function temOk(string $nome): bool { return (bool)preg_match('/^\s*ok\b/iu', $nome); }
 }

@@ -416,6 +416,81 @@ final class OmieEnvio
         return ['pedido' => $ped, 'erros' => array_values(array_unique($erros)), 'avisos' => array_values(array_unique($avisos)), 'cadastro' => $cadastro, 'existente' => $existente];
     }
 
+    /* ---------------- duplicata de título lançado à mão (sem código de integração) ---------------- */
+
+    /** observação de um título do Omie. A listagem não traz esse campo, então consulta o título e guarda em arquivo (por empresa/tipo).
+        Para no orçamento de tempo da requisição (OmieContinuar) — a próxima continua do cache. null = título não existe mais. */
+    public static function observacao(string $empresa, string $tipo, int $omieId): ?string
+    {
+        static $mem = [];
+        $nome = "obs-$empresa-$tipo"; $f = self::cacheArq($nome);
+        if (!isset($mem[$nome])) $mem[$nome] = is_file($f) ? (json_decode((string)file_get_contents($f), true) ?: []) : [];
+        if (array_key_exists((string)$omieId, $mem[$nome])) return $mem[$nome][(string)$omieId];
+        if (self::$prazo !== null && microtime(true) > self::$prazo) throw new OmieContinuar('orçamento de tempo');
+        $t = self::consultarPorOmieId($empresa, $tipo, $omieId);
+        $obs = $t === null ? null : (string)($t['observacao'] ?? '');
+        $mem[$nome][(string)$omieId] = $obs;
+        @file_put_contents($f, json_encode($mem[$nome], JSON_UNESCAPED_UNICODE), LOCK_EX);
+        return $obs;
+    }
+
+    /** títulos SEM código de integração (lançados à mão ou por planilha antiga) do mesmo cadastro e mesmo valor, ainda não ligados a
+        nenhuma linha do portal. $usados = [omie_id => true] dos títulos que o portal já conhece. */
+    public static function manuaisIguais(string $empresa, string $tipo, int $forn, float $valor, array $usados): array
+    {
+        $out = [];
+        foreach (self::titulos($empresa, $tipo)['por_forn'][$forn] ?? [] as $t) {
+            if (($t['codigo'] ?? '') !== '' || abs((float)$t['valor'] - $valor) >= 0.005 || isset($usados[(int)$t['omie_id']]) || stripos((string)$t['status'], 'CANCEL') !== false) continue;
+            $out[] = $t;
+        }
+        return $out;
+    }
+
+    /**
+     * A linha que vamos enviar já está no Omie, lançada à mão?
+     *  - cadastro "exclusivo da venda" (comprador nas contas a receber; construtora/terceiro nas a pagar): mesmo valor + vencimento já é duplicata.
+     *  - cadastro que se repete entre vendas ($repetivel: pessoa da equipe; construtora pagando as parcelas): mesmo fornecedor/valor/data é
+     *    normal (ajuda de custo etc.), então só vale se a OBSERVAÇÃO do título citar o cliente desta capa. Com vencimento diferente só
+     *    olha a observação quando a venda já deu sinal de estar no Omie ($sinal).
+     * @param string[] $nomes nomes dos compradores da capa
+     * @return array{nivel:string,msg:string,titulos:list<array>}|null  nivel = bloqueio | aviso
+     */
+    public static function duplicataManual(string $empresa, string $tipo, int $forn, float $valor, string $vencBr, array $nomes, bool $repetivel, bool $sinal, array $usados): ?array
+    {
+        $cands = self::manuaisIguais($empresa, $tipo, $forn, $valor, $usados);
+        if (!$cands) return null;
+        $iguais = array_values(array_filter($cands, fn($t) => $t['venc'] === $vencBr));
+        $outros = array_values(array_filter($cands, fn($t) => $t['venc'] !== $vencBr));
+        $chaves = array_values(array_filter(array_map(fn($n) => CapaParser::key((string)$n), $nomes), fn($k) => strlen($k) >= 8));
+        $cita = function (array $t) use ($empresa, $tipo, $chaves): bool {
+            if (!$chaves) return false;
+            $obs = self::observacao($empresa, $tipo, (int)$t['omie_id']);
+            if ($obs === null || $obs === '') return false;
+            $k = CapaParser::key($obs);
+            foreach ($chaves as $c) if (str_contains($k, $c)) return true;
+            return false;
+        };
+        $fmt = fn(array $t, bool $certo, string $porque) => ['omie_id' => (int)$t['omie_id'], 'venc' => (string)$t['venc'], 'valor' => (float)$t['valor'], 'status' => (string)$t['status'], 'certo' => $certo, 'porque' => $porque];
+        $quem = $tipo === 'P' ? 'fornecedor' : 'cliente';
+        $achados = [];
+        if (!$repetivel) {
+            foreach ($iguais as $t) $achados[] = $fmt($t, true, "mesmo $quem, valor e vencimento");
+            if ($achados) return ['nivel' => 'bloqueio', 'msg' => 'já existe no Omie, lançado à mão (sem código de integração), um título deste ' . $quem . ' com o mesmo valor e vencimento — enviar criaria duplicata. Vincule ao título existente, ou libere se for outro pagamento', 'titulos' => $achados];
+            foreach (array_slice($outros, 0, 4) as $t) if ($cita($t)) $achados[] = $fmt($t, true, 'mesmo ' . $quem . ' e valor, vencimento diferente, e a observação cita o cliente desta capa');
+            if ($achados) return ['nivel' => 'bloqueio', 'msg' => 'já existe no Omie, lançado à mão, um título deste ' . $quem . ' com o mesmo valor (vencimento diferente) cuja observação cita o cliente desta capa — enviar criaria duplicata. Vincule ao título existente, ou libere se for outro pagamento', 'titulos' => $achados];
+            foreach (array_slice($outros, 0, 4) as $t) $achados[] = $fmt($t, false, "mesmo $quem e valor, vencimento diferente");
+            return ['nivel' => 'aviso', 'msg' => 'há no Omie título(s) lançado(s) à mão deste ' . $quem . ' com o mesmo valor e outro vencimento — confira se não é esta parcela remarcada', 'titulos' => $achados];
+        }
+        foreach (array_slice($iguais, 0, 6) as $t) if ($cita($t)) $achados[] = $fmt($t, true, 'mesmo valor e vencimento, e a observação cita o cliente desta capa');
+        if (!$achados && $sinal) foreach (array_slice($outros, 0, 6) as $t) if ($cita($t)) $achados[] = $fmt($t, true, 'mesmo valor, vencimento diferente, e a observação cita o cliente desta capa');
+        if ($achados) return ['nivel' => 'bloqueio', 'msg' => 'já existe no Omie, lançado à mão, um título deste ' . $quem . ' com o mesmo valor cuja observação cita o cliente desta capa — enviar criaria duplicata. Vincule ao título existente, ou libere se for outro pagamento', 'titulos' => $achados];
+        if ($sinal && $iguais) {
+            foreach (array_slice($iguais, 0, 4) as $t) $achados[] = $fmt($t, false, 'mesmo valor e vencimento; a observação não cita o cliente desta capa');
+            return ['nivel' => 'aviso', 'msg' => 'esta venda parece já ter sido lançada à mão no Omie (as parcelas a receber estão lá) e há título deste ' . $quem . ' com o mesmo valor e vencimento, mas a observação dele não cita o cliente — confira antes de enviar', 'titulos' => $achados];
+        }
+        return null;
+    }
+
     /* ---------------- API: incluir / consultar / excluir ---------------- */
 
     private static function path(string $tipo): string { return $tipo === 'P' ? 'financas/contapagar/' : 'financas/contareceber/'; }
