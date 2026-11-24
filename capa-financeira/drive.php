@@ -49,6 +49,7 @@ try {
         }
         // ficha de cada arquivo (cabeçalho da capa), para filtrar por construtora, COD, bairro…: usa o que já foi lido e lê mais alguns
         // a cada chamada (até ~9 s), começando pelos pendentes; a tela chama de novo enquanto faltar.
+        $comLinhas = !empty($_GET['linhas']);   // as linhas de cada capa só vão para a tela quando o filtro "Quem" está em uso (resposta bem maior)
         $fichas = CfDrive::fichas(); $novas = []; $faltam = []; $tIdx = microtime(true);
         foreach ($out as $a) if ($a['sit'] !== 'modelo' && (!isset($fichas[$a['id']]) || ($fichas[$a['id']]['md5'] ?? '') !== $a['md5'] || ($fichas[$a['id']]['v'] ?? 1) !== CfDrive::FICHA_V)) $faltam[] = $a;
         // ordem de leitura: pendentes da pasta principal, depois pendentes das pastas antigas, depois o resto
@@ -60,7 +61,13 @@ try {
             $novas[$a['id']] = $fichas[$a['id']] = CfDrive::lerFicha($a['id'], $a['md5']); $restam--;
         }
         if ($novas || count($fichas) > count($out)) CfDrive::gravarFichas($novas, array_column($out, 'id'));
-        foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1, 'v' => 1]); }
+        foreach ($out as $i => $a) { $f = $fichas[$a['id']] ?? null; if ($f && empty($f['erro']) && ($f['md5'] ?? '') === $a['md5']) $out[$i]['ficha'] = array_diff_key($f, ['md5' => 1, 'v' => 1] + ($comLinhas ? [] : ['q' => 1, 'ln' => 1])); }
+        // filtro "Quem": cada nome das linhas ligado ao cadastro de Pessoas (nome exato ou apelido — a mesma regra da importação)
+        $pessoasOut = []; $ps = cf_pessoas(false); $memo = [];
+        foreach ($ps as $pid => $pp) $pessoasOut[] = ['id' => (int)$pid, 'nome' => (string)$pp['nome'], 'razao' => (string)($pp['razao_social'] ?? ''), 'apelidos' => implode(' ', array_column($pp['aliases'], 'alias'))];
+        if ($comLinhas) {
+            foreach ($out as $i => $a) if (isset($a['ficha']['q'])) $out[$i]['ficha']['qp'] = array_map(function ($n) use (&$memo, $ps) { return $memo[$n] ??= (cf_resolver_pessoa((string)$n, $ps) ?? 0); }, $a['ficha']['q']);
+        }
         // pastas de anos anteriores: só ficam as capas com conta a pagar/receber de "desde" em diante. Enquanto o conteúdo de um arquivo
         // não foi lido não dá para saber, então ele espera fora da lista (contado em $aguardando); o que não é capa também sai.
         $aguardando = 0; $foraPeriodo = 0;
@@ -124,6 +131,7 @@ try {
         }
         foreach ($out as $i => $a) unset($out[$i]['md5'], $out[$i]['desde']);
         $sai(['ok' => true, 'configurado' => true, 'pasta' => $l['pasta'], 'pasta_id' => CfDrive::pasta(), 'arquivos' => $out, 'renomeados' => $renomeados, 'aviso' => $avisoRen, 'lido_em' => date('H:i:s'), 'indexar_restam' => max(0, $restam), 'hoje' => date('Y-m-d'),
+              'pessoas' => $pessoasOut, 'com_linhas' => $comLinhas,
               'avisos' => $l['avisos'] ?? [], 'antigas' => ['aguardando' => $aguardando, 'fora' => $foraPeriodo, 'dentro' => count(array_filter($out, fn($a) => $a['extra']))]]);
     }
 

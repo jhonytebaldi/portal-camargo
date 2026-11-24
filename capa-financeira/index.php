@@ -67,11 +67,12 @@ portal_header('Capa Financeira', $u);
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:13px">
       <b>Com contas:</b>
+      <span title="filtra as capas em que esta pessoa/empresa aparece numa linha: favorecido nas contas a pagar, cliente ou construtora nas contas a receber. Liga pelo cadastro de Pessoas (nome, apelidos e razão social) ou por parte do nome.">quem: <input type="text" id="drv-fquem" class="cf-in" list="drv-pessoas" placeholder="nome, apelido ou razão social" style="padding:3px 6px;width:230px"></span><datalist id="drv-pessoas"></datalist>
       <select id="drv-ftipo" class="cf-in" style="padding:3px 6px"><option value="">a pagar ou a receber</option><option value="p">só a pagar</option><option value="r">só a receber</option></select>
       <label title="pelo menos um vencimento neste ano"><input type="checkbox" id="drv-fano"> em <?= date('Y') ?></label>
       <label title="pelo menos um vencimento de hoje em diante. A planilha não diz o que já foi pago: aqui 'em aberto' é o que ainda vai vencer."><input type="checkbox" id="drv-faberto"> ainda a vencer (de hoje em diante)</label>
       <span>de <input type="date" id="drv-fde" class="cf-in" style="padding:3px 6px"> até <input type="date" id="drv-fate" class="cf-in" style="padding:3px 6px"> <small class="cf-raw">(só "de" = a partir da data)</small></span>
-      <button type="button" class="cf-x" id="drv-flimpar" style="display:none">limpar filtros de data</button>
+      <button type="button" class="cf-x" id="drv-flimpar" style="display:none">limpar filtros</button>
       <span class="cf-raw" id="drv-fcont"></span>
     </div>
     <div id="drv-aviso" class="cf-flag cf-leve" style="display:none;margin-bottom:8px"></div>
@@ -97,17 +98,28 @@ portal_header('Capa Financeira', $u);
   // filtros por vencimento das linhas da capa (lidos do conteúdo do arquivo): ano atual, a vencer, e período de/até
   let hoje = <?= json_encode(date('Y-m-d')) ?>;
   const ANO = <?= json_encode(date('Y')) ?>;
-  const filtroData = () => ({tipo: $('drv-ftipo').value, ano: $('drv-fano').checked, aberto: $('drv-faberto').checked, de: $('drv-fde').value, ate: $('drv-fate').value});
-  const temFiltroData = f => f.ano || f.aberto || f.de || f.ate;
+  const filtroData = () => ({tipo: $('drv-ftipo').value, ano: $('drv-fano').checked, aberto: $('drv-faberto').checked, de: $('drv-fde').value, ate: $('drv-fate').value, quem: semAc($('drv-fquem').value.trim())});
+  const temFiltroData = f => f.ano || f.aberto || f.de || f.ate || f.quem;
+  let pessoasTxt = {};   // id da pessoa → texto pesquisável (nome + razão social + apelidos)
+  // com "quem" preenchido o filtro é POR LINHA: a mesma linha tem que ser da pessoa, do tipo e do período. Devolve as linhas que bateram.
+  function linhasQuem(a, f) {
+    const fi = a.ficha; if (!fi || !fi.ln) return null;
+    const pal = f.quem.split(/\s+/);
+    const qOk = (fi.q || []).map((n, i) => { const t = semAc(n) + ' ' + (pessoasTxt[(fi.qp || [])[i]] || ''); return pal.every(p => t.includes(p)); });
+    return fi.ln.filter(l => qOk[l[3]] && (!f.tipo || l[0] === f.tipo) && (!f.ano || l[1].startsWith(ANO + '-')) && (!f.aberto || l[1] >= hoje) && (!f.de || l[1] >= f.de) && (!f.ate || (l[1] && l[1] <= f.ate)));
+  }
   function datasOk(a, f) {
-    if (!temFiltroData(f)) return true;
+    if (!temFiltroData(f)) { a._bate = null; return true; }
     if (!a.ficha) return false;   // conteúdo ainda não lido (ou não é capa): não dá para saber
+    if (f.quem) { const ls = linhasQuem(a, f); a._bate = ls; return !!(ls && ls.length); }
+    a._bate = null;
     const ds = (f.tipo === 'p' ? [] : (a.ficha.dr || [])).concat(f.tipo === 'r' ? [] : (a.ficha.dp || []));
     if (f.ano && !ds.some(d => d.startsWith(ANO + '-'))) return false;
     if (f.aberto && !ds.some(d => d >= hoje)) return false;
     if ((f.de || f.ate) && !ds.some(d => (!f.de || d >= f.de) && (!f.ate || d <= f.ate))) return false;
     return true;
   }
+  const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const mesAno = d => d ? d.slice(5, 7) + '/' + d.slice(0, 4) : '';
   const escolhivel = a => (a.sit === 'pendente' || a.sit === 'alterada') && !travado(a);
   const pendente = a => a.sit === 'pendente' || a.sit === 'alterada';
@@ -116,7 +128,8 @@ portal_header('Capa Financeira', $u);
     const fd = filtroData(), base = arquivos.filter(a => (todos || pendente(a)) && bate(a, busca));
     const vis = base.filter(a => datasOk(a, fd));
     $('drv-flimpar').style.display = temFiltroData(fd) ? '' : 'none';
-    $('drv-fcont').textContent = temFiltroData(fd) ? vis.length + ' de ' + base.length + ' arquivo(s)' + (base.some(a => !a.ficha && a.sit !== 'modelo') ? ' · arquivos ainda não lidos ficam de fora' : '') : '';
+    const somaQ = fd.quem ? vis.reduce((t, a) => { (a._bate || []).forEach(l => { t.n++; t.v += l[2]; }); return t; }, {n: 0, v: 0}) : null;
+    $('drv-fcont').textContent = temFiltroData(fd) ? vis.length + ' de ' + base.length + ' arquivo(s)' + (somaQ ? ' · ' + somaQ.n + ' conta(s) · ' + brl(somaQ.v) : '') + (fd.quem && !comLinhas ? ' · carregando as linhas das capas…' : '') + (base.some(a => !a.ficha && a.sit !== 'modelo') ? ' · arquivos ainda não lidos ficam de fora' : '') : '';
     // um bloco por subpasta; as pastas de anos anteriores ficam cada uma dentro de um bloco do ano, fechado até você abrir
     // (abre sozinho quando a busca ou um filtro de data está ativo, para os resultados aparecerem)
     const htmlGrupo = (g, its, rotulo) => {
@@ -130,6 +143,7 @@ portal_header('Capa Financeira', $u);
             (a.nao_subir ? ' <span class="cf-flag cf-grave">o nome diz "não subir"</span>' : '') + (a.distrato && !a.nao_subir ? ' <span class="cf-flag cf-leve">distrato</span>' : '') +
             (a.outros && a.outros.length ? ' <span class="cf-flag cf-leve" title="' + esc(a.outros.join(' · ')) + '">há outro arquivo desta venda</span>' : '') +
             (pendente(a) && (a.trava || a.nao_subir) && !liberados.has(a.id) ? ' <button type="button" class="cf-x drv-lib" data-id="' + esc(a.id) + '" title="libera a caixa de seleção deste arquivo mesmo assim">liberar</button>' : '') +
+            (a._bate && a._bate.length ? ' <span class="cf-flag cf-ok" title="' + esc(a._bate.map(l => (l[0] === 'p' ? 'pagar ' : 'receber ') + l[1].split('-').reverse().join('/') + ' ' + brl(l[2])).join(' · ')) + '">' + a._bate.length + ' conta(s) · ' + brl(a._bate.reduce((t, l) => t + l[2], 0)) + '</span>' : '') +
             ' <small>' + d + (a.ficha ? ' · ' + esc([a.ficha.cod ? 'COD ' + a.ficha.cod : 'sem COD', a.ficha.construtora, a.ficha.bairro, (() => { const ds = (a.ficha.dr || []).concat(a.ficha.dp || []).sort(); return ds.length ? 'contas de ' + mesAno(ds[0]) + ' a ' + mesAno(ds[ds.length - 1]) : ''; })()].filter(Boolean).join(' · ')) : '') + '</small></label>'; }).join('') + '</details>';
     };
     const porRaiz = {}; vis.forEach(a => ((porRaiz[a.raiz || ''] ??= {})[a.subpasta || '(raiz da pasta)'] ??= []).push(a));
@@ -147,10 +161,11 @@ portal_header('Capa Financeira', $u);
     contar();
   }
   function contar() { $('drv-n').textContent = marcados.size; $('drv-importar').disabled = !marcados.size || ocupado; }
+  let comLinhas = false; const querLinhas = () => !!$('drv-fquem').value.trim();
   async function ler(manual, cont) {
     if (ocupado) return;
     let j = null;
-    try { const r = await fetch('/capa-financeira/drive.php?acao=listar' + (cont ? '&cont=1' : ''), {headers: {'Accept': 'application/json'}}); j = await r.json(); } catch (e) { j = null; }
+    try { const r = await fetch('/capa-financeira/drive.php?acao=listar' + (cont ? '&cont=1' : '') + (querLinhas() ? '&linhas=1' : ''), {headers: {'Accept': 'application/json'}}); j = await r.json(); } catch (e) { j = null; }
     $('drv-carregando').style.display = 'none';
     if (!j || !j.ok) {
       const m = j && j.erro ? j.erro : 'Não consegui ler a pasta do Drive agora (sem resposta do portal). Confira sua internet e clique em atualizar.';
@@ -165,6 +180,9 @@ portal_header('Capa Financeira', $u);
     $('drv-aviso').style.display = avs.length ? '' : 'none'; $('drv-aviso').textContent = avs.join(' | ');
     if (j.indexar_restam > 0) { $('drv-quando').textContent += ' · lendo o conteúdo das capas para o filtro (faltam ' + j.indexar_restam + ')…'; setTimeout(() => ler(false, true), 1200); }
     if (j.hoje) hoje = j.hoje;
+    comLinhas = !!j.com_linhas;
+    if (j.pessoas && j.pessoas.length) { pessoasTxt = {}; j.pessoas.forEach(p => pessoasTxt[p.id] = semAc(p.nome + ' ' + p.razao + ' ' + p.apelidos));
+      if (!$('drv-pessoas').children.length) $('drv-pessoas').innerHTML = j.pessoas.map(p => '<option value="' + esc(p.nome) + '">' + esc(p.razao || '') + '</option>').join(''); }
     arquivos = j.arquivos; const validos = new Set(arquivos.filter(escolhivel).map(a => a.id));
     marcados = new Set([...marcados].filter(i => validos.has(i)));
     desenhar();
@@ -181,7 +199,10 @@ portal_header('Capa Financeira', $u);
     else if (d.classList && d.classList.contains('drv-ano') && Date.now() - desenhouEm > 250) d.open ? anosAbertos.add(d.dataset.ano) : anosAbertos.delete(d.dataset.ano); }, true);
   $('drv-busca').addEventListener('input', desenhar); $('drv-todos').addEventListener('change', desenhar);
   ['drv-ftipo', 'drv-fano', 'drv-faberto', 'drv-fde', 'drv-fate'].forEach(i => $(i).addEventListener('change', desenhar));
-  $('drv-flimpar').addEventListener('click', () => { $('drv-fano').checked = $('drv-faberto').checked = false; $('drv-fde').value = $('drv-fate').value = ''; desenhar(); });
+  // "quem": as linhas das capas só vêm do servidor quando o filtro é usado; na primeira vez busca e redesenha
+  let tQuem = null;
+  $('drv-fquem').addEventListener('input', () => { clearTimeout(tQuem); tQuem = setTimeout(() => { if (querLinhas() && !comLinhas) ler(false, true); else desenhar(); }, 300); });
+  $('drv-flimpar').addEventListener('click', () => { $('drv-fano').checked = $('drv-faberto').checked = false; $('drv-fde').value = $('drv-fate').value = $('drv-fquem').value = ''; desenhar(); });
   $('drv-atualizar').addEventListener('click', () => { $('drv-quando').textContent = 'lendo…'; ler(true); });
   $('drv-importar').addEventListener('click', async () => {
     const emp = $('drv-emp').value, ids = [...marcados];
