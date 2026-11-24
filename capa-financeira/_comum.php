@@ -230,6 +230,7 @@ function cf_flag_curto(string $f): string
         case 'CONSTRUTORA_HIST_DIFERE_CAPA': return 'Construtora ≠ capa: ' . $q($det('CONSTRUTORA_HIST_DIFERE_CAPA'));
         case 'DATA_VENDA_HIST_DIFERE_G3': return 'Data da venda no histórico ≠ capa: ' . $q($det('DATA_VENDA_HIST_DIFERE_G3'));
         case 'COD_HIST_DIFERE_B6': return 'COD no histórico ≠ capa: ' . $q($det('COD_HIST_DIFERE_B6'));
+        case 'COD_REPETIDO_OUTRO_CLIENTE': return 'COD repetido em capa de outro cliente — corrija o COD desta capa: ' . $q($det('GRAVE:COD_REPETIDO_OUTRO_CLIENTE'));
         case 'COMPRADOR_COM_CNPJ': return 'Comprador com CNPJ em vez de CPF: ' . $q($det('GRAVE:COMPRADOR_COM_CNPJ'));
         case 'COMPRADOR_DOC_INVALIDO': return 'Documento do comprador inválido: ' . $q($det('GRAVE:COMPRADOR_DOC_INVALIDO'));
         case 'CONDICAO_DIVERGE_BLOCO': return 'Condição do lançamento ≠ bloco de corretores: ' . str_replace(["lançamento='", "bloco de corretores='", "'"], ['', '', ''], $q($det('GRAVE:CONDICAO_DIVERGE_BLOCO')));
@@ -312,6 +313,7 @@ function cf_flag_texto(string $f): string
     ];
     if (isset($map[$f])) return $map[$f];
     if (str_starts_with($f, 'GRAVE:FAVORECIDO_DIVERGE')) return 'Favorecido da coluna C é DIFERENTE do nome no histórico ' . substr($f, strlen('GRAVE:FAVORECIDO_DIVERGE '));
+    if (str_starts_with($f, 'GRAVE:COD_REPETIDO_OUTRO_CLIENTE')) return 'Esta capa foi importada com um COD que já pertence à capa de outro cliente (provavelmente copiado de outra planilha). Corrija o COD no campo da capa — o aviso some ao trocar; se o COD estiver certo, confirme o aviso ' . substr($f, strlen('GRAVE:COD_REPETIDO_OUTRO_CLIENTE '));
     if (str_starts_with($f, 'AJUSTE_ADMIN')) return 'Título ajustado por um administrador direto na tela de exportação (valor/vencimento alterado ou título excluído) ' . substr($f, strlen('AJUSTE_ADMIN '));
     if (str_starts_with($f, 'REPASSE')) return 'Repasse a terceiro (construtora): não é comissão — favorecido é a coluna C, sem função; confira a categoria (Repasse a Terceiros / Futuro)';
     if (str_starts_with($f, 'FAVORECIDO_ABREVIADO')) return 'Nome abreviado no histórico ' . substr($f, strlen('FAVORECIDO_ABREVIADO '));

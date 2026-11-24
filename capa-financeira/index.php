@@ -46,12 +46,14 @@ portal_header('Capa Financeira', $u);
       </select>
     </label>
     <label>Arquivo da capa (.xlsx)
-      <input type="file" name="capa" accept=".xlsx" required>
+      <input type="file" name="capas[]" accept=".xlsx" multiple required>
     </label>
     <button class="btn" type="submit">Enviar e revisar</button>
   </form>
   <p class="cf-dica">Reenviar a capa de uma venda já enviada (mesmo COD) cria uma nova versão e mostra o que mudou linha a linha.</p>
+  <p class="cf-dica">Dá para selecionar <b>várias capas de uma vez</b> (até 20, da mesma empresa): todas entram em revisão e você resolve os alertas repetidos em <a href="/capa-financeira/lote.php">Resolver em lote</a>. Capa com COD de uma venda do formulário, ou com COD que já é de outro cliente, fica de fora e precisa ser enviada sozinha.</p>
 </section>
+<p style="margin:10px 0"><a class="btn cf-btn-sec" href="/capa-financeira/lote.php" title="resolve de uma vez os alertas que se repetem nas capas em revisão: data da venda com ano arrastado, grafia parecida e condições fora do dicionário">⚡ Resolver alertas repetidos em lote</a></p>
 
 <div class="admin-tabs">
   <?php foreach (['' => 'Todas', 'revisao' => 'Em revisão', 'confirmada' => 'Confirmadas', 'substituida' => 'Substituídas', 'descartada' => 'Descartadas'] as $k => $n): ?>

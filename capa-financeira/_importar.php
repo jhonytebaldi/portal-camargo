@@ -11,14 +11,42 @@
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
 
-function cf_importar_capa(string $destino, string $empresa, string $nomeOrig, array $u, ?int $anteriorId = null, bool $procurarPorCod = true): int
+/** os dois nomes de cliente parecem ser da mesma venda? Basta UM comprador em comum: nome igual, grafia parecida,
+    ou um nome contido no outro (ex.: "ANDRE FRANCO" × "ANDRE RODOLFO FRANCO"). Sobrenome em comum não conta. */
+function cf_mesmo_cliente(string $a, string $b): bool
+{
+    if (CapaParser::key($a) === '' || CapaParser::key($b) === '') return true;   // sem nome não dá para comparar: não trava
+    $pessoas = fn(string $s) => array_values(array_filter(array_map('trim', preg_split('/\s+E\s+|[,;\/]/u', CapaParser::key($s)) ?: [])));
+    $tok = fn(string $k) => array_values(array_unique(array_filter(preg_split('/[^A-Z0-9]+/', $k) ?: [], fn($t) => strlen($t) >= 3 && !in_array($t, ['DOS', 'DAS', 'LTDA'], true))));
+    foreach ($pessoas($a) as $pa) foreach ($pessoas($b) as $pb) {
+        if ($pa === $pb || CapaParser::grafiaParecida($pa, $pb)) return true;
+        $ta = $tok($pa); $tb = $tok($pb);
+        $menor = min(count($ta), count($tb));
+        if ($menor >= 2 && count(array_intersect($ta, $tb)) === $menor && $ta[0] === $tb[0]) return true;
+    }
+    return false;
+}
+/** capa já existente (em revisão/confirmada) com o MESMO COD e cliente DIFERENTE — COD copiado de outra planilha? null = não há conflito */
+function cf_cod_outro_cliente(PDO $pdo, array $capa): ?array
+{
+    if (($capa['cod'] ?? null) === null || $capa['cod'] === '') return null;
+    $st = $pdo->prepare("SELECT id, versao, cod, cliente, construtora, status, criado_em FROM cf_capas WHERE cod = ? AND status IN ('revisao','confirmada') ORDER BY versao DESC, id DESC LIMIT 1");
+    $st->execute([(string)$capa['cod']]);
+    $a = $st->fetch();
+    if (!$a) return null;
+    return cf_mesmo_cliente((string)$a['cliente'], (string)($capa['cliente'] ?? '')) ? null : $a;
+}
+
+/** $flagsExtras: avisos da capa acrescentados por quem chama (ex.: COD repetido em outra venda, importada separada). */
+function cf_importar_capa(string $destino, string $empresa, string $nomeOrig, array $u, ?int $anteriorId = null, bool $procurarPorCod = true, array $flagsExtras = []): int
 {
     $pdo = db();
     /* ---- parse ---- */
     try { $res = cf_parser()->parse($destino); }
     catch (Throwable $e) { throw new RuntimeException('Não consegui ler a planilha: ' . $e->getMessage()); }
     $capa = $res['capa'];
-    $capaFlags = $res['capa_flags'];
+    $capaFlags = array_merge($res['capa_flags'], $flagsExtras);
+    $condIgnorar = array_flip((array)cf_config('cond_ignorar', []));   // textos do bloco de corretores que não são condição (decidido em "Resolver em lote")
 
     /* ---- arquivo idêntico já enviado? ---- */
     $st = $pdo->prepare('SELECT id, status, criado_em FROM cf_capas WHERE sha256 = ? ORDER BY id DESC LIMIT 1');
@@ -82,6 +110,7 @@ function cf_importar_capa(string $destino, string $empresa, string $nomeOrig, ar
             $flags = $l['flags'];
             $pessoaId = $tipo === 'P' ? cf_resolver_pessoa($l['cf'], $pessoas) : null;
             if ($tipo === 'P' && $pessoaId === null) $flags[] = 'PESSOA_NAO_IDENTIFICADA';
+            if ($condIgnorar) $flags = array_values(array_filter($flags, fn($f) => !(preg_match("/^CONDICAO_BLOCO_FORA_DO_DICIONARIO \\('(.*?)' no bloco/u", $f, $mm) && isset($condIgnorar[CapaParser::key($mm[1])]))));
             // diff com a versão anterior
             $dupTipo = null; $dupDe = null;
             if ($anterior) {

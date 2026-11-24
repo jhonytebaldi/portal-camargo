@@ -200,8 +200,14 @@ case 'editar_capa':
     $campo = (string)($in['campo'] ?? '');
     if ($campo === 'cod') {
         $v = preg_replace('/\D+/', '', (string)($in['valor'] ?? '')) ?: null;
+        $mudou = (string)$v !== (string)$capa['cod'];
         $pdo->prepare('UPDATE cf_capas SET cod = ? WHERE id = ?')->execute([$v, $capaId]);
         $capa['cod'] = $v;
+        if ($mudou) {   // COD corrigido: o aviso "COD repetido em capa de outro cliente" deixa de valer
+            $cfl = json_decode((string)($capa['capa_flags'] ?? ''), true) ?: [];
+            $novo = array_values(array_filter($cfl, fn($f) => cf_flag_codigo($f) !== 'COD_REPETIDO_OUTRO_CLIENTE'));
+            if (count($novo) !== count($cfl)) { $pdo->prepare('UPDATE cf_capas SET capa_flags = ? WHERE id = ?')->execute([json_encode($novo, JSON_UNESCAPED_UNICODE), $capaId]); $capa['capa_flags'] = json_encode($novo, JSON_UNESCAPED_UNICODE); }
+        }
     } elseif ($campo === 'cliente' || $campo === 'construtora') {
         $v = CapaParser::norm((string)($in['valor'] ?? '')); if ($v === '') falha('nome vazio');
         $pdo->prepare("UPDATE cf_capas SET $campo = ? WHERE id = ?")->execute([$v, $capaId]);
