@@ -155,6 +155,37 @@ final class CfDrive
         $n = preg_replace('/^\s*ok\b[\s\-–_:]*/iu', '', $n) ?? $n;
         return CapaParser::key($n);
     }
+    /* ---- ficha de cada arquivo: o cabeçalho da capa (COD, clientes, construtora, bairro, unidade, data da venda) lido uma vez e
+            guardado por id + md5 — é o que permite filtrar a lista do Drive por construtora, COD etc. sem baixar tudo a cada vez ---- */
+    private static function arqFichas(): string { return cf_data_dir() . '/drive-fichas.json'; }
+    public static function fichas(): array
+    {
+        $f = self::arqFichas();
+        $j = is_file($f) ? json_decode((string)@file_get_contents($f), true) : null;
+        return is_array($j) ? $j : [];
+    }
+    /** grava as fichas novas por cima do que estiver no arquivo (outra leitura pode ter gravado no meio) e tira as de arquivos que saíram da pasta */
+    public static function gravarFichas(array $novas, array $idsVivos): void
+    {
+        $t = self::fichas();
+        foreach ($novas as $id => $f) $t[$id] = $f;
+        $t = array_intersect_key($t, array_flip($idsVivos));
+        @file_put_contents(self::arqFichas(), json_encode($t, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    }
+    /** baixa o arquivo e lê o cabeçalho da capa. Arquivo que não é capa vira ficha com 'erro' (não tenta de novo até o arquivo mudar). */
+    public static function lerFicha(string $id, string $md5): array
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'cfd');
+        try {
+            self::baixar($id, $tmp);
+            $r = cf_parser()->parse($tmp); $c = $r['capa'];
+            return ['md5' => $md5, 'cod' => $c['cod'] !== null ? (string)$c['cod'] : '', 'cliente' => (string)($c['cliente'] ?? ''), 'construtora' => (string)($c['construtora'] ?? ''),
+                    'bairro' => (string)($c['bairro'] ?? ''), 'unidade' => (string)($c['unidade'] ?? ''), 'venda' => (string)($c['data_venda'] ?? ''), 'linhas' => count($r['linhas'] ?? [])];
+        } catch (Throwable $e) {
+            return ['md5' => $md5, 'erro' => mb_substr($e->getMessage(), 0, 160)];
+        } finally { @unlink($tmp); }
+    }
+
     /** o que o NOME do arquivo diz sobre a venda: chave dos clientes (sem "ok", "aditivo", "cópia de"…), se é aditivo (e qual nº),
         e se o próprio nome manda não subir. @return array{chave:string,aditivo:bool,n:int,nao_subir:bool,distrato:bool} */
     public static function venda(string $nome): array
