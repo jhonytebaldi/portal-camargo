@@ -41,7 +41,7 @@
     NOMES_RE = nomes.length ? new RegExp('(?<![\\w>])(' + nomes.join('|') + ')(?![\\w<])', 'g') : null;
   }
 
-  const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
+  const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', boss: { dados: {}, lidos: new Set() }, semChamado: true, aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
 
   async function gql(query, variables) {
     const r = await fetch('api.php?a=graphql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
@@ -143,9 +143,10 @@
         rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + '</label>').join('') + '</div>'; }).join('');
     document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === est.aba));
     montarIds(ls);
+    const ab = $('abaBoss'); ab.hidden = !temBoss(); if (temBoss() && ls.length) ab.textContent = ls[0].boss; else if (est.aba === 'boss') est.aba = 'geral';
     const el = $('conteudo');
     if (!ls.length) { el.innerHTML = '<p class="sub">Nenhuma try para os filtros escolhidos.</p>'; return; }
-    el.innerHTML = ({ geral: abaGeral, mortes: abaMortes, dano: abaDano, healers: abaHealers, plano: abaPlano, ultima: abaUltima })[est.aba](ls);
+    el.innerHTML = ({ geral: abaGeral, mortes: abaMortes, dano: abaDano, healers: abaHealers, plano: abaPlano, ultima: abaUltima, boss: abaBoss })[est.aba](ls);
     try { if (window.$WowheadPower) window.$WowheadPower.refreshLinks(); } catch (e) { }
     buscarPt();
   }
@@ -181,10 +182,13 @@
 
   // ---------- Mortes ----------
   function abaMortes(ls) {
-    const todas = C.mortes(ls).causas;
+    if (faltaBoss(ls)) carregarBoss(ls);
+    const cortes = temBoss() && est.semChamado ? cortesOvo(ls) : null, nCortes = cortes ? Object.keys(cortes).length : 0;
+    const todas = C.mortes(ls, '', cortes).causas;
     if (est.golpe && !todas.some(c => c.nome === est.golpe)) est.golpe = '';
-    const m = C.mortes(ls, est.golpe);
+    const m = C.mortes(ls, est.golpe, cortes);
     let h = '<div class="linha" style="margin-top:14px"><span class="sub">Habilidade que matou:</span><select id="golpe"><option value="">Todas</option>' + todas.map(c => '<option value="' + esc(c.nome) + '"' + (c.nome === est.golpe ? ' selected' : '') + '>' + esc(PT[IDS[c.nome]] ? PT[IDS[c.nome]] + ' / ' + c.nome : c.nome) + ' (' + c.mortes + ')</option>').join('') + '</select>' +
+      (temBoss() ? '<label class="chip"><input type="checkbox" id="semChamado"' + (est.semChamado ? ' checked' : '') + '> Ignorar mortes depois do 2º add de ovo (wipe chamado)</label>' + (est.semChamado ? '<span class="sub">' + nCortes + ' tries cortadas.</span>' : '') : '') +
       (est.golpe ? '<span class="sub">' + m.porTry.length + ' de ' + m.wipes + ' wipes tiveram morte inicial por ' + esc(est.golpe) + '.</span>' : '') + '</div>';
     h += '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
     h += '<div class="duas"><div><h2>O que mata primeiro</h2><table><tr><th>Habilidade</th><th class="n">Mortes</th><th class="n">Tries afetadas</th><th class="n">Foi a 1ª morte</th></tr>' +
@@ -452,6 +456,57 @@
     return h;
   }
 
+  // ---------- modulo do boss (Ula'tek) ----------
+  const temBoss = () => est.enc && C.temModulo(+est.enc.split(':')[0]);
+  async function carregarBoss(ls) {
+    if (est.bossCarregando || !temBoss()) return; est.bossCarregando = true; let mudou = false;
+    try {
+      for (const code of new Set(ls.map(l => l.rel))) {
+        const pr = est.porRel[code]; if (!pr) continue;
+        const arq = 'boss_' + code; let salvo = null;
+        if (!est.boss.lidos.has(code)) { salvo = await lerArq(arq); est.boss.lidos.add(code); if (salvo && salvo.v === C.VERSAO_BOSS) for (const id in salvo.lutas) { est.boss.dados[code + ':' + id] = salvo.lutas[id]; mudou = true; } }
+        const falt = ls.filter(l => l.rel === code && !est.boss.dados[code + ':' + l.id]).map(l => pr.rel.lutas.find(f => f.id === l.id)).filter(Boolean);
+        if (!falt.length) continue;
+        est.bossMsg = 'Baixando os eventos de ovo e o dano no coração (' + dataBR(pr.rel.inicio) + ')…'; if (est.aba === 'boss') desenhar();
+        const r = await C.buscarBoss(gql, pr.rel, falt);
+        salvo = salvo || (await lerArq(arq)); if (!salvo || salvo.v !== C.VERSAO_BOSS) salvo = { v: C.VERSAO_BOSS, lutas: {} };
+        for (const id in r) { salvo.lutas[id] = r[id]; est.boss.dados[code + ':' + id] = r[id]; }
+        await gravarArq(arq, salvo); mudou = true;
+      }
+      est.bossMsg = null;
+    } catch (e) { est.bossMsg = e.message === 'COTA' ? MSG_COTA : 'Erro ao baixar os dados do boss: ' + e.message; mudou = true; }
+    est.bossCarregando = false;
+    if (mudou && (est.aba === 'boss' || est.aba === 'mortes')) desenhar();
+  }
+  const faltaBoss = ls => temBoss() && ls.some(l => !est.boss.dados[l.rel + ':' + l.id]) && !est.bossMsg;
+  function cortesOvo(ls) { const m = {}; for (const l of ls) { const t = C.corteOvo(est.boss.dados[l.rel + ':' + l.id]); if (t != null) m[l.rel + ':' + l.id] = t; } return m; }
+
+  function abaBoss(ls) {
+    if (faltaBoss(ls)) carregarBoss(ls);
+    const r = C.ovosResumo(ls, est.boss.dados), cls = n => (ls.map(l => l.jogadores.find(x => x.nome === n)).find(Boolean) || {}).classe;
+    let h = est.bossMsg ? '<div class="aviso">' + esc(est.bossMsg) + '</div>' : '';
+    if (!r.analisadas) return h + '<p class="sub">Carregando os dados do boss…</p>';
+    h += '<h2>Ovos (' + hab('Noxious Shell') + ')</h2><div class="cards"><div class="card"><div class="k">Tries analisadas</div><div class="v">' + r.analisadas + '</div></div>' +
+      '<div class="card"><div class="k">Com ovo eclodido antes da hora</div><div class="v">' + r.com + '</div></div>' +
+      '<div class="card"><div class="k">Com 2 ou mais adds de ovo</div><div class="v">' + r.chamadas + '</div></div>' +
+      '<div class="card"><div class="k">Por encostar / por onda</div><div class="v">' + r.enc + ' / ' + r.onda + '</div></div></div>' +
+      '<div class="sub" style="margin-top:8px">Como é detectado: "encostou" é quando o carregador perde o ovo no mesmo instante em que toma ' + hab('Noxious Splash') + ' (os dois que aparecem juntos são o par que se encostou). "Onda" é quando ele perde o ovo ao ser atingido por ' + hab('Caustic Waves') + ', antes do fim normal daquela leva. O número de adds é estimado: um por carregador que perdeu o ovo. Tries com 2 ou mais contam como provável wipe chamado.</div>';
+    h += '<div class="duas"><div><h2>Quem eclodiu ovo</h2><table><tr><th>Jogador</th><th class="n">Tries carregando</th><th class="n">Encostou</th><th class="n">Tomou onda</th><th class="n">Eclodiu em</th></tr>' +
+      r.porJog.map(x => '<tr><td>' + selo(x.nome, cls(x.nome)) + '</td><td class="n">' + x.carregou + '</td><td class="n">' + x.encostou + '</td><td class="n">' + x.onda + '</td><td class="n">' + (x.carregou ? Math.round(100 * (x.encostou + x.onda) / x.carregou) + '% das tries' : '') + '</td></tr>').join('') + '</table>' +
+      '<div class="sub">Encostar envolve sempre duas pessoas; o log não diz qual das duas andou na direção da outra.</div></div>';
+    h += '<div><h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Adds</th><th>O que aconteceu</th></tr>' +
+      r.tries.map(t => '<tr><td>' + dataBR(t.l.data) + '</td><td class="n">' + t.l.id + '</td><td class="n">' + mmss(t.l.durS) + '</td><td class="n">' + t.adds + '</td><td>' +
+        t.b.ovos.map(o => '<div>' + mmss(o.t) + ' · ' + (o.tipo === 'encostou' ? 'encostaram: ' : 'onda: ') + o.culpados.map(esc).join(' + ') + '</div>').join('') + '</td></tr>').join('') + '</table></div></div>';
+    const co = C.coracao(ls, est.boss.dados), cols = co.amp.map((a, i) => i).filter(i => co.nJan[i] > 0);
+    h += '<h2>Burst no coração (' + hab('Venomous Heart', 1299526) + ')</h2>';
+    if (!cols.length) return h + '<p class="sub">Nenhuma try selecionada chegou ao primeiro coração (2:26).</p>';
+    h += '<div class="sub">DPS de cada jogador durante os 20s do coração, e quantas vezes isso é maior que o DPS médio dele na mesma try. Quem guarda os CDs de dano para a janela fica bem acima de 1×; quem fica perto ou abaixo de 1× gastou antes, estava em outra função (ovos, adds) ou morreu. É o dano total do jogador na janela, não só no coração.</div>' +
+      '<table><tr><th>Jogador</th><th>Spec</th>' + cols.map(i => '<th class="n">' + (i + 1) + 'º coração (' + mmss(co.amp[i].t) + '): tries</th><th class="n">DPS na janela</th><th class="n">vs. média dele</th>').join('') + '</tr>' +
+      co.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td>' + cols.map(i => { const w = x.jan[i]; return w ? '<td class="n">' + w.n + '</td><td class="n">' + num(w.dps) + '</td><td class="n">' + (w.rel < 1.2 ? '<span class="alerta">' : w.rel < w.raid * 0.7 ? '<span class="atencao">' : '<span>') + w.rel.toFixed(1).replace('.', ',') + '×</span></td>' : '<td class="n">—</td><td></td><td></td>'; }).join('') + '</tr>').join('') + '</table>' +
+      '<div class="sub">Mediana da raid no 1º coração: ' + ((co.linhas.find(x => x.jan[cols[0]]) || { jan: [] }).jan[cols[0]] || { raid: 0 }).raid.toFixed(1).replace('.', ',') + '×.</div>';
+    return h;
+  }
+
   // ---------- eventos ----------
   document.addEventListener('click', e => {
     const t = e.target;
@@ -479,6 +534,7 @@
     if (t.dataset.n) marcarNoites([t.dataset.n], t.checked);
     else if (t.dataset.sem) marcarNoites(est.catalogo.filter(r => C.semanaDe(r.inicio) === +t.dataset.sem).map(r => r.code), t.checked);
     else if (t.id === 'golpe') { est.golpe = t.value; desenhar(); }
+    else if (t.id === 'semChamado') { est.semChamado = t.checked; desenhar(); }
     else if (t.id === 'boss') { est.enc = t.value; est.fase = null; est.refs = undefined; est.refsMsg = null; carregarNota().then(desenhar); }
     else if (t.id === 'aoVivo') { if (t.checked) est.aoVivo = setInterval(() => carregar({ aoVivo: true }), 60000); else { clearInterval(est.aoVivo); est.aoVivo = null; } }
     else if (t.id === 'comDps') { est.comDps = t.checked; desenhar(); }

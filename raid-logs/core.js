@@ -158,11 +158,13 @@
   }
 
   // filtro: nome da habilidade; com ele, so entram as mortes iniciais causadas por ela (e as tries em que ocorreu).
-  function mortes(lutas, filtro) {
+  // cortes: { 'rel:id': t } descarta as mortes depois de t (wipe chamado).
+  function mortes(lutas, filtro, cortes) {
     const causas = {}, quem = {}, porTry = [];
     const wipes = lutas.filter(l => !l.kill);
     for (const l of wipes) {
-      const prim = l.mortes.slice(0, N_MORTES_WIPE - 1);
+      const lim = cortes ? cortes[l.rel + ':' + l.id] : null;
+      const prim = (lim != null ? l.mortes.filter(m => m.t <= lim + 1) : l.mortes).slice(0, N_MORTES_WIPE - 1);
       if (filtro && !prim.some(m => m.golpe === filtro)) continue;
       porTry.push({ l, prim });
       const vistos = new Set();
@@ -617,6 +619,101 @@
     return { cobertura: cob, sugs, nEntradas: raidE.length };
   }
 
+  // ---------- modulo do Ula'tek (3492): ovos e coracao ----------
+  const VERSAO_BOSS = 1;
+  const ULA = { casca: 1307612, respingo: 1307635, onda: 1292403 };
+  const temModulo = enc => enc === 3492;
+  // Baixa, para as lutas pedidas de um relatorio, os eventos de ovo e o dano por jogador ao longo da luta.
+  async function buscarBoss(gql, rel, lutasApi) {
+    const out = {}; for (const f of lutasApi) out[f.id] = { ovos: [], dano: null };
+    const fx = `ability.id=${ULA.respingo} and type in ('damage','applydebuff') or (ability.id=${ULA.casca} and type in ('applydebuff','removedebuff')) or (ability.id=${ULA.onda} and type='applydebuff')`;
+    let evs = [], ini = null;
+    for (let pag = 0; pag < 6; pag++) {
+      const d = await gql(`query($c:String!,$f:[Int],$fx:String,$s:Float){reportData{report(code:$c){events(fightIDs:$f,startTime:$s,dataType:All,limit:10000,filterExpression:$fx){data nextPageTimestamp}}}}`, { c: rel.code, f: lutasApi.map(f => f.id), fx, s: ini });
+      const e = d.reportData.report.events; evs = evs.concat(e.data || []);
+      if (!e.nextPageTimestamp) break; ini = e.nextPageTimestamp;
+    }
+    const nome = id => (rel.atores[id] || {}).nome || ('#' + id);
+    for (const f of lutasApi) {
+      const es = evs.filter(e => e.fight === f.id).map(e => ({ t: (e.timestamp - f.startTime) / 1000, tipo: e.type, hab: e.abilityGameID, alvo: nome(e.targetID) }));
+      const cascas = [], aberta = {};
+      for (const e of es) if (e.hab === ULA.casca) { if (e.tipo === 'applydebuff') aberta[e.alvo] = e.t; else if (aberta[e.alvo] != null) { cascas.push({ quem: e.alvo, a: aberta[e.alvo], b: e.t }); delete aberta[e.alvo]; } }
+      // fim natural de cada leva de ovos = a ultima casca a sair; quem sai junto com ela nao eclodiu por onda
+      for (const k of cascas) k.fimLeva = Math.max(...cascas.filter(o => Math.abs(o.a - k.a) < 45).map(o => o.b));
+      const casca = (quem, t) => cascas.find(k => k.quem === quem && k.a < t - 0.3 && Math.abs(k.b - t) <= 1.5);
+      const largou = (quem, t) => !!casca(quem, t);
+      const ovos = [], usados = new Set();
+      // encostou: Noxious Splash em quem estava carregando e perdeu a casca naquele instante
+      const resp = es.filter(e => e.hab === ULA.respingo);
+      for (const e of resp) {
+        if (ovos.some(o => o.tipo === 'encostou' && Math.abs(o.t - e.t) <= 1.5)) continue;
+        const grupo = [...new Set(resp.filter(x => Math.abs(x.t - e.t) <= 1.5).map(x => x.alvo))];
+        const culpados = grupo.filter(q => largou(q, e.t));
+        if (!culpados.length) continue;
+        culpados.forEach(q => usados.add(q + '|' + Math.round(e.t)));
+        ovos.push({ t: e.t, tipo: 'encostou', culpados, atingidos: grupo.filter(q => !culpados.includes(q)) });
+      }
+      // onda: Caustic Waves em quem estava carregando e perdeu a casca naquele instante (e nao foi por encostar)
+      for (const e of es.filter(x => x.hab === ULA.onda)) {
+        const k = casca(e.alvo, e.t); if (!k || k.fimLeva - k.b < 1.5) continue;
+        if (ovos.some(o => o.culpados.includes(e.alvo) && Math.abs(o.t - e.t) <= 2.5)) continue;
+        ovos.push({ t: e.t, tipo: 'onda', culpados: [e.alvo], atingidos: [] });
+      }
+      out[f.id].ovos = ovos.sort((a, b) => a.t - b.t);
+      out[f.id].carregaram = [...new Set(cascas.map(k => k.quem))];
+    }
+    // dano por jogador (so lutas que chegam no primeiro coracao)
+    const amp = BOSS[3492][5].amp, longas = lutasApi.filter(f => (f.endTime - f.startTime) / 1000 >= amp[0].t + 10);
+    for (let i = 0; i < longas.length; i += 8) {
+      const lote = longas.slice(i, i + 8);
+      const q = lote.map(f => `g${f.id}: graph(fightIDs:[${f.id}],startTime:${f.startTime},endTime:${f.endTime},dataType:DamageDone)`).join('\n');
+      const d = await gql(`query($c:String!){reportData{report(code:$c){${q}}}}`, { c: rel.code });
+      for (const f of lote) {
+        const durS = Math.max(1, Math.round((f.endTime - f.startTime) / 1000)), dano = {};
+        for (const s of ((((d.reportData.report['g' + f.id] || {}).data || {}).series) || [])) {
+          if (s.name === 'Total' || !s.type || s.type === 'NPC' || s.type === 'Pet') continue;
+          const v = reamostrar(s, f.startTime, durS);
+          dano[s.name] = { total: v.reduce((a, b) => a + b, 0), jan: amp.map(a => { const x = Math.round(a.t), y = Math.min(durS, x + a.dur); return y - x >= 8 ? { seg: y - x, soma: v.slice(x, y).reduce((p, q) => p + q, 0) } : null; }) };
+        }
+        out[f.id].dano = dano;
+      }
+    }
+    return out;
+  }
+  const addsDeOvo = b => b ? b.ovos.reduce((a, o) => a + o.culpados.length, 0) : 0;
+  // Momento em que a try "virou wipe chamado": quando nasce o 2o add de ovo.
+  function corteOvo(b) { if (!b) return null; let n = 0; for (const o of b.ovos) { n += o.culpados.length; if (n >= 2) return o.t; } return null; }
+  function ovosResumo(lutas, dados) {
+    const porJog = {}, tries = []; let com = 0, chamadas = 0, enc = 0, onda = 0;
+    for (const l of lutas) {
+      const b = dados[l.rel + ':' + l.id]; if (!b) continue;
+      for (const q of b.carregaram || []) (porJog[q] = porJog[q] || { nome: q, carregou: 0, encostou: 0, onda: 0 }).carregou++;
+      if (!b.ovos.length) continue; com++;
+      if (corteOvo(b) != null) chamadas++;
+      for (const o of b.ovos) { if (o.tipo === 'encostou') enc++; else onda++; for (const q of o.culpados) { const x = porJog[q] = porJog[q] || { nome: q, carregou: 0, encostou: 0, onda: 0 }; x[o.tipo]++; } }
+      tries.push({ l, b, adds: addsDeOvo(b), corte: corteOvo(b) });
+    }
+    return { analisadas: lutas.filter(l => dados[l.rel + ':' + l.id]).length, com, chamadas, enc, onda, tries,
+      porJog: Object.values(porJog).filter(x => x.encostou + x.onda > 0).sort((a, b) => (b.encostou + b.onda) - (a.encostou + a.onda)) };
+  }
+  // Burst no coracao: DPS de cada jogador na janela do Venomous Heart contra o proprio DPS medio na try.
+  function coracao(lutas, dados) {
+    const amp = BOSS[3492][5].amp, g = {};
+    for (const l of lutas) {
+      const b = dados[l.rel + ':' + l.id]; if (!b || !b.dano) continue;
+      const fim = Math.max(1, Math.min(l.durS, tWipe(l)));
+      for (const j of l.jogadores) {
+        const d = b.dano[j.nome]; if (j.papel !== 'dps' || !d || d.total <= 0) continue;
+        const base = d.total / l.durS;
+        d.jan.forEach((w, i) => { if (!w || Math.round(amp[i].t) + 8 > fim) return; const x = g[j.nome] = g[j.nome] || { nome: j.nome, classe: j.classe, spec: j.spec, jan: amp.map(() => ({ dps: [], rel: [] })) }; x.jan[i].dps.push(w.soma / w.seg); x.jan[i].rel.push(w.soma / w.seg / base); });
+      }
+    }
+    const linhas = Object.values(g).map(x => ({ nome: x.nome, classe: x.classe, spec: x.spec, jan: x.jan.map(w => w.dps.length >= 2 ? { n: w.dps.length, dps: mediana(w.dps), rel: mediana(w.rel) } : null) })).filter(x => x.jan.some(Boolean));
+    const nJan = amp.map((_, i) => linhas.filter(x => x.jan[i]).length);
+    for (let i = 0; i < amp.length; i++) { const rs = linhas.filter(x => x.jan[i]).map(x => x.jan[i].rel); const m = mediana(rs); for (const x of linhas) if (x.jan[i]) x.jan[i].raid = m; }
+    return { amp, linhas: linhas.sort((a, b) => ((a.jan[0] || {}).rel || 9) - ((b.jan[0] || {}).rel || 9)), nJan };
+  }
+
   // Resumo dos CDs de um jogador: usos por try contra o maximo que o cooldown permitiria.
   function cdsDoJogador(lutas, nome) {
     const out = {};
@@ -629,5 +726,5 @@
     return Object.values(out).sort((a, b) => a.cd - b.cd);
   }
 
-  return { semanaDe, sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
+  return { VERSAO_BOSS, temModulo, buscarBoss, ovosResumo, coracao, corteOvo, addsDeOvo, semanaDe, sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
 });

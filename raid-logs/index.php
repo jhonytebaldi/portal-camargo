@@ -91,6 +91,7 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
       <button class="aba" data-aba="healers">Healers e pessoais</button>
       <button class="aba" data-aba="plano">Plano e note</button>
       <button class="aba" data-aba="ultima">Última try</button>
+      <button class="aba" data-aba="boss" id="abaBoss" hidden>Boss</button>
     </div>
     <div id="conteudo"></div>
   </div>
