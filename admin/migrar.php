@@ -209,6 +209,10 @@ try {
     require_once dirname(__DIR__) . '/raid-logs/schema.php';
     foreach (rl_migrar($pdo) as $f) $feitos[] = 'raid-logs: ' . $f;
 
+    // ---- Área do Construtor (construtor/schema.php): páginas por construtora + permissões -----
+    require_once dirname(__DIR__) . '/construtor/schema.php';
+    foreach (co_migrar($pdo) as $f) $feitos[] = 'area-construtor: ' . $f;
+
     $ok = true; $erro = '';
 } catch (Throwable $e) { $ok = false; $erro = $e->getMessage(); }
 

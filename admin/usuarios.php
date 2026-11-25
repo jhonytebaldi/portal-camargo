@@ -44,15 +44,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $users = $pdo->query('SELECT id,nome,login,papel,ativo,broker_id,ativacao_token,senha_hash FROM users ORDER BY nome')->fetchAll();
 $tools = $pdo->query('SELECT id,nome,slug FROM tools WHERE ativo=1 ORDER BY ordem,nome')->fetchAll();
 $teams = $pdo->query('SELECT id,nome FROM teams ORDER BY nome')->fetchAll();
+// Área do Construtor: páginas por construtora (tabela criada em /admin/migrar.php)
+try { $coPags = $pdo->query('SELECT slug,nome FROM co_paginas WHERE ativo=1 ORDER BY ordem,nome')->fetchAll(); } catch (Throwable $e) { $coPags = []; }
 $brokers = $pdo->query('SELECT id,nome,email FROM brokers WHERE ativo=1 ORDER BY nome')->fetchAll();
 $semUser = $pdo->query('SELECT id,nome,email FROM brokers WHERE ativo=1 AND id NOT IN (SELECT broker_id FROM users WHERE broker_id IS NOT NULL) ORDER BY nome')->fetchAll();
 
-$edit=null; $uTools=[]; $uTeams=[];
+$edit=null; $uTools=[]; $uTeams=[]; $uCo=[];
 if (isset($_GET['id'])) {
     $st=$pdo->prepare('SELECT * FROM users WHERE id=?'); $st->execute([(int)$_GET['id']]); $edit=$st->fetch();
     if ($edit){
         $st=$pdo->prepare('SELECT tool_id FROM user_tools WHERE user_id=?'); $st->execute([$edit['id']]); $uTools=array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN));
         $st=$pdo->prepare('SELECT team_id FROM user_teams WHERE user_id=?'); $st->execute([$edit['id']]); $uTeams=array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN));
+        if($coPags){ $st=$pdo->prepare('SELECT slug FROM co_user_paginas WHERE user_id=?'); $st->execute([$edit['id']]); $uCo=$st->fetchAll(PDO::FETCH_COLUMN); }
     }
 }
 admin_header('usuarios', $u);
@@ -132,6 +135,12 @@ admin_header('usuarios', $u);
       <?php if(!$teams): ?><span class="mut">Nenhuma equipe.</span><?php endif; ?>
       <?php foreach($teams as $t): ?><label class="perm"><input type="checkbox" class="ck" data-kind="team" data-id="<?= (int)$t['id'] ?>" <?= in_array((int)$t['id'],$uTeams,true)?'checked':'' ?>> <?= h($t['nome']) ?></label><?php endforeach; ?>
     </div>
+    <?php if($coPags): ?>
+    <div><h3 style="font-size:13px;margin:8px 0">Construtoras que pode ver (Área do Construtor)</h3>
+      <?php foreach($coPags as $cp): ?><label class="perm"><input type="checkbox" class="ck" data-kind="construtor" data-id="<?= h($cp['slug']) ?>" <?= in_array($cp['slug'],$uCo,true)?'checked':'' ?>> <?= h($cp['nome']) ?></label><?php endforeach; ?>
+      <p class="mut" style="font-size:12px;margin:6px 0 0">Marque também a ferramenta "Área do Construtor". O construtor só vê; distratos e dados são só do admin.</p>
+    </div>
+    <?php endif; ?>
   </div>
   <?php if($edit['broker_id']): ?><p class="mut" style="margin-top:8px">Este usuário vê os próprios dados no Painel automaticamente (além das equipes marcadas).</p><?php endif; ?>
   <?php if($edit['papel']==='admin'): ?><p class="mut" style="margin-top:4px">Obs.: admin já enxerga todas as ferramentas e equipes.</p><?php endif; ?>
@@ -139,8 +148,8 @@ admin_header('usuarios', $u);
 <script>
 const CSRF=document.querySelector('meta[name=csrf]').content; const UID=<?= (int)$edit['id'] ?>;
 document.querySelectorAll('.ck').forEach(ck=> ck.addEventListener('change', async ()=>{
-  const kind=ck.dataset.kind, on=ck.checked?'1':'0'; const action= kind==='tool'?'user_tool':'user_team';
-  const body={action, user_id:UID, on, csrf:CSRF}; body[kind==='tool'?'tool_id':'team_id']=ck.dataset.id;
+  const kind=ck.dataset.kind, on=ck.checked?'1':'0'; const action= kind==='tool'?'user_tool':kind==='construtor'?'user_construtor':'user_team';
+  const body={action, user_id:UID, on, csrf:CSRF}; body[kind==='tool'?'tool_id':kind==='construtor'?'slug':'team_id']=ck.dataset.id;
   const r=await fetch('/admin/acao.php',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
   const j=await r.json(); if(!j.ok){ alert(j.msg||'erro'); ck.checked=!ck.checked; }
 }));

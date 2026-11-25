@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monteluce · Área do Construtor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Ubuntu:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: extrato de obra da Imobiliária Camargo para o construtor — sóbrio, números primeiro
+   IDEA: o "espelho de vendas" e a programação de recebíveis que a imobiliária já entrega, com a marca Camargo
+   PICTURE: uma barra única do VGV vendido mostrando de onde vem cada real (comissão, entrada, repasse do financiamento), depois barras mensais
+   COLOUR and TYPE: azul royal do Instagram Camargo #2A4797 (GBRAC), dourado das estrelas #F2B705 (Camargo), azul-céu #5FA0FF (financiamento); Barlow Condensed como os títulos dos posts + Ubuntu do site
+   LAYOUT: faixa marinho com conclusão e composição do VGV, gráfico mensal, espelho + alertas, composição por unidade, matriz unidade × mês, ficha lateral */
+:root{color-scheme:light;--bg:light-dark(#ffffff,#0d1838);--ink:light-dark(#121a3a,#eef2ff);--mut:light-dark(#5a6385,#a9b4d8);--line:light-dark(#e2e6f2,#25335f);--soft:light-dark(#f3f6fc,#142049);--navy:#2a4797;--acc:#f2b705;--disp:#1fa874;--gb:light-dark(#2a4797,#8fa8ff);--cm:light-dark(#8d97b3,#7e88a8);--fin:light-dark(#5fa0ff,#4f8fef);--cub:light-dark(#b9d6ff,#2f5fae);--late:#e5484d;--lateBg:light-dark(#fde4e4,#4a1d25);--ok:light-dark(#e6f4ea,#173326)}
+:root,:root[data-theme=light],:root[data-theme=dark]{color-scheme:light}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Ubuntu,system-ui,sans-serif;overflow-x:clip}
+.band{padding:clamp(24px,4vw,56px) max(5vw,16px)}.wrap{max-width:1240px;margin:0 auto}
+h1,h2,.big{font-family:"Barlow Condensed","Arial Narrow",sans-serif;font-weight:700;line-height:1.02;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,4vw,44px);text-transform:uppercase;font-weight:700}h1 b{font-weight:700}h2{font-size:clamp(26px,3.2vw,36px);margin-bottom:6px;text-transform:uppercase}
+.kick{color:var(--mut);font-size:15px;margin:0 0 10px}.mut{color:var(--mut)}.sm{font-size:13px}
+.hero{background:linear-gradient(160deg,#2f50a6 0%,#2a4797 45%,#1d3270 100%);color:#fff}.hero .kick{color:#d3ddf7}.hero h1 b{color:var(--acc)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:18px;font:700 13px Ubuntu;letter-spacing:.02em;color:#d3ddf7}.brand svg{flex:none}
+.vgv{margin-top:28px}.hon{display:block;position:absolute;left:0;top:0;bottom:0;background:repeating-linear-gradient(135deg,rgba(255,255,255,.0) 0 5px,rgba(255,255,255,.55) 5px 8px),#7d89a8}.hon.sw{position:static;display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:8px}
+.honbar{display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;margin-top:18px;padding:12px 16px;border-radius:10px;background:rgba(255,255,255,.08);font-size:14px;color:#d3ddf7}.honbar b{color:#fff;font-weight:500}.honbar small{font-size:13px;color:#b7c4ea}.honlab{color:#fff}
+.faixa{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:14px max(5vw,16px);background:var(--soft);border-bottom:1px solid var(--line);font-size:14px}.faixa .tag{margin:0 4px 0 0}.faixa a{color:var(--gb);font-weight:500;margin-left:auto}.vgvbar{display:flex;height:34px;border-radius:10px;overflow:hidden;background:#1d3270;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.vgvbar div{height:100%;position:relative}.vgvleg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:4px 18px;margin-top:14px}
+.vgvleg div{border-top:3px solid;padding-top:4px;font-size:14px}.vgvleg b{font-weight:500;white-space:nowrap}.vgvleg small{display:block;font-size:13px;color:#d3ddf7}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:0 24px;margin-top:22px}
+.kpi{padding:12px 0 4px;border-top:3px solid rgba(255,255,255,.85)}.kpi .big{font-size:clamp(30px,3.4vw,44px);white-space:nowrap;color:#fff}.kpi:first-child .big{color:var(--acc)}.kpi small b{color:#fff}.kpi small{display:block;font-size:13px;color:#d3ddf7}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button,.btn{font:500 15px Ubuntu;min-height:44px;padding:0 16px;border:0;background:var(--bg);color:var(--ink);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--gb);color:#fff}
+.btn{border:1px solid var(--line);border-radius:10px}.btn:focus-visible,.seg button:focus-visible,input:focus-visible,select:focus-visible,td.u:focus-visible,.cell:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+label.chk{display:inline-flex;gap:8px;align-items:center;min-height:44px;font-size:15px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--mut)}.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.fig{position:relative;min-height:340px}.fig>svg{position:absolute;inset:0;width:100%;height:100%}
+.readout{min-height:52px;font-size:15px;margin-top:8px}.readout b{font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(20px,4vw,48px)}
+@media(max-width:860px){.two{grid-template-columns:minmax(0,1fr)}}
+.mapa{display:grid;grid-template-columns:44px repeat(6,minmax(0,1fr));gap:4px;margin-top:12px}
+.mapa .fl{font-size:13px;color:var(--mut);align-self:center}
+.cell{border:0;border-radius:6px;min-height:52px;padding:6px;font:700 14px Ubuntu;text-align:left;cursor:pointer;color:#fff;background:var(--disp);line-height:1.2;border:1px solid transparent}
+.cell .sh{display:none}.cell span{display:block;font-weight:400;font-size:12px;opacity:.85;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.cell.vendida{background:var(--gb);color:#fff;border-color:transparent}.cell.permuta{background:var(--mut);color:var(--bg);border-color:transparent}.cell.reservada{background:repeating-linear-gradient(45deg,#e3f6ec 0 6px,#a8e0c4 6px 12px);border-color:#7fcfa6;color:#121a3a}
+.cell.atraso{box-shadow:inset 0 0 0 3px var(--late)}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+th{font-size:13px;color:var(--mut);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.comp{display:grid;gap:6px;margin-top:14px}.comp .r{display:grid;grid-template-columns:120px minmax(0,1fr) 110px;gap:10px;align-items:center;font-size:13px;cursor:pointer}
+.comp .r b{font-size:14px}.comp .hl{height:3px;margin-top:2px;background:var(--cm);border-radius:2px}.comp .tr{display:flex;height:20px;border-radius:4px;overflow:hidden;background:var(--soft)}.comp .tr div{height:100%}
+@media(max-width:600px){.comp .r{grid-template-columns:70px minmax(0,1fr)}.comp .r .n{display:none}}
+.mx{border-collapse:separate;border-spacing:0;font-size:13px;width:max-content}
+.mx th,.mx td{padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.mx .st{position:sticky;left:0;background:var(--bg);z-index:2;min-width:52px}.mx .st2{width:170px;min-width:170px;max-width:170px;overflow:hidden;text-overflow:ellipsis}.mx:not(.full) .st3{position:sticky;left:222px;background:var(--bg);z-index:2;box-shadow:6px 0 8px -6px rgba(18,26,58,.18)}.mx:not(.full) thead .st3{z-index:3}.mx:not(.full) tfoot .st3{background:var(--soft)}.mx:not(.full) .st2{box-shadow:none}.mx .st2{position:sticky;left:52px;background:var(--bg);z-index:2;box-shadow:6px 0 8px -6px rgba(18,26,58,.18)}.mx thead .st2{z-index:3}.mx tfoot .st2{background:var(--soft)}.mx thead th{position:sticky;top:0;background:var(--bg);z-index:1}.mx thead .st{z-index:3}
+.mx .hc{color:var(--mut)}.mx:not(.full) .x{display:none}.btn.dl{background:var(--gb);color:#fff;border-color:transparent}.btn.dl:disabled{opacity:.6}.mx td.m{text-align:right;font-variant-numeric:tabular-nums;min-width:66px}
+.mx td.pg{background:var(--ok)}.mx td.lt{background:var(--lateBg);color:var(--late);font-weight:700}.mx td.dv{color:var(--late);font-weight:700}.mx td.fn{background:var(--fin);color:#fff;font-weight:700}
+.mx th.now,.mx td.now{border-left:2px solid var(--acc)}
+.mx tr.dis td:not(.st){color:var(--mut);text-decoration:line-through}.mx tr.vazio td{color:var(--mut)}
+.mx tfoot td{font-weight:700;border-top:2px solid var(--ink);background:var(--soft)}.mx tfoot .st{background:var(--soft)}
+td.u{cursor:pointer;font-weight:700}td.u:hover{color:var(--gb)}
+.tag{display:inline-block;font-size:12px;font-weight:500;padding:1px 8px;border-radius:99px;background:var(--soft);color:var(--mut);margin-left:6px;text-decoration:none;white-space:nowrap}
+.tag.r{background:var(--late);color:#fff}.tag.o{background:var(--acc);color:#121a3a}.tag.p{background:var(--fin);color:#fff}
+#ficha{position:fixed;inset:0 0 0 auto;width:min(660px,100%);background:var(--bg);border-left:1px solid var(--line);box-shadow:-20px 0 60px rgba(13,24,56,.25);transform:translateX(105%);transition:transform .25s;overflow-y:auto;z-index:20;padding:24px max(4vw,16px)}
+#ficha.on{transform:none}@media(prefers-reduced-motion:reduce){#ficha{transition:none}}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}.facts div{border-top:1px solid var(--line);padding-top:6px;font-size:14px}.facts b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+fieldset{border:1px solid var(--line);border-radius:12px;padding:14px;margin:18px 0}legend{font-weight:700;padding:0 6px}
+.frm{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.frm label{font-size:13px;color:var(--mut);display:grid;gap:4px}
+input,select{font:16px Ubuntu;min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.cubg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;margin:16px 0}.cubg>div{border:1px solid var(--line);border-radius:12px;padding:14px}.cubg .big{font-size:30px;color:var(--gb)}.cubg small{display:block;color:var(--mut);font-size:13px}details summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:500;color:var(--gb)}
+.note{background:var(--soft);border-left:3px solid var(--acc);border-radius:6px;padding:10px 14px;font-size:14px;margin:10px 0}
+@media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mut)}.stack td:empty{display:none}.mapa{grid-template-columns:22px repeat(6,minmax(0,1fr));gap:3px}.mapa .fl{font-size:11px}.cell{padding:5px 3px;font-size:12px;min-height:44px;overflow:hidden}.cell span{font-size:9.5px;letter-spacing:-.03em;white-space:nowrap;overflow:visible;text-overflow:clip}.cell .lg{display:none}.cell .sh{display:block}}
+</style><script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script></head><body>
+
+<header class="band hero"><div class="wrap">
+  <div class="brand"><svg width="22" height="28" viewBox="0 0 22 28" aria-hidden="true"><path d="M11 0C4.9 0 0 4.9 0 11c0 8.2 11 17 11 17s11-8.8 11-17C22 4.9 17.1 0 11 0z" fill="#fff"/><circle cx="11" cy="11" r="4.5" fill="#2a4797"/></svg>IMOBILIÁRIA CAMARGO · ÁREA DO CONSTRUTOR</div>
+  <h1>Monteluce Residence</h1>
+  <p class="kick" style="margin-top:8px">GBRAC Construtora · Rua São José do Cerrito, 285, Petrópolis, Joinville · entrega prevista dez/2028</p>
+  <div class="kpis" id="kpis"></div>
+  <div class="vgv"><div class="vgvbar" id="vgvbar" role="img" aria-label="Linha do tempo do valor vendido: recebido, entrada a receber, financiamento e CUB"></div><div class="vgvleg" id="vgvleg"></div></div>
+  <div class="honbar" id="hon"></div>
+</div></header>
+<div class="faixa" id="faixa" role="status"></div>
+
+<section class="band"><div class="wrap">
+  <h2>Recebíveis mês a mês</h2>
+  <p class="kick">Cor sólida = já recebido, tom claro = programado. Vermelho = parcela vencida sem baixa. O repasse do financiamento aparece cortado no topo, com o valor escrito.</p>
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Visão do gráfico"><button data-v="total" aria-pressed="true">Total</button><button data-v="gb" aria-pressed="false">Líquido GBRAC</button><button data-v="cm" aria-pressed="false">Só honorários</button></div>
+    <label class="chk"><input type="checkbox" id="incFin" checked> Incluir repasse do financiamento</label>
+    <label class="chk"><input type="checkbox" id="acum"> Mostrar acumulado</label>
+  </div>
+  <div class="legend"><span><i style="background:var(--gb)"></i>Parcelas da entrada (GBRAC)</span><span><i style="background:var(--cm)"></i>Honorários Camargo</span><span><i style="background:var(--fin)"></i>Financiamento + CUB estimado (na entrega)</span><span><i style="background:var(--late)"></i>Vencido sem baixa</span></div>
+  <div class="fig" id="fig"><svg id="chart" role="img" aria-label="Gráfico de recebíveis por mês"></svg></div>
+  <div class="readout" id="readout"></div>
+</div></section>
+
+<section class="band" style="background:var(--soft)"><div class="wrap two">
+  <div><h2>Espelho de vendas</h2><p class="kick" id="mapaSub"></p>
+    <div class="legend"><span><i style="background:var(--gb)"></i>Vendida</span><span><i style="background:var(--mut)"></i>Permuta</span><span><i style="background:repeating-linear-gradient(45deg,#e3f6ec 0 3px,#a8e0c4 3px 6px)"></i>Reservada</span><span><i style="background:var(--disp)"></i>Disponível</span><span><i style="box-shadow:inset 0 0 0 2px var(--late)"></i>Com atraso</span></div>
+    <div class="mapa" id="mapa"></div></div>
+  <div id="atencao"><h2>Atenção</h2><p class="kick">Atrasos, distratos e vendas sem ficha. Clique para abrir a ficha.</p>
+    <table class="stack"><thead><tr><th>Unid.</th><th>Situação</th><th class="n">Valor</th><th>Data</th></tr></thead><tbody id="alertas"></tbody></table></div>
+</div></section>
+
+<section class="band"><div class="wrap">
+  <h2>Quanto cada comprador já pagou e ainda vai pagar</h2>
+  <p class="kick">Preço do contrato de cada unidade ao longo do tempo: o que já entrou, a entrada que falta, o financiamento na entrega e a correção do CUB estimada. Barra cinza fina = parte que vai para os honorários.</p>
+  <div class="legend"><span><i style="background:var(--gb)"></i>Recebido</span><span><i style="background:var(--gb);opacity:.35"></i>Entrada a receber</span><span><i style="background:var(--fin)"></i>Financiamento</span><span><i style="background:var(--cub)"></i>Correção CUB (estimativa)</span><span><i style="background:var(--cm)"></i>Honorários (dentro da entrada)</span></div>
+  <div class="comp" id="comp"></div>
+</div></section>
+
+<section class="band" style="padding-top:0" id="cub"><div class="wrap">
+  <h2>Correção pelo CUB</h2>
+  <p class="kick" style="max-width:860px">Os contratos preveem que o <b>saldo financiado</b> seja corrigido pela variação positiva do CUB médio (Sinduscon da Grande Florianópolis) até o repasse. O percentual da variação cobrado do comprador <b>não é igual em todos</b>: foi negociado caso a caso, conforme a tabela. Os valores abaixo são <b>estimativas</b>.</p>
+  <div class="cubg" id="cubg"></div>
+  <details><summary>Ver o cálculo de cada unidade</summary><div class="scroll"><table class="stack" id="cubt"></table></div></details>
+  <p class="sm mut" id="cubnota2"></p>
+</div></section>
+
+<section class="band" style="padding-top:0"><div class="wrap">
+  <h2>Programação de recebíveis por unidade</h2>
+  <p class="kick">Cada coluna é um mês, alinhada ao início do pagamento; a linha dourada marca o mês atual. Verde = recebido, vermelho = vencido, azul-claro = repasse do financiamento, riscado = distrato.</p>
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Valor nas células"><button data-v="total" aria-pressed="true">Total</button><button data-v="gb" aria-pressed="false">Líquido GBRAC</button><button data-v="cm" aria-pressed="false">Só honorários</button></div>
+    <label class="chk"><input type="checkbox" id="mxFin" checked> Incluir financiamento</label>
+    <label class="chk"><input type="checkbox" id="soVend" checked> Só unidades com fluxo</label>
+    <label class="chk"><input type="checkbox" id="soFut"> Só a partir deste mês</label>
+    <label class="chk"><input type="checkbox" id="mxRes"> Mostrar colunas de resumo</label>
+  </div>
+  <div class="bar" style="margin-top:-6px"><button class="btn dl" id="dlXls">Baixar Excel (.xlsx)</button><button class="btn dl" id="dlPdf">Baixar PDF paginado</button><span class="sm mut" id="dlMsg">Os arquivos saem com todas as colunas, todas as unidades e o fluxo completo até o repasse.</span></div>
+</div>
+<div class="scroll" style="max-width:1240px;margin:0 auto"><table class="mx" id="mx"></table></div>
+</section>
+
+<footer class="band" style="background:var(--soft)"><div class="wrap sm mut">
+  <p id="rod"></p>
+  <p>Como os números foram montados: preço, entrada e saldo vêm dos contratos de reserva assinados (Drive). As parcelas da entrada, a divisão Camargo/GBRAC e as baixas vêm da planilha "Fluxo Financeiro GBRAC". O saldo (FGTS + financiamento bancário) é 100% GBRAC e foi datado na previsão de entrega, dez/2028, para todas as unidades. Parcela "Assinatura" sem data foi datada pela venda. As vendas 406 e 505 ainda não têm ficha na planilha: a divisão delas é estimada. Status das unidades conforme a Tabela de Vendas (Atualização 03).</p>
+  <p id="cubnota"></p>
+</div></footer>
+
+<aside id="ficha" aria-hidden="true" aria-label="Ficha da unidade"></aside>
+
+<script>
+{
+const DATA=__DATA__;
+const HOJE=new Date().toISOString().slice(0,10), MES=HOJE.slice(0,7);
+const brl=v=>(v<0?'−':'')+'R$ '+Math.abs(Math.round(v)).toLocaleString('pt-BR');
+const kf=v=>{const a=Math.abs(v);return (v<0?'−':'')+(a>=1e6?(a/1e6).toLocaleString('pt-BR',{maximumFractionDigits:2})+' mi':a>=1e3?(a/1e3).toLocaleString('pt-BR',{maximumFractionDigits:0})+' mil':Math.round(a)+'')};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const MN=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+const ml=k=>MN[+k.slice(5,7)-1]+'/'+k.slice(2,4);
+const fd=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'—';
+let view='total', mxView='total';
+let OV={};if(!window.CO_API){try{OV=JSON.parse(localStorage.getItem('monteluce-ov2')||'{}')}catch(e){}}
+const key=c=>c.u+'|'+c.cli;
+const C=DATA.C.map(c=>{const o=OV[key(c)];if(o){c.st=o.st;c.dis=o.dis}return c});
+const ativo=c=>c.st==='vendida';
+
+function parcelas(c,fin=true){
+  let out=c.P.map(p=>({d:p[0],v:p[1],cm:p[2],gb:p[3],pg:p[4],t:p[5],obs:p[6]}));
+  out.forEach(p=>p.s=p.pg==='sim'?'pago':p.pg==='nd'?'nd':p.d<HOJE?'atraso':'futuro');
+  if(c.st==='distrato'&&c.dis){
+    const dd=c.dis.data||HOJE;
+    out.forEach(p=>{if(p.s!=='pago')p.s='cancelada'});
+    if(c.dis.dev>0){
+      const parts=c.dis.parc&&c.dis.parc.length?c.dis.parc:[[dd,c.dis.dev]];
+      const rec=out.filter(p=>p.s==='pago');const rcm=rec.reduce((a,p)=>a+p.cm,0),rgb=rec.reduce((a,p)=>a+p.gb,0),t=rcm+rgb||1;
+      parts.forEach(([d,v])=>{let cm=0,gb=0;if(c.dis.quem==='camargo')cm=v;else if(c.dis.quem==='prop'){cm=v*rcm/t;gb=v*rgb/t}else gb=v;
+        out.push({d,v:-v,cm:-cm,gb:-gb,t:'devolucao',s:d<=HOJE?'pago':'futuro',obs:'Devolução ao cliente (distrato)'})});
+    }
+  } else if(fin&&c.fin){out.push({d:c.entrega,v:c.fin,cm:0,gb:c.fin,t:'financiamento',s:c.entrega<HOJE?'atraso':'futuro',obs:'Saldo via FGTS + financiamento bancário (valor nominal do contrato)'});
+    if(c.cub&&c.cub.corr)out.push({d:c.entrega,v:c.cub.corr,cm:0,gb:c.cub.corr,t:'cub',s:'futuro',obs:`ESTIMATIVA: ${c.cub.pct}% da variação do CUB sobre o saldo, base ${ml(c.cub.base)} (${(c.cub.total*100).toFixed(1).replace('.',',')}% acumulado estimado até dez/28)`})}
+  return out.sort((a,b)=>a.d<b.d?-1:1);
+}
+const FIN=p=>p.t==='financiamento'||p.t==='cub';
+const pick=(p,v)=>v==='gb'?p.gb:v==='cm'?p.cm:p.v;
+function all(fin=true){const r=[];C.forEach(c=>parcelas(c,fin).forEach(p=>r.push(Object.assign({c},p))));return r}
+
+function topo(){
+  const A=all().filter(p=>p.s!=='cancelada'&&ativo(p.c));const at=C.filter(ativo);
+  const sum=(f,v)=>A.filter(f).reduce((a,p)=>a+pick(p,v),0);
+  const rec=p=>p.s==='pago',ar=p=>p.s!=='pago',ent=p=>!FIN(p);
+  const vgv=at.reduce((a,c)=>a+(c.preco||0),0),nU=new Set(at.map(c=>c.u)).size;
+  const R=sum(rec,'total'),Rg=sum(rec,'gb'),Rc=sum(rec,'cm');
+  const F=sum(ar,'total'),Fg=sum(ar,'gb'),Fc=sum(ar,'cm');
+  const eF=sum(p=>ar(p)&&ent(p),'total'),eFc=sum(p=>ar(p)&&ent(p),'cm'),fin=sum(p=>p.t==='financiamento','total'),cub=sum(p=>p.t==='cub','total');
+  const fimHon=at.filter(c=>!c.est).flatMap(c=>parcelas(c).filter(p=>p.cm>0).map(p=>p.d)).sort().at(-1);
+  const TB=DATA.tabela,perm=Object.entries(TB).filter(([u,x])=>/PERMUT/.test(x.status)).map(([u])=>u);const estq=Object.entries(TB).filter(([u,x])=>!at.some(c=>c.u==u)&&!/PERMUT/.test(x.status));const vEst=estq.reduce((a,[u,x])=>a+(x.vigente||x.antiga||0),0);
+  const big=[['Já recebido',R,`líquido GBRAC <b>${brl(Rg)}</b>`],['A receber',F,`líquido GBRAC <b>${brl(Fg)}</b> · inclui ${brl(cub)} de CUB estimado`],['VGV vendido',vgv,`${nU} unidades com contrato ativo`],['VGV total da obra',vgv+vEst,`${nU+estq.length+perm.length} unidades: <b>${nU} vendidas</b> · <b>${estq.filter(([u,x])=>!/RESERV/.test(x.status)).length} disponíveis</b> · ${estq.filter(([u,x])=>/RESERV/.test(x.status)).length} reservadas · ${perm.length} permutas (fora do VGV). Estoque a preço da tabela atual: ${brl(vEst)}`]];
+  document.getElementById('kpis').innerHTML=big.map(x=>`<div class="kpi"><small>${x[0]}</small><div class="big">${brl(x[1])}</div><small>${x[2]}</small></div>`).join('');
+  // barra por tempo, honorários hachurados dentro dos blocos
+  const parts=[['Recebido',R,Rc,'var(--gb)','#fff'],['Entrada a receber',eF,eFc,'#8ea7e6','#fff'],['Financiamento na entrega',fin,0,'var(--fin)'],['Correção CUB (estimativa)',cub,0,'var(--cub)']];
+  const tot=parts.reduce((a,p)=>a+p[1],0);
+  document.getElementById('vgvbar').innerHTML=parts.map(p=>`<div style="width:${p[1]/tot*100}%;background:${p[3]}" title="${esc(p[0])}: ${esc(brl(p[1]))}">${p[2]?`<i class="hon" style="width:${p[2]/p[1]*100}%"></i>`:''}</div>`).join('');
+  document.getElementById('vgvleg').innerHTML=parts.map(p=>`<div style="border-color:${p[3]}"><small>${p[0]}</small><b>${brl(p[1])}</b> <small style="display:inline">${Math.round(p[1]/tot*100)}%</small></div>`).join('');
+  const vgvAll=at.reduce((a,c)=>a+(c.preco||0),0),bon=at.filter(c=>!c.est).reduce((a,c)=>a+((DATA.bonus||{})[c.u]||0),0),hon=Rc+Fc,honS=hon-bon,pc=v=>(v/vgvAll*100).toFixed(1).replace('.',',')+'%';
+  document.getElementById('hon').innerHTML=`<span class="honlab"><i class="hon sw"></i>Honorários Camargo <small>(já inclusos nos valores acima)</small></span><span>Honorários <b>${brl(honS)}</b></span><span>Bonificações <b>${brl(bon)}</b> <small>${pc(bon)}</small></span><span>Já repassados <b>${brl(Rc)}</b></span><span>A repassar <b>${brl(Fc)}</b></span>`;
+  // faixa de atenção
+  const L=A.filter(p=>p.s==='atraso'&&ent(p)),nl=new Set(L.map(p=>p.c.u)).size;
+  const dis=C.filter(c=>c.st==='distrato'),devP=dis.reduce((a,c)=>a+parcelas(c).filter(p=>p.t==='devolucao'&&p.s==='futuro').reduce((x,p)=>x-p.v,0),0);
+  const est=C.filter(c=>c.est&&ativo(c));
+  document.getElementById('faixa').innerHTML=`<span><span class="tag r">${brl(sum(p=>p.s==='atraso'&&ent(p),'total'))} vencidos</span> em ${nl} unidade${nl>1?'s':''}</span><span><span class="tag r">${dis.length} distratos</span>${devP?` · ${brl(devP)} de devolução ainda a pagar`:''}</span>${est.length?`<span><span class="tag o">${est.length} vendas novas</span> ainda sem ficha na planilha</span>`:''}<a href="#atencao">Ver detalhes</a>`;
+}
+
+function meses(fin){const A=all(fin);let a=A.reduce((m,p)=>p.d<m?p.d:m,'9999').slice(0,7),b=A.reduce((m,p)=>p.d>m?p.d:m,'0').slice(0,7);const r=[];let [y,m]=a.split('-').map(Number);while(true){const k=y+'-'+String(m).padStart(2,'0');r.push(k);if(k>=b)break;m++;if(m>12){m=1;y++}}return r}
+function agg(fin){const M={};meses(fin).forEach(k=>M[k]={gb:{pago:0,futuro:0,atraso:0},cm:{pago:0,futuro:0,atraso:0},fin:0,neg:{gb:0,cm:0}});
+  all(fin).forEach(p=>{if(p.s==='cancelada')return;const m=M[p.d.slice(0,7)];if(FIN(p)){m.fin+=p.gb;return}const s=p.s==='nd'?'futuro':p.s;
+    if(p.v<0){m.neg.gb+=p.gb;m.neg.cm+=p.cm}else{m.gb[s]+=p.gb;m.cm[s]+=p.cm}});return M}
+
+const svg=document.getElementById('chart');let bars=[];
+function draw(){
+  const W=svg.clientWidth,H=svg.clientHeight;if(!W)return;const fin=document.getElementById('incFin').checked;const M=agg(fin),ks=Object.keys(M);const acum=document.getElementById('acum').checked;
+  const narrow=W<520,pl=narrow?38:58,pr=8,pt=24,pb=28;
+  const parts=k=>{const m=M[k];const L=[];if(view!=='cm')L.push(['gb','pago',m.gb.pago],['gb','atraso',m.gb.atraso],['gb','futuro',m.gb.futuro]);if(view!=='gb')L.push(['cm','pago',m.cm.pago],['cm','atraso',m.cm.atraso],['cm','futuro',m.cm.futuro]);return L};
+  const finv=k=>view==='cm'?0:M[k].fin;
+  const neg=k=>(view!=='cm'?M[k].neg.gb:0)+(view!=='gb'?M[k].neg.cm:0);
+  const sum=k=>parts(k).reduce((a,x)=>a+x[2],0);
+  let max=Math.max(...ks.map(sum),1)*1.25;const min=Math.min(0,...ks.map(neg));
+  const y=v=>pt+(max-Math.min(v,max))/(max-min)*(H-pt-pb);const bw=(W-pl-pr)/ks.length;
+  const nice=Math.pow(10,Math.floor(Math.log10(max)));const step=[1,2,5,10].map(s=>s*nice).find(s=>max/s<=5);
+  let g='';for(let v=0;v<=max;v+=step)g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end" font-size="12" fill="var(--mut)">${kf(v)}</text>`;
+  const fill={gb:{pago:'var(--gb)',atraso:'var(--late)',futuro:'var(--gb)'},cm:{pago:'var(--cm)',atraso:'var(--late)',futuro:'var(--cm)'}};
+  bars=[];ks.forEach((k,i)=>{let base=0;const x=pl+i*bw+bw*.12,w=bw*.76;
+    parts(k).forEach(([who,s,v])=>{if(!v)return;g+=`<rect x="${x}" y="${y(base+v)}" width="${w}" height="${y(base)-y(base+v)}" fill="${fill[who][s]}" opacity="${s==='futuro'?.35:1}"/>`;base+=v});
+    const f=finv(k);if(f){g+=`<rect x="${x}" y="${pt}" width="${w}" height="${y(base)-pt}" fill="var(--fin)"/><path d="M${x-2} ${pt+10} l${w+4} -6 v6 l${-w-4} 6z" fill="var(--bg)"/><text x="${Math.min(x+w/2,W-60)}" y="${pt-8}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fin)">${kf(f+base)}</text>`}
+    const n=neg(k);if(n)g+=`<rect x="${x}" y="${y(0)}" width="${w}" height="${y(n)-y(0)}" fill="var(--late)" opacity=".55"/>`;
+    const lab=narrow?(k.endsWith('-01')?k.slice(0,4):''):(+k.slice(5)%3===1?ml(k):'');
+    if(lab)g+=`<text x="${x+w/2}" y="${H-8}" text-anchor="middle" font-size="12" fill="var(--mut)">${lab}</text>`;
+    bars.push({k,x:pl+i*bw,w:bw})});
+  if(acum){let run=0;const pts=ks.map(k=>run+=sum(k)+finv(k)+neg(k));const ma=Math.max(...pts,1);g+=`<polyline fill="none" stroke="var(--ink)" stroke-width="2" points="${pts.map((t,i)=>`${pl+i*bw+bw/2},${pt+(ma-t)/ma*(H-pt-pb)}`).join(' ')}"/><text x="${pl+6}" y="${pt+12}" font-size="12" fill="var(--ink)">acumulado até o fim: ${brl(pts.at(-1))}</text>`}
+  const ti=ks.indexOf(MES);if(ti>=0){const tx=pl+ti*bw;g+=`<line x1="${tx}" x2="${tx}" y1="${pt}" y2="${H-pb}" stroke="var(--acc)" stroke-width="2" stroke-dasharray="4 3"/><text x="${tx+4}" y="${H-pb-6}" font-size="12" fill="var(--ink)">hoje</text>`}
+  g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--ink)"/>`;
+  svg.innerHTML=g;
+}
+const ro=new ResizeObserver(draw);ro.observe(svg);
+function readout(k){const fin=document.getElementById('incFin').checked;const m=agg(fin)[k];if(!m)return;const A=all(fin).filter(p=>p.d.startsWith(k)&&p.s!=='cancelada'&&p.v>0);const gb=m.gb.pago+m.gb.futuro+m.gb.atraso,cm=m.cm.pago+m.cm.futuro+m.cm.atraso,n=m.neg.gb+m.neg.cm,lt=m.gb.atraso+m.cm.atraso;
+  document.getElementById('readout').innerHTML=`<b>${ml(k)}</b> — total <b>${brl(gb+cm+n+m.fin)}</b> · líquido GBRAC <b>${brl(gb+m.neg.gb+m.fin)}</b>${m.fin?` (sendo ${brl(m.fin)} de financiamento + CUB est.)`:''} · honorários <b>${brl(cm+m.neg.cm)}</b> · ${new Set(A.map(p=>p.c.u)).size} unidades${lt?` · <span class="tag r">vencido ${brl(lt)}</span>`:''}${n?` · devoluções ${brl(n)}`:''}`}
+svg.addEventListener('pointermove',e=>{const r=svg.getBoundingClientRect(),x=e.clientX-r.left;const b=bars.find(b=>x>=b.x&&x<b.x+b.w);if(b)readout(b.k)});
+
+function mapa(){
+  const late=new Set(all().filter(p=>p.s==='atraso'&&!FIN(p)).map(p=>p.c.u));let h='';
+  for(let f=6;f>=1;f--){h+=`<div class="fl">${f}º</div>`;for(let i=1;i<=6;i++){const u=f*100+i,m=DATA.M[u]||{status:'disponivel'};const c=C.find(c=>c.u===u&&ativo(c));
+    const st=c?'vendida':m.status==='vendida_sem_fluxo'?'disponivel':m.status;const nm=c?c.cli.split(' ')[0]:{disponivel:'Disponível',permuta:'Permuta',reservada:'Reservada'}[st];
+    const sh=c?nm:{disponivel:'Disp.',permuta:'Perm.',reservada:'Reserv.'}[st];h+=`<button class="cell ${st}${late.has(u)&&c?' atraso':''}" data-u="${u}" title="${esc(c?c.cli:m.cliente||nm)}">${u}<span class="lg">${esc(nm)}</span><span class="sh">${esc(sh)}</span></button>`}}
+  document.getElementById('mapa').innerHTML=h;
+  const st=[];for(let f=1;f<=6;f++)for(let i=1;i<=6;i++){const u=f*100+i;st.push(C.some(c=>c.u===u&&ativo(c))?'vendida':(DATA.M[u]||{}).status)}
+  const cnt=s=>st.filter(x=>x===s).length;
+  document.getElementById('mapaSub').textContent=`${cnt('vendida')} vendidas · ${cnt('permuta')} permutas · ${cnt('reservada')} reservadas · ${cnt('disponivel')+cnt('vendida_sem_fluxo')} disponíveis`;
+}
+function alertas(){const r=[];
+  C.forEach(c=>{const P=parcelas(c);const L=P.filter(p=>p.s==='atraso'&&!FIN(p));
+    if(c.st==='distrato'){const d=c.dis||{};r.push([c,`<span class="tag r">Distrato</span> ${d.dev>0?'devolução '+brl(d.dev):d.dev===0?'sem devolução':'devolução a confirmar'}${d.multa?' · retido '+brl(d.multa):''}`,P.filter(p=>p.s==='pago'&&p.v>0).reduce((a,p)=>a+p.v,0),d.data,'pago'])}
+    else{if(L.length)r.push([c,`<span class="tag r">${L.length} vencida${L.length>1?'s':''}</span>`,L.reduce((a,p)=>a+p.v,0),L[0].d,'']);
+      if(c.est)r.push([c,'<span class="tag o">Venda nova sem ficha</span>',c.entrada,c.venda,'entrada'])}});
+  r.sort((a,b)=>(b[0].st==='distrato')-(a[0].st==='distrato')||b[2]-a[2]);
+  document.getElementById('alertas').innerHTML=r.map(([c,s,v,d,x])=>`<tr><td class="u" tabindex="0" data-k="${esc(key(c))}">${c.u} <span class="mut sm">${esc(c.cli.split(' ')[0])}</span></td><td>${s}</td><td class="n">${brl(v)}${x?' <span class="mut sm">'+x+'</span>':''}</td><td>${fd(d)}</td></tr>`).join('');
+}
+function comp(){const at=C.filter(ativo).sort((a,b)=>a.u-b.u);const tot=c=>(c.preco||0)+((c.cub&&c.cub.corr)||0);const mx=Math.max(...at.map(tot));
+  document.getElementById('comp').innerHTML=at.map(c=>{const P=parcelas(c);const E=P.filter(p=>!FIN(p));const r=E.filter(p=>p.s==='pago').reduce((a,p)=>a+p.v,0),f=E.filter(p=>p.s!=='pago').reduce((a,p)=>a+p.v,0),cm=E.reduce((a,p)=>a+p.cm,0),fn=P.filter(p=>p.t==='financiamento').reduce((a,p)=>a+p.v,0),cu=P.filter(p=>p.t==='cub').reduce((a,p)=>a+p.v,0);
+    const w=v=>v/mx*100;return `<div class="r" data-k="${esc(key(c))}" title="${esc(c.cli)}"><span><b>${c.u}</b> <span class="mut">${esc(c.cli.split(' ')[0])}</span></span><div><div class="tr"><div style="width:${w(r)}%;background:var(--gb)"></div><div style="width:${w(f)}%;background:var(--gb);opacity:.35"></div><div style="width:${w(fn)}%;background:var(--fin)"></div><div style="width:${w(cu)}%;background:var(--cub)"></div></div><div class="hl" style="width:${w(cm)}%"></div></div><span class="n" style="text-align:right">${brl(tot(c))}</span></div>`}).join('');
+}
+
+
+function matriz(){
+  const so=document.getElementById('soVend').checked,fut=document.getElementById('soFut').checked,fin=document.getElementById('mxFin').checked;
+  let ks=meses(fin);if(fut)ks=ks.filter(k=>k>=MES);
+  const rows=[];
+  for(let f=1;f<=6;f++)for(let i=1;i<=6;i++){const u=f*100+i;const cs=C.filter(c=>c.u===u).sort((a,b)=>ativo(a)-ativo(b));
+    if(!cs.length){if(!so)rows.push({u,vazio:(DATA.M[u]||{}).status||'disponivel'});continue}
+    cs.forEach(c=>rows.push({u,c}))}
+  const col={};ks.forEach(k=>col[k]=0);const T={p:0,e:0,a:0,f:0,cu:0,hr:0,ha:0};
+  let h=`<thead><tr><th class="st">Unid.</th><th class="st2">Cliente</th><th class="x">1º receb.</th><th class="n x">Preço</th><th class="n x">Recebido</th><th class="n st3">A receber</th><th class="n x">Financ.</th><th class="n x">CUB est.</th><th class="n hc x">Hon. repassado</th><th class="n hc x">Hon. a repassar</th>${ks.map(k=>`<th class="n${k===MES?' now':''}">${ml(k)}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(r=>{
+    if(r.vazio){h+=`<tr class="vazio"><td class="st">${r.u}</td><td class="st2">${{disponivel:'Disponível',permuta:'Permuta',reservada:'Reservada',vendida_sem_fluxo:'Disponível'}[r.vazio]||''}</td><td class="x"></td><td class="x"></td><td class="x"></td><td class="st3"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td>${ks.map(k=>`<td class="m${k===MES?' now':''}"></td>`).join('')}</tr>`;return}
+    const c=r.c,P=parcelas(c,fin).filter(p=>p.s!=='cancelada');const by={};P.forEach(p=>{const k=p.d.slice(0,7);(by[k]=by[k]||[]).push(p)});
+    const PA=parcelas(c,true).filter(p=>p.s!=='cancelada');const rcv=PA.filter(p=>p.s==='pago').reduce((a,p)=>a+p.v,0),arc=PA.filter(p=>p.s!=='pago').reduce((a,p)=>a+p.v,0),hr=PA.filter(p=>p.s==='pago').reduce((a,p)=>a+p.cm,0),ha=PA.filter(p=>p.s!=='pago').reduce((a,p)=>a+p.cm,0);
+    if(ativo(c)){T.p+=c.preco||0;T.e+=rcv;T.a+=arc;T.f+=c.fin||0;T.cu+=(c.cub&&c.cub.corr)||0;T.hr+=hr;T.ha+=ha}
+    h+=`<tr class="${c.st==='distrato'?'dis':''}"><td class="st u" tabindex="0" data-k="${esc(key(c))}">${c.u}</td><td class="st2">${esc(c.cli.split(' ').slice(0,2).join(' '))}${c.st==='distrato'?'<span class="tag r">distrato</span>':''}${c.est?'<span class="tag o">estimado</span>':''}</td><td class="x">${P[0]?ml(P[0].d.slice(0,7)):''}</td><td class="m x">${brl(c.preco||0)}</td><td class="m x">${brl(rcv)}</td><td class="m st3">${brl(arc)}</td><td class="m x">${ativo(c)?brl(c.fin||0):'—'}</td><td class="m x">${ativo(c)&&c.cub?brl(c.cub.corr)+' <span class="mut sm">('+c.cub.pct+'%)</span>':ativo(c)?'sem CUB':'—'}</td><td class="m hc x">${brl(hr)}</td><td class="m hc x">${brl(ha)}</td>`;
+    ks.forEach(k=>{const L=by[k]||[];const v=L.reduce((a,p)=>a+pick(p,mxView),0);col[k]+=v;
+      const cls=!L.length?'':L.some(p=>FIN(p))?'fn':L.some(p=>p.v<0)?'dv':L.some(p=>p.s==='atraso')?'lt':L.every(p=>p.s==='pago')?'pg':'';
+      h+=`<td class="m ${cls}${k===MES?' now':''}">${L.length&&v?Math.round(v).toLocaleString('pt-BR'):L.length?'0':''}</td>`});
+    h+='</tr>'});
+  h+=`</tbody><tfoot><tr><td class="st">Total</td><td class="sm mut st2">contratos ativos</td><td class="x"></td><td class="m x">${brl(T.p)}</td><td class="m x">${brl(T.e)}</td><td class="m st3">${brl(T.a)}</td><td class="m x">${brl(T.f)}</td><td class="m x">${brl(T.cu)}</td><td class="m hc x">${brl(T.hr)}</td><td class="m hc x">${brl(T.ha)}</td>${ks.map(k=>`<td class="m${k===MES?' now':''}">${Math.round(col[k]).toLocaleString('pt-BR')}</td>`).join('')}</tr></tfoot>`;
+  const mxEl=document.getElementById('mx');mxEl.innerHTML=h;mxEl.classList.toggle('full',document.getElementById('mxRes').checked);
+  const now=mxEl.querySelector('thead th.now'),sc=mxEl.parentElement;if(document.getElementById('mxRes').checked||fut)sc.scrollLeft=0;else if(now)sc.scrollLeft=Math.max(0,now.offsetLeft-sc.clientWidth*0.6);
+}
+
+const fx=document.getElementById('ficha');
+function ficha(c){
+  const P=parcelas(c);const s=(f,v)=>P.filter(f).reduce((a,p)=>a+pick(p,v),0);const ok=p=>p.s==='pago',fu=p=>p.s!=='pago'&&p.s!=='cancelada';
+  const d=c.dis||{data:HOJE,dev:null,multa:null,quem:'gbrac'};
+  fx.innerHTML=`<div class="bar" style="justify-content:space-between;margin-top:0"><p class="kick" style="margin:0">Unidade ${c.u} · Monteluce Residence</p><button class="btn" id="fechar">Fechar</button></div>
+  <h2>${esc(c.cli)}</h2>${c.st==='distrato'?'<span class="tag r" style="margin:0">Distratado</span>':''}${c.est?'<span class="tag o" style="margin:0">Fluxo estimado</span>':''}
+  <div class="facts"><div>Contrato<b>${esc(c.contrato||fd(c.venda))}</b></div><div>Corretor<b>${esc(c.cor||'—')}</b></div><div>Entrega prevista<b>${fd(c.entrega)}</b></div>
+  <div>Preço<b>${brl(c.preco||0)}</b></div><div>Entrada<b>${brl(c.entrada||0)}</b></div><div>Financiamento<b>${brl(c.fin||0)}</b></div><div>Correção CUB (est.)<b>${c.cub?brl(c.cub.corr):'Sem cláusula'}</b>${c.cub?`<span class="sm mut">${c.cub.pct}% do CUB · base ${ml(c.cub.base)}</span>`:''}</div>
+  <div>Já recebido<b>${brl(s(ok,'total'))}</b><span class="sm mut">líquido GBRAC ${brl(s(ok,'gb'))}</span></div><div>A receber<b>${brl(s(fu,'total'))}</b><span class="sm mut">líquido GBRAC ${brl(s(fu,'gb'))}</span></div></div>
+  <p class="sm mut">Honorários Camargo: ${brl(s(()=>true,'cm'))} no total · ${brl(s(ok,'cm'))} repassados · ${brl(s(fu,'cm'))} a repassar</p>
+  ${c.com?`<p class="sm mut">${esc(c.com)}</p>`:''}${c.nota?`<div class="note">${esc(c.nota)}</div>`:''}
+  ${window.CO_EDIT===false?'':`<fieldset><legend>Distrato</legend>
+   <label class="chk"><input type="checkbox" id="fdis" ${c.st==='distrato'?'checked':''}> Marcar como distrato (parcelas não pagas e o financiamento saem do fluxo)</label>
+   <div class="frm"><label>Data do distrato<input type="date" id="fdata" value="${esc(d.data||'')}"></label>
+   <label>Valor devolvido ao cliente (R$)<input type="number" inputmode="decimal" id="fdev" value="${d.dev??''}" placeholder="0 se não houver"></label>
+   <label>Multa / valor retido (R$)<input type="number" inputmode="decimal" id="fmul" value="${d.multa??''}"></label>
+   <label>Quem devolve<select id="fquem"><option value="gbrac">GBRAC</option><option value="camargo">Camargo</option><option value="prop">Proporcional ao recebido</option></select></label></div>
+   <div class="bar"><button class="btn" id="fsalvar">Aplicar</button><span class="sm mut" id="fmsg">${window.CO_API?'A alteração fica salva para todos que acessam esta página.':'Protótipo: a alteração fica só neste navegador.'}</span></div>
+  </fieldset>`}
+  <table class="stack"><thead><tr><th>Data</th><th>Tipo</th><th class="n">Valor</th><th class="n">Honorários</th><th class="n">Líquido GBRAC</th><th>Status</th></tr></thead><tbody>
+  ${P.map(p=>`<tr><td>${fd(p.d)}</td><td>${{sinal:'Sinal',parcela:'Parcela',chaves:'Chaves',financiamento:'<span class="tag p" style="margin:0">Financiamento</span>',cub:'<span class="tag" style="margin:0;background:var(--cub);color:#121a3a">CUB (estimativa)</span>',aditivo:'Aditivo',devolucao:'Devolução'}[p.t]||esc(p.t)}</td><td class="n">${brl(p.v)}</td><td class="n">${brl(p.cm)}</td><td class="n">${brl(p.gb)}</td><td>${{pago:'<span class="tag" style="background:var(--ok);margin:0">Pago</span>',atraso:'<span class="tag r" style="margin:0">Vencida</span>',futuro:'A vencer',cancelada:'<span class="tag" style="margin:0">Cancelada</span>',nd:'<span class="tag" style="margin:0">Sem baixa</span>'}[p.s]}${p.obs?' <span class="sm mut">'+esc(p.obs)+'</span>':''}</td></tr>`).join('')}</tbody></table>`;
+  if(fx.querySelector('#fquem'))fx.querySelector('#fquem').value=d.quem||'gbrac';
+  fx.classList.add('on');fx.setAttribute('aria-hidden','false');fx.scrollTop=0;fx.querySelector('#fechar').focus();
+  fx.querySelector('#fechar').onclick=fechar;
+  if(fx.querySelector('#fsalvar'))fx.querySelector('#fsalvar').onclick=async()=>{const on=fx.querySelector('#fdis').checked;const num=id=>{const v=fx.querySelector(id).value;return v===''?null:+v};
+    c.st=on?'distrato':'vendida';c.dis=on?{data:fx.querySelector('#fdata').value||HOJE,dev:num('#fdev'),multa:num('#fmul'),quem:fx.querySelector('#fquem').value,parc:null}:null;
+    if(window.CO_API){try{const r=await fetch(window.CO_API,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF':window.CO_CSRF||''},body:JSON.stringify({acao:'distrato',u:c.u,cli:c.cli,st:c.st,dis:c.dis})});const j=await r.json();if(!j.ok)throw new Error(j.msg||'erro')}catch(e){alert('Não foi possível salvar: '+e.message);return}}else{OV[key(c)]={st:c.st,dis:c.dis};try{localStorage.setItem('monteluce-ov2',JSON.stringify(OV))}catch(e){}}
+    tudo();ficha(c)};
+}
+function fechar(){fx.classList.remove('on');fx.setAttribute('aria-hidden','true')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')fechar();if(e.key==='Enter'&&e.target.matches('td.u'))e.target.click()});
+document.addEventListener('click',e=>{const t=e.target.closest('[data-u],[data-k]');if(!t||fx.contains(t))return;const c=t.dataset.k?C.find(c=>key(c)===t.dataset.k):(C.find(c=>c.u===+t.dataset.u&&ativo(c))||C.find(c=>c.u===+t.dataset.u));if(c)ficha(c)});
+document.querySelectorAll('.seg').forEach((sg,i)=>sg.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;sg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));if(i===0){view=b.dataset.v;draw()}else{mxView=b.dataset.v;matriz()}}));
+['soVend','soFut','mxFin','mxRes'].forEach(id=>document.getElementById(id).onchange=matriz);['acum','incFin'].forEach(id=>document.getElementById(id).onchange=()=>{draw();readout(MES)});
+function cubSec(){const at=C.filter(ativo).sort((a,b)=>a.u-b.u);const ci=DATA.cubInfo;const pc=v=>(v*100).toFixed(1).replace('.',',')+'%';
+  const G=[[100,'100% da variação'],[75,'75% da variação'],[50,'50% da variação'],[0,'Sem correção']];
+  document.getElementById('cubg').innerHTML=G.map(([p,l])=>{const L=at.filter(c=>p?(c.cub&&c.cub.pct===p):!c.cub);const v=L.reduce((a,c)=>a+(c.cub?c.cub.corr:0),0);return `<div><small>${l}</small><div class="big">${L.length} ${L.length===1?'unidade':'unidades'}</div><small>${L.map(c=>c.u).join(', ')||'—'}</small><small>${p?'correção estimada <b>'+brl(v)+'</b>':'saldo sem atualização'}</small></div>`}).join('');
+  document.getElementById('cubt').innerHTML=`<thead><tr><th>Unid.</th><th>Cliente</th><th class="n">% cobrado</th><th>Base</th><th class="n">CUB real até ${ml(ci.ult)}</th><th class="n">Acumulado est. até dez/28</th><th class="n">Saldo</th><th class="n">Correção est.</th></tr></thead><tbody>${at.map(c=>c.cub?`<tr><td><b>${c.u}</b></td><td class="st2">${esc(c.cli.split(' ').slice(0,2).join(' '))}</td><td class="n">${c.cub.pct}%</td><td>${ml(c.cub.base)}</td><td class="n">${pc(c.cub.real)}</td><td class="n">${pc(c.cub.total)}</td><td class="n">${brl(c.fin)}</td><td class="n"><b>${brl(c.cub.corr)}</b></td></tr>`:`<tr><td><b>${c.u}</b></td><td class="st2">${esc(c.cli.split(' ').slice(0,2).join(' '))}</td><td class="n">—</td><td colspan="4">contrato sem cláusula de correção</td><td class="n">R$ 0</td></tr>`).join('')}</tbody>`;
+  document.getElementById('cubnota2').textContent=`Como estimamos: variação real do CUB SC (média das categorias residenciais) do mês da assinatura até ${ml(ci.ult)}, quando estava em R$ ${ci.ultVal.toLocaleString('pt-BR')}/m², mais projeção de ${pc(ci.rate)} ao ano até dez/2028, que é a média anual do CUB SC entre dez/2021 e nov/2026. Correção = saldo × variação acumulada × % cobrado. O valor real depende do CUB publicado mês a mês e do índice exato citado no contrato.`;
+}
+
+// ---------- exportação ----------
+function loadJs(src){return new Promise((ok,ko)=>{if(document.querySelector(`script[src="${src}"]`))return ok();const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>ko(new Error('Não foi possível carregar '+src));document.head.appendChild(s)})}
+const SIT={vendida:'Vendida',distrato:'Distrato'},VAZ={disponivel:'Disponível',permuta:'Permuta',reservada:'Reservada',vendida_sem_fluxo:'Disponível'};
+function fluxo(view){const ks=meses(true);const head=['Unid.','Cliente','Situação','1º receb.','Preço','Recebido','A receber','Financiamento','CUB est.','% CUB','Hon. repassado','Hon. a repassar',...ks.map(ml)];
+  const rows=[],meta=[];const tot=new Array(head.length).fill(0);
+  for(let f=1;f<=6;f++)for(let i=1;i<=6;i++){const u=f*100+i;const cs=C.filter(c=>c.u===u).sort((a,b)=>ativo(a)-ativo(b));
+    if(!cs.length){rows.push([u,VAZ[(DATA.M[u]||{}).status]||'Disponível','','',...new Array(8+ks.length).fill(null)]);meta.push({kind:'vazio',cls:[]});continue}
+    cs.forEach(c=>{const P=parcelas(c,true).filter(p=>p.s!=='cancelada');const by={},bp={};P.forEach(p=>{const k=p.d.slice(0,7);by[k]=(by[k]||0)+pick(p,view);(bp[k]=bp[k]||[]).push(p)});
+      const rcv=P.filter(p=>p.s==='pago').reduce((a,p)=>a+p.v,0),arc=P.filter(p=>p.s!=='pago').reduce((a,p)=>a+p.v,0),hr=P.filter(p=>p.s==='pago').reduce((a,p)=>a+p.cm,0),ha=P.filter(p=>p.s!=='pago').reduce((a,p)=>a+p.cm,0);
+      const r=[u,c.cli,(SIT[c.st]||c.st)+(c.est?' (fluxo estimado)':''),P[0]?ml(P[0].d.slice(0,7)):'',c.preco||0,rcv,arc,ativo(c)?c.fin||0:0,ativo(c)&&c.cub?c.cub.corr:0,c.cub?c.cub.pct/100:null,hr,ha,...ks.map(k=>by[k]!=null?Math.round(by[k]*100)/100:null)];
+      const cls=ks.map(k=>{const L=bp[k]||[];return !L.length?'':L.some(p=>FIN(p))?'fn':L.some(p=>p.v<0)?'dv':L.some(p=>p.s==='atraso')?'lt':L.every(p=>p.s==='pago')?'pg':''});
+      if(ativo(c))r.forEach((v,j)=>{if(j>=4&&j!==9&&typeof v==='number')tot[j]+=v});else ks.forEach((k,j)=>{if(by[k])tot[12+j]+=by[k]});
+      rows.push(r);meta.push({kind:ativo(c)?'ativo':'distrato',est:!!c.est,cls})})}
+  tot[0]='Total';tot[1]='contratos ativos (meses: todos os contratos)';tot[2]='';tot[3]='';tot[9]=null;return {head,rows,tot,meta,ks}}
+const VN={total:'Total',gb:'Líquido GBRAC',cm:'Honorários'};
+async function baixarXls(){await loadJs('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js');
+  const wb=new ExcelJS.Workbook();wb.creator='Imobiliária Camargo';wb.created=new Date();
+  const NAVY='FF2A4797',INK='FF121A3A',MUT='FF5A6385',SOFT='FFF3F6FC',LINE='FFE2E6F2',OK='FFE6F4EA',LATE='FFFDE4E4',LATET='FFE5484D',FINC='FF5FA0FF',ACC='FFF2B705',GREY='FF8D97B3';
+  const money='#,##0.00;[Red]-#,##0.00',pct='0%';const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});const border={bottom:{style:'thin',color:{argb:LINE}}};
+  const titulo=(ws,txt,sub,ncols)=>{ws.mergeCells(1,1,1,Math.min(ncols,14));const a=ws.getCell(1,1);a.value=txt;a.font={name:'Calibri',size:15,bold:true,color:{argb:'FFFFFFFF'}};a.fill=fill(NAVY);a.alignment={vertical:'middle'};ws.getRow(1).height=28;
+    for(let c=1;c<=ncols;c++)ws.getCell(1,c).fill=fill(NAVY);ws.mergeCells(2,1,2,Math.min(ncols,14));const b=ws.getCell(2,1);b.value=sub;b.font={size:9,italic:true,color:{argb:MUT}};ws.getRow(3).height=6};
+  const cabec=(ws,row,head,center=[])=>{const r=ws.getRow(row);r.values=head;r.height=22;r.eachCell((c,j)=>{c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill=fill(NAVY);c.alignment={vertical:'middle',horizontal:j<=4||center.includes(j)?'left':'right'}})};
+  const hojeK=ml(MES);
+  ['total','gb','cm'].forEach(v=>{const F=fluxo(v);const ws=wb.addWorksheet('Fluxo '+VN[v],{views:[{state:'frozen',xSplit:2,ySplit:4,showGridLines:false}],properties:{tabColor:{argb:v==='total'?NAVY:v==='gb'?FIN:GREY}}});
+    titulo(ws,`Monteluce Residence · GBRAC — Programação de recebíveis (${VN[v]})`,`Imobiliária Camargo · gerado em ${fd(HOJE)} · valores em R$ · financiamento e correção do CUB (estimativa) datados em dez/2028 · verde = recebido, vermelho = vencido, azul = repasse na entrega`,F.head.length);
+    cabec(ws,4,F.head);const nowCol=F.head.indexOf(hojeK)+1;
+    ws.columns=F.head.map((h,j)=>({width:j===0?7:j===1?36:j===2?20:j===3?10:j<12?14:11}));
+    F.rows.forEach((r,ri)=>{const m=F.meta[ri];const row=ws.getRow(5+ri);row.values=r;row.height=17;
+      row.eachCell({includeEmpty:true},(c,j)=>{const k=j-1;c.border=border;c.font={size:10,color:{argb:INK}};
+        if(k>=4){c.numFmt=k===9?pct:money;c.alignment={horizontal:'right'}}
+        if(k===0)c.font={size:10,bold:true,color:{argb:INK}};
+        if(k===10||k===11)c.font={size:10,color:{argb:GREY}};
+        if(m.kind==='vazio'&&k>0)c.font={size:10,italic:true,color:{argb:GREY}};
+        if(m.kind==='distrato')c.font={size:10,strike:k>2,color:{argb:MUT}};
+        if(k>=12){const cl=m.cls[k-12];if(cl==='pg')c.fill=fill(OK);else if(cl==='lt'){c.fill=fill(LATE);c.font={size:10,bold:true,color:{argb:LATET}}}else if(cl==='fn'){c.fill=fill(FINC);c.font={size:10,bold:true,color:{argb:'FFFFFFFF'}}}else if(cl==='dv')c.font={size:10,bold:true,color:{argb:LATET}}}
+        if(k===2&&m.kind==='distrato')c.font={size:10,bold:true,color:{argb:LATET}};
+        if(k===2&&m.est)c.font={size:10,bold:true,color:{argb:'FFB58500'}};
+        if(j===nowCol)c.border={...border,left:{style:'medium',color:{argb:ACC}}};
+      })});
+    const tr=ws.getRow(5+F.rows.length);tr.values=F.tot;tr.height=20;tr.eachCell({includeEmpty:true},(c,j)=>{const k=j-1;c.font={bold:true,size:10,color:{argb:INK}};c.fill=fill(SOFT);c.border={top:{style:'medium',color:{argb:INK}}};if(k>=4){c.numFmt=money;c.alignment={horizontal:'right'}}});
+    ws.getRow(4).getCell(nowCol).fill=fill(ACC);ws.getRow(4).getCell(nowCol).font={bold:true,color:{argb:INK},size:10};
+    ws.autoFilter={from:{row:4,column:1},to:{row:4,column:4}};
+    ws.pageSetup={orientation:'landscape',paperSize:9,scale:60,printTitlesRow:'4:4',printTitlesColumn:'A:B',margins:{left:.3,right:.3,top:.4,bottom:.4,header:.2,footer:.2}};ws.headerFooter={oddFooter:'&LImobiliária Camargo · Monteluce Residence&RPágina &P de &N'}});
+  // Parcelas
+  const wp=wb.addWorksheet('Parcelas',{views:[{state:'frozen',ySplit:4,showGridLines:false}]});const ph=['Unid.','Cliente','Situação','Data','Tipo','Valor','Honorários','Líquido GBRAC','Status','Observação'];
+  titulo(wp,'Monteluce Residence · GBRAC — Parcelas de todos os contratos',`Imobiliária Camargo · gerado em ${fd(HOJE)}`,ph.length);cabec(wp,4,ph);
+  wp.columns=[7,34,11,12,24,14,14,15,12,60].map(w=>({width:w}));let rr=5;
+  const TIP={sinal:'Sinal',parcela:'Parcela',chaves:'Chaves',financiamento:'Financiamento',cub:'Correção CUB (estimativa)',aditivo:'Aditivo',devolucao:'Devolução'},STS={pago:'Pago',atraso:'Vencida',futuro:'A vencer',cancelada:'Cancelada',nd:'Sem baixa'};
+  C.slice().sort((a,b)=>a.u-b.u).forEach(c=>parcelas(c,true).forEach(p=>{const row=wp.getRow(rr++);const dt=new Date(p.d+'T12:00:00');row.values=[c.u,c.cli,SIT[c.st]||c.st,dt,TIP[p.t]||p.t,p.v,p.cm,p.gb,STS[p.s],p.obs||''];
+    row.eachCell({includeEmpty:true},(cl,j)=>{cl.border=border;cl.font={size:10,color:{argb:c.st==='distrato'?MUT:INK}};if(j>=6&&j<=8){cl.numFmt=money;cl.alignment={horizontal:'right'}}if(j===4)cl.numFmt='dd/mm/yyyy';if(j===7)cl.font={size:10,color:{argb:GREY}}});
+    const st=row.getCell(9);if(p.s==='pago')st.fill=fill(OK);else if(p.s==='atraso'){st.fill=fill(LATE);st.font={size:10,bold:true,color:{argb:LATET}}}
+    if(FIN(p)){row.getCell(5).fill=fill(FINC);row.getCell(5).font={size:10,bold:true,color:{argb:'FFFFFFFF'}}}}));
+  wp.autoFilter={from:{row:4,column:1},to:{row:4,column:ph.length}};
+  // CUB
+  const wc=wb.addWorksheet('Correção CUB',{views:[{state:'frozen',ySplit:4,showGridLines:false}]});const ch=['Unid.','Cliente','% da variação cobrado','Mês-base','CUB real até '+ml(DATA.cubInfo.ult),'Acumulado est. até dez/28','Saldo financiado','Correção estimada'];
+  titulo(wc,'Monteluce Residence · GBRAC — Correção do saldo pelo CUB (ESTIMATIVA)',`CUB SC real até ${ml(DATA.cubInfo.ult)} + projeção de ${(DATA.cubInfo.rate*100).toFixed(1).replace('.',',')}% a.a. (média dez/21–nov/26) até dez/2028. Correção = saldo × variação × % cobrado.`,ch.length);cabec(wc,4,ch);
+  wc.columns=[7,34,14,11,14,16,16,16].map(w=>({width:w}));rr=5;let tc=0;
+  C.filter(ativo).sort((a,b)=>a.u-b.u).forEach(c=>{const row=wc.getRow(rr++);row.values=c.cub?[c.u,c.cli,c.cub.pct/100,ml(c.cub.base),c.cub.real,c.cub.total,c.fin,c.cub.corr]:[c.u,c.cli,'sem cláusula','','','',c.fin,0];tc+=c.cub?c.cub.corr:0;
+    row.eachCell({includeEmpty:true},(cl,j)=>{cl.border=border;cl.font={size:10,color:{argb:INK}};if([3,5,6].includes(j)){cl.numFmt='0.0%';cl.alignment={horizontal:'right'}}if(j>=7){cl.numFmt=money;cl.alignment={horizontal:'right'}}if(j===8)cl.font={size:10,bold:true,color:{argb:NAVY}}})});
+  const t2=wc.getRow(rr);t2.values=['Total','','','','','','',tc];t2.eachCell({includeEmpty:true},(c,j)=>{c.font={bold:true};c.fill=fill(SOFT);c.border={top:{style:'medium',color:{argb:INK}}};if(j===8)c.numFmt=money});
+  const buf=await wb.xlsx.writeBuffer();const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`Monteluce_fluxo_recebiveis_${HOJE}.xlsx`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500)}
+async function baixarPdf(){await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+  const {jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});const v=mxView;const F=fluxo(v);
+  const n=(x,j)=>x==null||x===''?'':typeof x==='number'?(j===9?Math.round(x*100)+'%':Math.round(x).toLocaleString('pt-BR')):String(x);
+  const keep=[0,1,4,5,6,7,8,9];const body=[...F.rows,F.tot].map(r=>r.map((x,j)=>j===1&&typeof x==='string'?x.split(' ').slice(0,3).join(' '):n(x,j)).filter((x,j)=>keep.includes(j)||j>=12));
+  const head=[F.head.filter((x,j)=>keep.includes(j)||j>=12)];
+  doc.autoTable({head,body,startY:22,theme:'grid',styles:{fontSize:6.4,cellPadding:1.1,halign:'right',lineColor:[226,230,242],lineWidth:.1},headStyles:{fillColor:[42,71,151],textColor:255,halign:'center'},
+    columnStyles:{0:{halign:'left',cellWidth:10,fontStyle:'bold'},1:{halign:'left',cellWidth:34}},horizontalPageBreak:true,horizontalPageBreakRepeat:[0,1],margin:{top:22,left:8,right:8,bottom:12},
+    didParseCell:d=>{if(d.section==='body'&&d.row.index===body.length-1){d.cell.styles.fontStyle='bold';d.cell.styles.fillColor=[243,246,252]}},
+    didDrawPage:d=>{doc.setFontSize(12);doc.setTextColor(42,71,151);doc.text('Monteluce Residence · GBRAC — Programação de recebíveis ('+VN[v]+')',8,11);doc.setFontSize(7.5);doc.setTextColor(90,99,133);
+      doc.text(`Imobiliária Camargo · gerado em ${fd(HOJE)} · valores em R$ · financiamento e correção CUB (estimativa) datados em dez/2028`,8,16);
+      doc.text('Página '+doc.internal.getNumberOfPages(),doc.internal.pageSize.getWidth()-8,doc.internal.pageSize.getHeight()-5,{align:'right'})}});
+  doc.save(`Monteluce_fluxo_recebiveis_${VN[v].replace(/ /g,'_')}_${HOJE}.pdf`)}
+[['dlXls',baixarXls],['dlPdf',baixarPdf]].forEach(([id,fn])=>{const b=document.getElementById(id);b.onclick=async()=>{const t0=b.textContent;b.disabled=true;b.textContent='Gerando…';try{await fn()}catch(e){document.getElementById('dlMsg').textContent='Não foi possível gerar o arquivo: '+e.message}finally{b.disabled=false;b.textContent=t0}}});
+function tudo(){cubSec();topo();draw();mapa();alertas();comp();matriz();readout(MES)}
+{const ci=DATA.cubInfo;document.getElementById('cubnota').textContent=`Correção CUB — ESTIMATIVA. Os contratos corrigem o saldo pela variação positiva do CUB (Sinduscon), cobrando 50%, 75% ou 100% dela conforme a negociação; o 301 não tem a cláusula. Cálculo: variação real do CUB SC (média das categorias residenciais) do mês da assinatura até ${ml(ci.ult)} (R$ ${ci.ultVal.toLocaleString('pt-BR')}/m²), mais projeção de ${(ci.rate*100).toFixed(1).replace('.',',')}% ao ano até dez/2028, que é a média anual do CUB SC de dez/2021 a nov/2026. Aplicado só sobre o saldo financiado. O valor real depende do CUB publicado em cada mês e do índice exato do contrato (CUB médio da Grande Florianópolis).`}
+document.getElementById('rod').textContent=`Fontes: contratos de reserva e termos de distrato (Drive Monteluce), planilha "Fluxo Financeiro GBRAC" e Tabela de Vendas (Atualização 03). Dados lidos em ${fd(DATA.gerado||HOJE)}.`;
+tudo();
+}
+</script>
+</body></html>

@@ -30,6 +30,8 @@ define('GHL_APP_URL',  'https://app.wesalescrm.com');
 // (plano-acao/api-importar.php) e ler o estado (api-estado.php).
 // Gere um valor longo e aleatório, ex.: bin2hex(random_bytes(32)).
 define('PLANO_ACAO_TOKEN', 'COLE_UM_TOKEN_LONGO_ALEATORIO');
+// Área do Construtor: token da carga automática (construtor/api-importar.php)
+define('CONSTRUTOR_TOKEN', 'COLE_UM_TOKEN_LONGO_ALEATORIO');
 
 // --- Caminhos de dados (fora da área pública) ---
 // Onde o coletor do painel grava o agregado diário.

@@ -53,6 +53,16 @@ try {
                         ->execute([(int)$_POST['user_id'], (int)$_POST['team_id']]);
             jout(['ok'=>true]);
 
+        case 'user_construtor':
+            $on = ($_POST['on'] ?? '') === '1';
+            $slug = (string)($_POST['slug'] ?? '');
+            if (!preg_match('/^[a-z0-9-]{1,40}$/', $slug)) jout(['ok'=>false,'msg'=>'Página inválida.']);
+            if ($on) $pdo->prepare('INSERT IGNORE INTO co_user_paginas (user_id, slug) VALUES (?,?)')
+                        ->execute([(int)$_POST['user_id'], $slug]);
+            else     $pdo->prepare('DELETE FROM co_user_paginas WHERE user_id=? AND slug=?')
+                        ->execute([(int)$_POST['user_id'], $slug]);
+            jout(['ok'=>true]);
+
         case 'broker_deactivate':
             // Marca a data do desligamento: o coletor congela os dados dele
             // nessa data e para de acumular atividade nova.
