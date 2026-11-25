@@ -67,14 +67,20 @@ fieldset{border:1px solid var(--line);border-radius:12px;padding:14px;margin:18p
 .frm{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.frm label{font-size:13px;color:var(--mut);display:grid;gap:4px}
 input,select{font:16px Ubuntu;min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .cubg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;margin:16px 0}.cubg>div{border:1px solid var(--line);border-radius:12px;padding:14px}.cubg .big{font-size:30px;color:var(--gb)}.cubg small{display:block;color:var(--mut);font-size:13px}details summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:500;color:var(--gb)}
+.brandrow{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.brandrow .brand{margin:0}.lgb{height:16px;width:auto;opacity:.9}
+h1.lgm{margin:0;line-height:0}h1.lgm img{height:clamp(58px,7vw,84px);width:auto;display:block}
+.planta{display:grid;grid-template-columns:120px minmax(0,1fr);gap:14px;align-items:center;margin:4px 0 14px;padding:10px;border:1px solid var(--line);border-radius:12px}
+.planta button{padding:0;border:0;background:#f4f2ec;border-radius:8px;cursor:zoom-in;line-height:0;overflow:hidden}.planta img{width:120px;height:120px;object-fit:contain}
+.planta small{display:block;color:var(--mut);font-size:13px}.planta b{font-size:15px}
+#zoom{position:fixed;inset:0;background:rgba(13,24,56,.82);display:none;align-items:center;justify-content:center;z-index:40;padding:24px;cursor:zoom-out}#zoom.on{display:flex}#zoom img{max-width:min(92vw,640px);max-height:88vh;background:#f4f2ec;border-radius:10px;padding:10px}
 .note{background:var(--soft);border-left:3px solid var(--acc);border-radius:6px;padding:10px 14px;font-size:14px;margin:10px 0}
 @media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mut)}.stack td:empty{display:none}.mapa{grid-template-columns:22px repeat(6,minmax(0,1fr));gap:3px}.mapa .fl{font-size:11px}.cell{padding:5px 3px;font-size:12px;min-height:44px;overflow:hidden}.cell span{font-size:9.5px;letter-spacing:-.03em;white-space:nowrap;overflow:visible;text-overflow:clip}.cell .lg{display:none}.cell .sh{display:block}}
 </style><script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script></head><body>
 
 <header class="band hero"><div class="wrap">
-  <div class="brand"><svg width="22" height="28" viewBox="0 0 22 28" aria-hidden="true"><path d="M11 0C4.9 0 0 4.9 0 11c0 8.2 11 17 11 17s11-8.8 11-17C22 4.9 17.1 0 11 0z" fill="#fff"/><circle cx="11" cy="11" r="4.5" fill="#2a4797"/></svg>IMOBILIÁRIA CAMARGO · ÁREA DO CONSTRUTOR</div>
-  <h1>Monteluce Residence</h1>
-  <p class="kick" style="margin-top:8px">GBRAC Construtora · Rua São José do Cerrito, 285, Petrópolis, Joinville · entrega prevista dez/2028</p>
+  <div class="brandrow"><div class="brand"><svg width="22" height="28" viewBox="0 0 22 28" aria-hidden="true"><path d="M11 0C4.9 0 0 4.9 0 11c0 8.2 11 17 11 17s11-8.8 11-17C22 4.9 17.1 0 11 0z" fill="#fff"/><circle cx="11" cy="11" r="4.5" fill="#2a4797"/></svg>IMOBILIÁRIA CAMARGO · ÁREA DO CONSTRUTOR</div><img class="lgb" src="/construtor/paginas/gbrac/gbrac_branco.png" alt="G-BRAC Construtora"></div>
+  <h1 class="lgm"><img src="/construtor/paginas/gbrac/monteluce_branco.png" alt="Monteluce Residence" width="657" height="241"></h1>
+  <p class="kick" style="margin-top:8px">Rua São José do Cerrito, 285, Petrópolis, Joinville · entrega prevista dez/2028</p>
   <div class="kpis" id="kpis"></div>
   <div class="vgv"><div class="vgvbar" id="vgvbar" role="img" aria-label="Linha do tempo do valor vendido: recebido, entrada a receber, financiamento e CUB"></div><div class="vgvleg" id="vgvleg"></div></div>
   <div class="honbar" id="hon"></div>
@@ -138,6 +144,7 @@ input,select{font:16px Ubuntu;min-height:44px;padding:0 10px;border:1px solid va
   <p id="cubnota"></p>
 </div></footer>
 
+<div id="zoom" role="dialog" aria-label="Planta ampliada"><img alt=""></div>
 <aside id="ficha" aria-hidden="true" aria-label="Ficha da unidade"></aside>
 
 <script>
@@ -285,12 +292,16 @@ function matriz(){
   const now=mxEl.querySelector('thead th.now'),sc=mxEl.parentElement;if(document.getElementById('mxRes').checked||fut)sc.scrollLeft=0;else if(now)sc.scrollLeft=Math.max(0,now.offsetLeft-sc.clientWidth*0.6);
 }
 
+const PLANTAS={1:['65,01 m²','1 suíte + 1 dormitório','frente · lado direito'],2:['69,58 m²','1 suíte + 1 dormitório','frente · lado esquerdo'],3:['69,45 m²','1 suíte + 1 dormitório','centro · lado esquerdo'],4:['67,07 m²','1 suíte + 1 dormitório','fundos · em L'],5:['46,92 m²','1 dormitório','fundos · lado direito'],6:['42,85 m²','1 dormitório','centro · lado direito']};
+function plantaHtml(u){const f=u%100,p=PLANTAS[f];if(!p)return '';const src=`/construtor/paginas/gbrac/planta_final0${f}.jpg`;return `<div class="planta"><button type="button" data-zoom="${src}" aria-label="Ampliar planta do final 0${f}"><img src="${src}" alt="Planta do final 0${f}" loading="lazy"></button><div><small>Planta · final 0${f}</small><b>${p[0]} · ${p[1]}</b><small>${p[2]} · ${Math.floor(u/100)}º andar</small></div></div>`}
+document.addEventListener('click',e=>{const z=e.target.closest('[data-zoom]');const Z=document.getElementById('zoom');if(z){Z.querySelector('img').src=z.dataset.zoom;Z.classList.add('on');e.stopPropagation()}else if(e.target.closest('#zoom'))Z.classList.remove('on')},true);
 const fx=document.getElementById('ficha');
 function ficha(c){
   const P=parcelas(c);const s=(f,v)=>P.filter(f).reduce((a,p)=>a+pick(p,v),0);const ok=p=>p.s==='pago',fu=p=>p.s!=='pago'&&p.s!=='cancelada';
   const d=c.dis||{data:HOJE,dev:null,multa:null,quem:'gbrac'};
   fx.innerHTML=`<div class="bar" style="justify-content:space-between;margin-top:0"><p class="kick" style="margin:0">Unidade ${c.u} · Monteluce Residence</p><button class="btn" id="fechar">Fechar</button></div>
   <h2>${esc(c.cli)}</h2>${c.st==='distrato'?'<span class="tag r" style="margin:0">Distratado</span>':''}${c.est?'<span class="tag o" style="margin:0">Fluxo estimado</span>':''}
+  ${plantaHtml(c.u)}
   <div class="facts"><div>Contrato<b>${esc(c.contrato||fd(c.venda))}</b></div><div>Corretor<b>${esc(c.cor||'—')}</b></div><div>Entrega prevista<b>${fd(c.entrega)}</b></div>
   <div>Preço<b>${brl(c.preco||0)}</b></div><div>Entrada<b>${brl(c.entrada||0)}</b></div><div>Financiamento<b>${brl(c.fin||0)}</b></div><div>Correção CUB (est.)<b>${c.cub?brl(c.cub.corr):'Sem cláusula'}</b>${c.cub?`<span class="sm mut">${c.cub.pct}% do CUB · base ${ml(c.cub.base)}</span>`:''}</div>
   <div>Já recebido<b>${brl(s(ok,'total'))}</b><span class="sm mut">líquido GBRAC ${brl(s(ok,'gb'))}</span></div><div>A receber<b>${brl(s(fu,'total'))}</b><span class="sm mut">líquido GBRAC ${brl(s(fu,'gb'))}</span></div></div>
