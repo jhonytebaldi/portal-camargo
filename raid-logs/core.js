@@ -524,8 +524,11 @@
     return ordenarNote(linhas).join('\n') + '\n';
   }
 
-  function sugestoes(lutas, txt, p, recusas) {
-    recusas = recusas || {};
+  function sugestoes(lutas, txt, p, recusas, extra) {
+    recusas = recusas || {}; extra = extra || {};
+    const dr = extra.dispel && extra.dispel.n ? extra.dispel : null;
+    const massa = dr ? dr.quem.filter(q => q.massaId && q.massa / dr.n >= 1) : [];
+    const ehMassa = e => massa.some(q => q.massaId === e.id && q.quem.toLowerCase() === e.tag.toLowerCase());
     const l0 = lutas[lutas.length - 1], boss = (BOSS[l0.enc] || {})[l0.dif] || { movimento: [], amp: [] };
     const note = lerNote(txt), cv = p.curva, m = media(cv.suave);
     const elenco = {}; for (const j of p.elenco) elenco[j.nome.toLowerCase()] = j;
@@ -562,6 +565,7 @@
     for (const c of [...cob].sort((x, y) => (y.cover - y.need) - (x.cover - x.need))) if (c.estado === 'sobra') for (const e of [...c.es].reverse()) cands.push({ e, de: c });
     for (const cd of cands) {
       const e = cd.e;
+      if (ehMassa(e)) continue; // esta servindo de dispel em massa: nao sugerir mover
       if (cd.de && cd.de.cover - durEfetiva(e.def) < cd.de.need) continue; // tirar este deixaria a janela descoberta
       for (const alvo of cob.filter(falta).sort((x, y) => (x.j.projetada ? 1 : 0) - (y.j.projetada ? 1 : 0) || y.j.rel - x.j.rel)) {
         if (alvo === cd.de) continue;
@@ -592,7 +596,7 @@
     }
     // 5) habito: a note diz uma coisa e o jogador costuma fazer outra
     for (const e of raidE) {
-      if (!e.jog || e.t >= p.alcance - 10) continue;
+      if (!e.jog || e.t >= p.alcance - 10 || ehMassa(e)) continue;
       const ln = p.disponiveis.find(x => x.quem === e.jog.nome && x.id === e.id); if (!ln) continue;
       const o = ln.ordens.filter(x => x.n >= 5).sort((x, y) => Math.abs(x.med - e.t) - Math.abs(y.med - e.t))[0];
       if (!o || Math.abs(o.med - e.t) <= 10 || Math.abs(o.med - e.t) > 45) continue;
@@ -609,6 +613,20 @@
       const motivo = j.rel === maior ? 'é o maior pico de dano da luta' : c.estado === 'falta' ? 'é um momento de muito dano e pouca cobertura de CD de cura (' + (c.n0 || 'nenhum') + ' na note)' : 'o dano fica ' + pc(j.rel).replace('+', '') + ' acima da média da luta';
       if (add({ key: 'def|' + t, para: 'RL', tipo: 'Call de defensivo', acao: { tipo: 'adicionar', texto: 'time:' + t + ';ph:1;tag:everyone;text:Defensivo pessoal;TTS:Defensivo pessoal;TTSTimer:3;' },
         texto: 'Incluir call de defensivo pessoal aos ' + mmss(t) + ': ' + motivo + ' (' + (j.dtps / 1e6).toFixed(1).replace('.', ',') + ' M/s, ' + j.fontes.join(' + ') + ')' + (j.projetada ? '. Janela projetada pelas kills de referência' : '') + '.' })) postos.push(t);
+    }
+    if (dr) {
+      const hp = dr.habs[0];
+      for (const q of massa) add({ key: 'massa|' + q.quem + '|' + q.massaId, para: q.quem, tipo: 'Dispel em massa', acao: null,
+        texto: 'O ' + (CD_POR_ID[q.massaId] || {}).nome + ' também está servindo de dispel em massa: remove em média ' + (q.massa / dr.n).toFixed(1).replace('.', ',') + ' debuffs por try' + (hp ? ' (' + hp.nome + ')' : '') + ', por volta de ' + mmss(q.massaT) + '. Se o tempo dele mudar na note, a raid perde esse dispel; por isso ele não entra nas sugestões de mover.' });
+      if (hp && hp.porTry >= 3) {
+        const quemDisp = dr.quem.filter(q => q.porTry >= 0.5 && elenco[q.quem.toLowerCase()]).map(q => q.quem);
+        for (const o of hp.ondas) {
+          const t = Math.round(o.t);
+          if (!quemDisp.length || t > p.horizonte || textos.some(e => /dispel/i.test(e.texto) && Math.abs(e.t - t) <= 10)) continue;
+          add({ key: 'dispel|' + hp.id + '|' + t, para: 'RL', tipo: 'Dispel', acao: { tipo: 'adicionar', texto: 'time:' + t + ';ph:1;tag:' + quemDisp.join(' ') + ';text:Dispel;TTS:Dispel;TTSTimer:2;' },
+            texto: 'Incluir aviso de dispel aos ' + mmss(t) + ' para ' + quemDisp.join(', ') + ': é quando entra ' + hp.nome + ' (' + Math.round(o.aplic) + ' aplicações por try nessa onda, vista em ' + o.tries + ' tries). Hoje ' + Math.round(o.pctDisp * 100) + '% são dispeladas' + (o.dur != null ? ', em média ' + o.dur.toFixed(1).replace('.', ',') + 's depois de aplicadas' : '') + '; o resto fica até expirar.' });
+        }
+      }
     }
     for (const a of boss.amp) {
       if (a.t > p.horizonte || textos.some(e => Math.abs(e.t - a.t) <= 10 && /burst|cora|heart|cd/i.test(e.texto))) continue;
@@ -714,6 +732,63 @@
     return { amp, linhas: linhas.sort((a, b) => ((a.jan[0] || {}).rel || 9) - ((b.jan[0] || {}).rel || 9)), nJan };
   }
 
+  // ---------- dispels e portal (qualquer boss) ----------
+  const VERSAO_DISP = 1;
+  const DISPEL_EM_MASSA = new Set([115310, 388615]); // Revival, Restoral
+  async function buscarDispels(gql, rel, lutasApi) {
+    const out = {}; for (const f of lutasApi) out[f.id] = { disp: [], aplic: [], portal: [], usos: [] };
+    const ini0 = Object.fromEntries(lutasApi.map(f => [f.id, f.startTime]));
+    const nome = id => (rel.atores[id] || {}).nome || ('#' + id);
+    const pag = async (tipo, fx) => { let evs = [], s = null;
+      for (let i = 0; i < 6; i++) { const d = await gql(`query($c:String!,$f:[Int],$fx:String,$s:Float){reportData{report(code:$c){events(fightIDs:$f,startTime:$s,dataType:${tipo},limit:10000,filterExpression:$fx){data nextPageTimestamp}}}}`, { c: rel.code, f: lutasApi.map(f => f.id), fx, s });
+        const e = d.reportData.report.events; evs = evs.concat(e.data || []); if (!e.nextPageTimestamp) break; s = e.nextPageTimestamp; }
+      return evs; };
+    const ids = new Set(), comIds = new Set();
+    for (const e of await pag('Dispels', "type='dispel'")) { const o = out[e.fight]; if (!o || e.isBuff || !e.extraAbilityGameID) continue; ids.add(e.extraAbilityGameID); comIds.add(e.abilityGameID);
+      o.disp.push({ t: (e.timestamp - ini0[e.fight]) / 1000, quem: nome(e.sourceID), alvo: nome(e.targetID), hab: e.extraAbilityGameID, com: e.abilityGameID }); }
+    const fx = (ids.size ? `(ability.id in (${[...ids].join(',')}) and type in ('applydebuff','removedebuff')) or ` : '') + `(ability.id=113942 and type in ('applydebuff','applybuff')) or (ability.id=111771 and type='cast')`;
+    const aberta = {};
+    for (const e of await pag('All', fx)) { const o = out[e.fight]; if (!o) continue; const t = (e.timestamp - ini0[e.fight]) / 1000;
+      if (e.abilityGameID === 111771) { o.portal.push(t); continue; }
+      if (e.abilityGameID === 113942) { o.usos.push({ t, quem: nome(e.targetID) }); continue; }
+      const k = e.fight + '|' + e.targetID + '|' + e.abilityGameID;
+      if (e.type === 'applydebuff') aberta[k] = t;
+      else if (aberta[k] != null) { const alvo = nome(e.targetID); o.aplic.push({ t: aberta[k], alvo, hab: e.abilityGameID, dur: t - aberta[k], disp: o.disp.some(x => x.alvo === alvo && x.hab === e.abilityGameID && Math.abs(x.t - t) <= 0.6) }); delete aberta[k]; } }
+    const d = await gql(`query($c:String!){reportData{report(code:$c){masterData{abilities{gameID name}}}}}`, { c: rel.code });
+    const nomes = {}; for (const a of d.reportData.report.masterData.abilities) if (ids.has(a.gameID) || comIds.has(a.gameID) || DISPEL_EM_MASSA.has(a.gameID)) nomes[a.gameID] = a.name;
+    return { lutas: out, nomes };
+  }
+  function dispelResumo(lutas, dados, nomes) {
+    const H = {}, Q = {}; let n = 0;
+    for (const l of lutas) {
+      const b = dados[l.rel + ':' + l.id]; if (!b) continue; n++;
+      const fim = tWipe(l);
+      for (const j of l.jogadores) if (Q[j.nome]) Q[j.nome].presente++;
+      for (const x of b.disp) { if (x.t > fim) continue; const q = Q[x.quem] = Q[x.quem] || { quem: x.quem, total: 0, presente: 1, com: {}, massa: [] }; q.total++; q.com[x.com] = (q.com[x.com] || 0) + 1; if (DISPEL_EM_MASSA.has(x.com)) q.massa.push(x.t); }
+      const porHab = {};
+      for (const a of b.aplic) { if (a.t > fim) continue; (porHab[a.hab] = porHab[a.hab] || []).push(a); }
+      for (const id in porHab) {
+        const h = H[id] = H[id] || { id: +id, nome: (nomes || {})[id] || ('spell ' + id), tries: 0, aplic: 0, disp: 0, durDisp: [], grupos: [] };
+        const as = porHab[id].sort((x, y) => x.t - y.t); h.tries++; h.aplic += as.length;
+        let g = null;
+        for (const a of as) { if (a.disp) { h.disp++; h.durDisp.push(a.dur); } if (!g || a.t - g.ult > 12) { g = { t: a.t, ult: a.t, n: 0, disp: 0, durs: [] }; h.grupos.push(g); } g.ult = a.t; g.n++; if (a.disp) { g.disp++; g.durs.push(a.dur); } }
+      }
+    }
+    const habs = Object.values(H).map(h => {
+      const gs = h.grupos.sort((a, b) => a.t - b.t), ondas = []; let cur = null;
+      for (const g of gs) { if (!cur || g.t - mediana(cur.map(x => x.t)) > 10) { cur = []; ondas.push(cur); } cur.push(g); }
+      return { id: h.id, nome: h.nome, tries: h.tries, porTry: h.aplic / h.tries, pctDisp: h.aplic ? h.disp / h.aplic : 0, durDisp: mediana(h.durDisp),
+        ondas: ondas.filter(o => o.length >= Math.max(3, h.tries * 0.2)).map(o => ({ t: mediana(o.map(x => x.t)), tries: o.length, aplic: mediana(o.map(x => x.n)), pctDisp: o.reduce((a, x) => a + x.disp, 0) / o.reduce((a, x) => a + x.n, 0), dur: mediana(o.flatMap(x => x.durs)) })) };
+    }).sort((a, b) => b.porTry * b.tries - a.porTry * a.tries);
+    const quem = Object.values(Q).map(q => ({ quem: q.quem, total: q.total, porTry: q.total / n, com: q.com, massa: q.massa.length, massaT: mediana(q.massa), massaId: +Object.keys(q.com).find(k => DISPEL_EM_MASSA.has(+k)) || null })).sort((a, b) => b.total - a.total);
+    return { n, habs, quem };
+  }
+  function portalResumo(lutas, dados) {
+    const ts = [], usos = []; let n = 0, com = 0;
+    for (const l of lutas) { const b = dados[l.rel + ':' + l.id]; if (!b || l.durS < 150) continue; n++; if (!b.portal.length) continue; com++; ts.push(Math.min(...b.portal)); usos.push(new Set(b.usos.map(u => u.quem)).size); }
+    return { n, com, t: mediana(ts), usos: mediana(usos), usosMin: usos.length ? Math.min(...usos) : null, usosMax: usos.length ? Math.max(...usos) : null };
+  }
+
   // Resumo dos CDs de um jogador: usos por try contra o maximo que o cooldown permitiria.
   function cdsDoJogador(lutas, nome) {
     const out = {};
@@ -726,5 +801,5 @@
     return Object.values(out).sort((a, b) => a.cd - b.cd);
   }
 
-  return { VERSAO_BOSS, temModulo, buscarBoss, ovosResumo, coracao, corteOvo, addsDeOvo, semanaDe, sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
+  return { VERSAO_DISP, buscarDispels, dispelResumo, portalResumo, VERSAO_BOSS, temModulo, buscarBoss, ovosResumo, coracao, corteOvo, addsDeOvo, semanaDe, sugestoes, aplicarSugestao, VERSAO_REF, buscarReferencias, ritmoDeDano, buscarCuraJogador, rendimentoCds, lerNote, aderencia, plano, cdsDoJogador, janelasDeDano, elencoAtual, VERSAO_CACHE, CDS, CD_POR_ID, codigoDoLink, listarRelatorio, buscarLutas, resumo, mortes, curva, picos, usoCds, healers, pessoais, tWipe, faseEm, janelaFase, mediana, media };
 });

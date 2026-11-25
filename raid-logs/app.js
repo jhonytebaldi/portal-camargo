@@ -41,7 +41,7 @@
     NOMES_RE = nomes.length ? new RegExp('(?<![\\w>])(' + nomes.join('|') + ')(?![\\w<])', 'g') : null;
   }
 
-  const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', boss: { dados: {}, lidos: new Set() }, semChamado: true, aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
+  const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', boss: { dados: {}, lidos: new Set() }, disp: { dados: {}, nomes: {}, lidos: new Set() }, semChamado: true, aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
 
   async function gql(query, variables) {
     const r = await fetch('api.php?a=graphql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
@@ -273,6 +273,7 @@
     h += '<h2>Defensivos pessoais e consumíveis</h2><div class="sub">Média por try de pelo menos 2 minutos (' + p.tries + ' tries). "Mortes iniciais" são as vezes em que o jogador esteve entre as 3 primeiras mortes.</div>' +
       '<table><tr><th>Jogador</th><th>Função</th><th class="n">Tries</th><th class="n">Mortes iniciais por try</th><th class="n">Defensivos por try</th><th class="n">Healthstone por try</th><th class="n">Poção de vida por try</th></tr>' +
       p.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + ({ healer: 'Healer', tank: 'Tank', dps: 'DPS' }[x.papel] || '') + '</td><td class="n">' + x.tries + '</td><td class="n">' + x.mortesM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pessM.toFixed(1).replace('.', ',') + '</td><td class="n">' + x.pedraM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pocaoM.toFixed(2).replace('.', ',') + '</td></tr>').join('') + '</table>';
+    h += secaoDispels(ls);
     return h;
   }
 
@@ -358,7 +359,8 @@
   }
   // Com note de base: cobertura por janela e sugestoes pontuais.
   function secaoNoteBase(ls, p) {
-    const r = C.sugestoes(ls, est.nota, p, est.recusas); est._sugs = r.sugs;
+    if (faltaDisp(ls)) carregarDisp(ls);
+    const r = C.sugestoes(ls, est.nota, p, est.recusas, { dispel: C.dispelResumo(ls, est.disp.dados, est.disp.nomes) }); est._sugs = r.sugs;
     const SIT = { sobra: '<span class="atencao">▲ CD sobrando</span>', falta: '<span class="alerta">⚠ Pouca cobertura</span>', ok: '✓ Coberta' };
     let h = '<h2>Note de base</h2><div class="sub">Esta é a note em que as sugestões se apoiam. Aceitar uma sugestão altera só a linha dela aqui. Você também pode editar o texto à mão; a análise refaz quando você sai da caixa. A aba Última try confere a execução contra esta note.</div>' +
       '<textarea id="note" class="note" spellcheck="false">' + esc(est.nota) + '</textarea>' +
@@ -480,6 +482,44 @@
   }
   const faltaBoss = ls => temBoss() && ls.some(l => !est.boss.dados[l.rel + ':' + l.id]) && !est.bossMsg;
   function cortesOvo(ls) { const m = {}; for (const l of ls) { const t = C.corteOvo(est.boss.dados[l.rel + ':' + l.id]); if (t != null) m[l.rel + ':' + l.id] = t; } return m; }
+
+  async function carregarDisp(ls) {
+    if (est.dispCarregando) return; est.dispCarregando = true; let mudou = false;
+    try {
+      for (const code of new Set(ls.map(l => l.rel))) {
+        const pr = est.porRel[code]; if (!pr) continue;
+        const arq = 'disp_' + code; let salvo = null;
+        if (!est.disp.lidos.has(code)) { salvo = await lerArq(arq); est.disp.lidos.add(code); if (salvo && salvo.v === C.VERSAO_DISP) { Object.assign(est.disp.nomes, salvo.nomes); for (const id in salvo.lutas) { est.disp.dados[code + ':' + id] = salvo.lutas[id]; mudou = true; } } }
+        const falt = ls.filter(l => l.rel === code && !est.disp.dados[code + ':' + l.id]).map(l => pr.rel.lutas.find(f => f.id === l.id)).filter(Boolean);
+        if (!falt.length) continue;
+        const r = await C.buscarDispels(gql, pr.rel, falt);
+        salvo = salvo || (await lerArq(arq)); if (!salvo || salvo.v !== C.VERSAO_DISP) salvo = { v: C.VERSAO_DISP, nomes: {}, lutas: {} };
+        Object.assign(salvo.nomes, r.nomes); Object.assign(est.disp.nomes, r.nomes);
+        for (const id in r.lutas) { salvo.lutas[id] = r.lutas[id]; est.disp.dados[code + ':' + id] = r.lutas[id]; }
+        await gravarArq(arq, salvo); mudou = true;
+      }
+      est.dispErro = null;
+    } catch (e) { est.dispErro = e.message === 'COTA' ? MSG_COTA : 'Erro ao baixar dispels: ' + e.message; mudou = true; }
+    est.dispCarregando = false;
+    if (mudou && (est.aba === 'healers' || est.aba === 'plano')) desenhar();
+  }
+  const faltaDisp = ls => ls.some(l => !est.disp.dados[l.rel + ':' + l.id]) && !est.dispErro;
+  function secaoDispels(ls) {
+    if (faltaDisp(ls)) carregarDisp(ls);
+    const r = C.dispelResumo(ls, est.disp.dados, est.disp.nomes), cls = n => (ls.map(l => l.jogadores.find(x => x.nome === n)).find(Boolean) || {}).classe;
+    let h = '<h2>Dispels</h2>' + (est.dispErro ? '<div class="aviso">' + esc(est.dispErro) + '</div>' : '');
+    if (!r.n) return h + '<p class="sub">Carregando os dispels…</p>';
+    if (!r.habs.length) return h + '<p class="sub">Nenhum debuff foi dispelado nas ' + r.n + ' tries analisadas.</p>';
+    h += '<div class="sub">Debuffs que alguém dispelou nas ' + r.n + ' tries analisadas (até a 4ª morte). "Ondas" são os momentos em que o debuff costuma entrar.</div>' +
+      '<table><tr><th>Debuff</th><th class="n">Tries</th><th class="n">Aplicações por try</th><th class="n">Dispeladas</th><th class="n">Tempo até o dispel</th><th>Ondas (momento · aplicações · dispeladas)</th></tr>' +
+      r.habs.map(x => '<tr><td>' + hab(x.nome, x.id) + '</td><td class="n">' + x.tries + '</td><td class="n">' + x.porTry.toFixed(1).replace('.', ',') + '</td><td class="n">' + Math.round(x.pctDisp * 100) + '%</td><td class="n">' + (x.durDisp == null ? '—' : x.durDisp.toFixed(1).replace('.', ',') + 's') + '</td><td>' +
+        x.ondas.map(o => mmss(o.t) + ' · ' + Math.round(o.aplic) + ' · ' + Math.round(o.pctDisp * 100) + '%').join('<br>') + '</td></tr>').join('') + '</table>';
+    h += '<table><tr><th>Quem dispela</th><th class="n">Dispels</th><th class="n">Por try</th><th>Com o quê</th></tr>' +
+      r.quem.map(q => '<tr><td>' + selo(q.quem, cls(q.quem)) + '</td><td class="n">' + q.total + '</td><td class="n">' + q.porTry.toFixed(1).replace('.', ',') + '</td><td>' + Object.entries(q.com).sort((a, b) => b[1] - a[1]).map(([id, n]) => hab((C.CD_POR_ID[id] || {}).nome || est.disp.nomes[id] || 'spell ' + id, +id) + ' ' + n).join(' · ') + '</td></tr>').join('') + '</table>';
+    const pt = C.portalResumo(ls, est.disp.dados);
+    if (pt.n) h += '<h2>Portal (' + hab('Demonic Gateway', 111771) + ')</h2><div class="sub">' + (pt.com ? 'Colocado em ' + pt.com + ' das ' + pt.n + ' tries com pelo menos 2:30, tipicamente aos ' + mmss(pt.t) + '. Quem atravessou: mediana de ' + Math.round(pt.usos) + ' jogadores por try (de ' + pt.usosMin + ' a ' + pt.usosMax + '). O log não registra onde o portal foi colocado, só quando e quem usou.' : 'Nenhum portal colocado nas ' + pt.n + ' tries com pelo menos 2:30.') + '</div>';
+    return h;
+  }
 
   function abaBoss(ls) {
     if (faltaBoss(ls)) carregarBoss(ls);
