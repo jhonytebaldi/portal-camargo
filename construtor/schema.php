@@ -32,6 +32,24 @@ function co_migrar(PDO $pdo): array {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela co_user_paginas';
     }
+    $col = function (string $tb, string $c) use ($pdo): bool {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?");
+        $st->execute([$tb, $c]); return (int)$st->fetchColumn() > 0;
+    };
+    if (!$col('co_paginas', 'pedido_em')) {
+        $pdo->exec("ALTER TABLE co_paginas ADD COLUMN pedido_em DATETIME NULL, ADD COLUMN pedido_por INT UNSIGNED NULL");
+        $feitos[] = 'co_paginas.pedido_em';
+    }
+    $tem = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'co_config'")->fetchColumn();
+    if (!$tem) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS co_config (
+            k VARCHAR(60) NOT NULL PRIMARY KEY,
+            v VARCHAR(255) NOT NULL,
+            atualizado_em DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela co_config';
+    }
     $st = $pdo->prepare("SELECT COUNT(*) FROM co_paginas WHERE slug='gbrac'"); $st->execute();
     if (!(int)$st->fetchColumn()) {
         $pdo->prepare("INSERT INTO co_paginas (slug,nome,descricao,ativo,ordem) VALUES ('gbrac','GBRAC','Monteluce Residence — fluxo de recebíveis',1,10)")->execute();

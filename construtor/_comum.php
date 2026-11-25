@@ -34,3 +34,14 @@ function co_csrf(): string {
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
     return $_SESSION['csrf'];
 }
+
+/** Chave de serviço da carga automática: config.php (CONSTRUTOR_TOKEN) ou gerada no admin (co_config). */
+function co_token_valido(string $tok): bool {
+    if ($tok === '') return false;
+    if (defined('CONSTRUTOR_TOKEN') && CONSTRUTOR_TOKEN !== '' && hash_equals(CONSTRUTOR_TOKEN, $tok)) return true;
+    try {
+        $st = db()->prepare("SELECT v FROM co_config WHERE k='api_token_hash'"); $st->execute();
+        $hash = (string)$st->fetchColumn();
+        return $hash !== '' && hash_equals($hash, hash('sha256', $tok));
+    } catch (Throwable $e) { return false; }
+}
