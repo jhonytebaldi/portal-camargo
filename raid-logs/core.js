@@ -30,10 +30,10 @@
     [740, 'Tranquility', 'raid', 180, 8], [391528, 'Convoke the Spirits', 'raid', 120, 4], [33891, 'Incarnation: Tree of Life', 'raid', 180, 30],
     [197721, 'Flourish', 'raid', 90, 8], [102342, 'Ironbark', 'ext', 90, 12], [22812, 'Barkskin', 'pess', 60, 8], [61336, 'Survival Instincts', 'pess', 180, 6], [108238, 'Renewal', 'pess', 90, 0],
     // Evoker
-    [363534, 'Rewind', 'raid', 240, 0], [359816, 'Dream Flight', 'raid', 120, 0], [370960, 'Emerald Communion', 'raid', 180, 5], [374227, 'Zephyr', 'raid', 120, 8],
+    [363534, 'Rewind', 'raid', 240, 0], [370537, 'Stasis', 'raid', 90, 0], [359816, 'Dream Flight', 'raid', 120, 0], [370960, 'Emerald Communion', 'raid', 180, 5], [374227, 'Zephyr', 'raid', 120, 8],
     [357170, 'Time Dilation', 'ext', 60, 8], [363916, 'Obsidian Scales', 'pess', 90, 12], [374348, 'Renewing Blaze', 'pess', 90, 8],
     // Raid CDs de DPS/tank
-    [97462, 'Rallying Cry', 'raid', 180, 10], [51052, 'Anti-Magic Zone', 'raid', 240, 6], [196718, 'Darkness', 'raid', 300, 8], [414660, 'Mass Barrier', 'raid', 180, 60],
+    [97462, 'Rallying Cry', 'raid', 180, 10], [51052, 'Anti-Magic Zone', 'raid', 120, 6], [196718, 'Darkness', 'raid', 300, 8], [414660, 'Mass Barrier', 'raid', 180, 60],
     // Pessoais de DPS/tank
     [48707, 'Anti-Magic Shell', 'pess', 60, 5], [48792, 'Icebound Fortitude', 'pess', 120, 8], [49039, 'Lichborne', 'pess', 120, 10],
     [45438, 'Ice Block', 'pess', 240, 10], [414658, 'Ice Cold', 'pess', 240, 6], [55342, 'Mirror Image', 'pess', 120, 40], [342245, 'Alter Time', 'pess', 50, 10], [110959, 'Greater Invisibility', 'pess', 120, 3],
@@ -538,6 +538,10 @@
     const cob = p.janelas.map(j => { const es = raidE.filter(e => e.t >= j.a - 8 && e.t <= j.b); return { j, es, cover: es.reduce((a, e) => a + durEfetiva(e.def), 0), need: j.b - j.a + 4 }; });
     const falta = c => c.cover < c.need * 0.5, sobra = c => c.cover >= c.need * 1.25 && c.es.length >= 3;
     for (const c of cob) { c.estado = sobra(c) ? 'sobra' : falta(c) ? 'falta' : 'ok'; c.cover0 = c.cover; c.n0 = c.es.length; c.lista0 = c.es.map(e => quem(e) + ' ' + e.def.nome); }
+    // cooldown real: o menor intervalo que o proprio jogador ja fez entre dois usos (talentos mudam o padrao)
+    const obs = {};
+    for (const l of lutas) { const ult = {}; for (const cd of l.cds) { const k = cd.quem.toLowerCase() + '|' + cd.id; if (ult[k] != null && cd.t - ult[k] >= 30) obs[k] = Math.min(obs[k] || 1e9, cd.t - ult[k]); ult[k] = cd.t; } }
+    for (const e of raidE) { const o = obs[e.tag.toLowerCase() + '|' + e.id]; e.cdObs = o != null; e.def = { ...e.def, cd: o != null ? Math.min(e.def.cd, Math.floor(o)) : e.def.cd }; }
     const livre = (tag, id, cd, t, menos) => raidE.every(o => o === menos || o.id !== id || o.tag.toLowerCase() !== tag.toLowerCase() || Math.abs(o.tEf - t) >= cd);
     const emMovimento = (id, t) => CANALIZADOS.has(id) ? boss.movimento.find(mv => t >= mv.t - 4 && t <= mv.t + mv.dur) : null;
     const danoEm = t => { const i = Math.floor(t); return i >= 0 && i < cv.len ? cv.suave[i] : null; };
@@ -549,19 +553,32 @@
       return (ant ? 'O uso anterior, aos ' + mmss(ant.tEf) + ', já terá voltado. ' : '') + (prox ? 'O uso seguinte, aos ' + mmss(prox.tEf) + ', não é afetado: o CD volta aos ' + mmss(t + e.def.cd) + '.' : '');
     };
 
+    // 0) nomes da note que nao batem com quem esta jogando
+    const todos = {}; for (const l of lutas) for (const j of l.jogadores) todos[j.nome.toLowerCase()] = j.nome;
+    const sem = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const TAGS_GERAIS = /^(everyone|tank|healer|damager|melee|ranged|group\d|\d+)$/i, porTag = {};
+    for (const e of note) { if (!e.id || /\s/.test(e.tag) || TAGS_GERAIS.test(e.tag)) continue; (porTag[e.tag] = porTag[e.tag] || []).push(e); }
+    const ultNoite = new Date(Math.max(...lutas.map(l => l.data))).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    for (const tag in porTag) {
+      const k = tag.toLowerCase(), n = porTag[tag].length, quando = porTag[tag].slice(0, 6).map(e => mmss(e.t)).join(', ') + (n > 6 ? '…' : '');
+      if (elenco[k]) continue;
+      if (todos[k]) add({ key: 'fora|' + tag, para: 'RL', tipo: 'Jogador fora', acao: null, texto: todos[k] + ' tem ' + n + ' lembrete' + (n > 1 ? 's' : '') + ' na note (' + quando + '), mas não jogou na última noite carregada (' + ultNoite + '). Se não estiver na raid, esses CDs ficam sem dono.' });
+      else { const p1 = Object.values(todos).find(x => sem(x) === sem(tag)) || Object.values(todos).find(x => sem(x).slice(0, 3) === sem(tag).slice(0, 3) && Math.abs(x.length - tag.length) <= 2);
+        add({ key: 'nome|' + tag, para: 'RL', tipo: 'Nome', acao: null, texto: 'A note marca ' + n + ' lembrete' + (n > 1 ? 's' : '') + ' para "' + tag + '" (' + quando + '), mas ninguém com esse nome aparece nos logs' + (p1 ? '; o mais parecido é ' + p1 : '') + '. O NSRT só mostra o lembrete se o nome bater com o personagem ou com o nickname cadastrado. Se for nickname, pode recusar.' }); }
+    }
     // 1) conflitos de cooldown dentro da propria note
     const vistos = new Set();
     for (const e of raidE) for (const o of raidE) {
       if (o === e || o.id !== e.id || o.tag.toLowerCase() !== e.tag.toLowerCase() || o.t <= e.t || o.t - e.t >= e.def.cd) continue;
       const k = 'conflito|' + e.tag + '|' + e.id + '|' + e.t + '|' + o.t; if (vistos.has(k)) continue; vistos.add(k);
-      add({ key: k, para: quem(e), tipo: 'Cooldown', texto: 'O ' + e.def.nome + ' aparece aos ' + mmss(e.t) + ' e de novo aos ' + mmss(o.t) + ', mas o cooldown é de ' + mmss(e.def.cd) + ': o segundo uso só estaria pronto aos ' + mmss(e.t + e.def.cd) + '.', acao: null });
+      add({ key: k, para: quem(e), tipo: 'Cooldown', texto: 'O ' + e.def.nome + ' aparece aos ' + mmss(e.t) + ' e de novo aos ' + mmss(o.t) + ', mas o cooldown ' + (e.cdObs ? 'que ele mostra nos logs' : 'padrão') + ' é de ' + mmss(e.def.cd) + ': o segundo uso só estaria pronto aos ' + mmss(e.t + e.def.cd) + '.' + (e.cdObs ? '' : ' Se ele tiver talento que reduz o cooldown, pode recusar; nos logs ele ainda não usou duas vezes na mesma try para eu conferir.'), acao: null });
     }
     // 2) canalizado em cima de movimento
     for (const e of raidE) { const mv = emMovimento(e.id, e.t); if (mv) add({ key: 'mov|' + e.tag + '|' + e.id + '|' + e.t, para: quem(e), tipo: 'Movimento', texto: 'O ' + e.def.nome + ' está aos ' + mmss(e.t) + ' e é canalizado, mas aos ' + mmss(mv.t) + ' tem ' + mv.nome + ', momento de movimento. Risco de cortar o cast.', acao: null }); }
 
     // 3) mover CDs: primeiro os que estao fora de qualquer janela, depois os de janelas com sobra
     const cands = [];
-    for (const e of raidE) if (!cob.some(c => c.es.includes(e))) { const d = danoEm(e.t); if (d != null && d < m) cands.push({ e, de: null, d }); }
+    for (const e of raidE) if (!cob.some(c => c.es.includes(e))) { const d = danoEm(e.t); if (d != null && d < m * 0.85) cands.push({ e, de: null, d }); }
     for (const c of [...cob].sort((x, y) => (y.cover - y.need) - (x.cover - x.need))) if (c.estado === 'sobra') for (const e of [...c.es].reverse()) cands.push({ e, de: c });
     for (const cd of cands) {
       const e = cd.e;
@@ -570,7 +587,7 @@
       for (const alvo of cob.filter(falta).sort((x, y) => (x.j.projetada ? 1 : 0) - (y.j.projetada ? 1 : 0) || y.j.rel - x.j.rel)) {
         if (alvo === cd.de) continue;
         const novoT = Math.max(0, alvo.j.a - 2 + alvo.cover);
-        if (!livre(e.tag, e.id, e.def.cd, novoT, e) || emMovimento(e.id, novoT)) continue;
+        if (Math.abs(novoT - e.t) < 20 || !livre(e.tag, e.id, e.def.cd, novoT, e) || emMovimento(e.id, novoT)) continue;
         const key = 'mover|' + e.tag + '|' + e.id + '|' + e.t + '|' + novoT;
         const origem = cd.de ? 'numa janela que já tem ' + cd.de.n0 + ' CDs (' + cd.de.lista0.join(', ') + ')' : 'num momento de dano baixo (' + pc(cd.d / m) + ' em relação à média da luta)';
         const ok = add({ key, para: quem(e), tipo: 'Mover', acao: { tipo: 'mover', linha: e.linha, novoT },
