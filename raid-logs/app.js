@@ -360,7 +360,7 @@
   // Com note de base: cobertura por janela e sugestoes pontuais.
   function secaoNoteBase(ls, p) {
     if (faltaDisp(ls)) carregarDisp(ls);
-    const r = C.sugestoes(ls, est.nota, p, est.recusas, { dispel: C.dispelResumo(ls, est.disp.dados, est.disp.nomes) }); est._sugs = r.sugs;
+    const r = C.sugestoes(ls, est.nota, p, est.recusas, { dispel: C.dispelResumo(ls, est.disp.dados, est.disp.nomes), dispDados: est.disp.dados }); est._sugs = r.sugs;
     const SIT = { sobra: '<span class="atencao">▲ CD sobrando</span>', falta: '<span class="alerta">⚠ Pouca cobertura</span>', ok: '✓ Coberta' };
     let h = '<h2>Note de base</h2><div class="sub">Esta é a note em que as sugestões se apoiam. Aceitar uma sugestão altera só a linha dela aqui. Você também pode editar o texto à mão; a análise refaz quando você sai da caixa. A aba Última try confere a execução contra esta note.</div>' +
       '<textarea id="note" class="note" spellcheck="false">' + esc(est.nota) + '</textarea>' +
@@ -540,10 +540,9 @@
     const co = C.coracao(ls, est.boss.dados), cols = co.amp.map((a, i) => i).filter(i => co.nJan[i] > 0);
     h += '<h2>Burst no coração (' + hab('Venomous Heart', 1299526) + ')</h2>';
     if (!cols.length) return h + '<p class="sub">Nenhuma try selecionada chegou ao primeiro coração (2:26).</p>';
-    h += '<div class="sub">DPS de cada jogador durante os 20s do coração, e quantas vezes isso é maior que o DPS médio dele na mesma try. Quem guarda os CDs de dano para a janela fica bem acima de 1×; quem fica perto ou abaixo de 1× gastou antes, estava em outra função (ovos, adds) ou morreu. É o dano total do jogador na janela, não só no coração.</div>' +
-      '<table><tr><th>Jogador</th><th>Spec</th>' + cols.map(i => '<th class="n">' + (i + 1) + 'º coração (' + mmss(co.amp[i].t) + '): tries</th><th class="n">DPS na janela</th><th class="n">vs. média dele</th>').join('') + '</tr>' +
-      co.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td>' + cols.map(i => { const w = x.jan[i]; return w ? '<td class="n">' + w.n + '</td><td class="n">' + num(w.dps) + '</td><td class="n">' + (w.rel < 1.2 ? '<span class="alerta">' : w.rel < w.raid * 0.7 ? '<span class="atencao">' : '<span>') + w.rel.toFixed(1).replace('.', ',') + '×</span></td>' : '<td class="n">—</td><td></td><td></td>'; }).join('') + '</tr>').join('') + '</table>' +
-      '<div class="sub">Mediana da raid no 1º coração: ' + ((co.linhas.find(x => x.jan[cols[0]]) || { jan: [] }).jan[cols[0]] || { raid: 0 }).raid.toFixed(1).replace('.', ',') + '×.</div>';
+    h += '<div class="sub">Só o dano causado no próprio ' + hab('Venomous Heart', 1299526) + ', somado em cada vez que ele fica exposto. "Parte da raid" é quanto do dano total dos DPS no coração veio daquele jogador. "vs. média dele" compara o DPS dele no coração com o DPS médio dele na try inteira: abaixo de 1× significa que bateu menos no coração do que bate normalmente.</div>' +
+      '<table><tr><th>Jogador</th><th>Spec</th>' + cols.map(i => '<th class="n">' + (i + 1) + 'º coração (' + mmss(co.amp[i].t) + '): tries</th><th class="n">Dano no coração</th><th class="n">Parte da raid</th><th class="n">vs. média dele</th>').join('') + '</tr>' +
+      co.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td>' + cols.map(i => { const w = x.jan[i]; return w ? '<td class="n">' + w.n + '</td><td class="n">' + (w.cor == null ? '—' : num(w.cor)) + '</td><td class="n">' + (w.parte * 100).toFixed(1).replace('.', ',') + '%</td><td class="n">' + (w.rel == null ? '—' : (w.rel < 1 ? '<span class="alerta">' : '<span>') + w.rel.toFixed(1).replace('.', ',') + '×</span>') + '</td>' : '<td class="n">—</td><td></td><td></td><td></td>'; }).join('') + '</tr>').join('') + '</table>';
     return h;
   }
 

@@ -42,6 +42,8 @@
     [184364, 'Enraged Regeneration', 'pess', 120, 8], [118038, 'Die by the Sword', 'pess', 120, 8], [871, 'Shield Wall', 'pess', 180, 8],
     [198589, 'Blur', 'pess', 60, 10], [196555, 'Netherwalk', 'pess', 180, 6],
     [31224, 'Cloak of Shadows', 'pess', 120, 5], [5277, 'Evasion', 'pess', 120, 10], [185311, 'Crimson Vial', 'pess', 30, 4], [1966, 'Feint', 'pess', 15, 6],
+    // Movimento de raid
+    [106898, 'Stampeding Roar', 'mov', 60, 8], [77761, 'Stampeding Roar', 'mov', 60, 8], [77764, 'Stampeding Roar', 'mov', 60, 8], [192077, 'Wind Rush Totem', 'mov', 90, 15], [374968, 'Time Spiral', 'mov', 120, 10],
     // Consumiveis
     [6262, 'Healthstone', 'cons', 0, 0], [1295247, 'Health Potion', 'cons', 300, 0],
   ].map(c => ({ id: c[0], nome: c[1], tipo: c[2], cd: c[3], dur: c[4] }));
@@ -382,7 +384,7 @@
   // Confere, em uma try, cada CD da note: usado na hora, fora de hora ou nao usado.
   function aderencia(l, note) {
     const fim = tWipe(l), usados = new Set();
-    return note.filter(n => n.id && n.tag.toLowerCase() !== 'everyone' && n.t <= fim - 3).map(n => {
+    return note.filter(n => n.id && CD_POR_ID[n.id] && CD_POR_ID[n.id].tipo !== 'mov' && n.tag.toLowerCase() !== 'everyone' && n.t <= fim - 3).map(n => {
       const cs = l.cds.map((c, i) => ({ c, i })).filter(x => x.c.id === n.id && x.c.quem.toLowerCase() === n.tag.toLowerCase() && !usados.has(x.i))
         .sort((x, y) => Math.abs(x.c.t - n.t) - Math.abs(y.c.t - n.t));
       const m = cs[0] && Math.abs(cs[0].c.t - n.t) <= 25 ? cs[0] : null;
@@ -506,6 +508,9 @@
   const BOSS = { 3492: { 5: {
     movimento: [56, 113, 427, 482, 532, 576].map(t => ({ nome: 'Caustic Waves', t, dur: 10 })),
     amp: [145.5, 294.6, 583.7].map(t => ({ nome: 'Venomous Heart', t, dur: 20 })),
+    correria: [['Spectral Coils', 40, 6, 'soak em grupo'], ['Caustic Waves', 56, 8, 'ondas'], ['Caustic Waves', 113, 8, 'ondas'], ['Spectral Coils', 134, 6, 'soak em grupo'], ['Grasping Fangs', 197, 6, 'debuff com movimento'],
+      ['Spectral Coils', 337, 18, 'sequência de soaks'], ['Caustic Waves', 427, 8, 'ondas'], ['Circling Prey', 440, 8, 'quebra de plataforma'], ['Caustic Waves', 482, 8, 'ondas'], ['Circling Prey', 491, 8, 'quebra de plataforma'],
+      ['Acidic Expulsion', 519, 6, 'dot com movimento'], ['Caustic Waves', 532, 8, 'ondas'], ['Circling Prey', 552, 8, 'quebra de plataforma'], ['Caustic Waves', 576, 8, 'ondas'], ['Circling Prey', 607, 8, 'quebra de plataforma']].map(x => ({ nome: x[0], t: x[1], dur: x[2], oque: x[3] })),
   } } };
   const CANALIZADOS = new Set([64843, 740, 443028, 391528, 421453]);
   const mmss = t => { t = Math.round(t); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
@@ -529,7 +534,7 @@
     const dr = extra.dispel && extra.dispel.n ? extra.dispel : null;
     const massa = dr ? dr.quem.filter(q => q.massaId && q.massa / dr.n >= 1) : [];
     const ehMassa = e => massa.some(q => q.massaId === e.id && q.quem.toLowerCase() === e.tag.toLowerCase());
-    const l0 = lutas[lutas.length - 1], boss = (BOSS[l0.enc] || {})[l0.dif] || { movimento: [], amp: [] };
+    const l0 = lutas[lutas.length - 1], boss = { movimento: [], amp: [], correria: [], ...((BOSS[l0.enc] || {})[l0.dif] || {}) };
     const note = lerNote(txt), cv = p.curva, m = media(cv.suave);
     const elenco = {}; for (const j of p.elenco) elenco[j.nome.toLowerCase()] = j;
     const raidE = note.filter(e => e.id && (CD_POR_ID[e.id] || {}).tipo === 'raid').map(e => ({ ...e, def: CD_POR_ID[e.id], jog: elenco[e.tag.toLowerCase()] || null, tEf: e.t }))
@@ -621,6 +626,48 @@
       add({ key: 'habito|' + e.tag + '|' + e.id + '|' + e.t, para: quem(e), tipo: 'Execução', acao: livre(e.tag, e.id, e.def.cd, novoT, e) ? { tipo: 'mover', linha: e.linha, novoT } : null,
         texto: 'Na note o ' + e.def.nome + ' está aos ' + mmss(e.t) + ', mas nas tries ele costuma sair aos ' + mmss(o.med) + ' (' + o.n + ' usos, entre ' + mmss(o.min) + ' e ' + mmss(o.max) + '). Vale conversar: ou ele segue a note, ou a note passa a refletir o que ele faz (aceitar muda a note para ' + mmss(novoT) + ').' });
     }
+    // 5b) CDs de movimento de raid (Roar, Wind Rush...) contra os momentos de correria do boss
+    if (boss.correria.length) {
+      const dd = extra.dispDados || {}, usosMov = {}; // usos reais: 'quem|nome' -> [{l, t, id}]
+      const obsM = {}; let temDados = false;
+      for (const l of lutas) { const b = dd[l.rel + ':' + l.id]; if (!b || !b.mov) continue; temDados = true; const ult = {};
+        for (const u of b.mov) { const k = u.quem.toLowerCase() + '|' + (CD_POR_ID[u.id] || {}).nome; (usosMov[k] = usosMov[k] || []).push({ l, t: u.t, id: u.id }); if (ult[k] != null && u.t - ult[k] >= 30) obsM[k] = Math.min(obsM[k] || 1e9, u.t - ult[k]); ult[k] = u.t; } }
+      const movE = note.filter(e => e.id && (CD_POR_ID[e.id] || {}).tipo === 'mov').map(e => { const def = CD_POR_ID[e.id], k = e.tag.toLowerCase() + '|' + def.nome; return { ...e, def: { ...def, cd: obsM[k] != null ? Math.min(def.cd, Math.floor(obsM[k])) : def.cd }, k, jog: elenco[e.tag.toLowerCase()] || null, tEf: e.t }; });
+      const livreM = (k, cd, t, menos) => movE.every(o => o === menos || o.k !== k || Math.abs(o.tEf - t) >= cd);
+      const evs = boss.correria.filter(ev => ev.t <= p.horizonte).map(ev => ({ ...ev, es: movE.filter(e => e.t >= ev.t - 12 && e.t <= ev.t + ev.dur) }));
+      const descobertos = () => evs.filter(ev => !ev.es.length);
+      // sobrando: dois CDs de movimento praticamente juntos
+      for (const ev of evs) for (const e of ev.es.slice(1)) {
+        const primeiro = ev.es[0]; if (Math.abs(e.t - primeiro.t) > 4) continue;
+        const alvo = descobertos().filter(x => livreM(e.k, e.def.cd, x.t - 3, e)).sort((x, y) => Math.abs(x.t - e.t) - Math.abs(y.t - e.t))[0]; if (!alvo) continue;
+        const novoT = alvo.t - 3;
+        if (add({ key: 'movmover|' + e.tag + '|' + e.id + '|' + e.t + '|' + novoT, para: 'RL', tipo: 'Movimento de raid', acao: { tipo: 'mover', linha: e.linha, novoT },
+          texto: 'O ' + e.def.nome + ' de ' + (e.jog ? e.jog.nome : e.tag) + ' está aos ' + mmss(e.t) + ', praticamente junto com o ' + primeiro.def.nome + ' de ' + (primeiro.jog ? primeiro.jog.nome : primeiro.tag) + ' (' + mmss(primeiro.t) + '); bônus de velocidade desse tipo em geral não se somam. Enquanto isso, ' + alvo.nome + ' aos ' + mmss(alvo.t) + ' (' + alvo.oque + ') não tem nenhum CD de movimento na note. Que tal mover para ' + mmss(novoT) + '?' })) { e.tEf = novoT; alvo.es.push(e); }
+      }
+      // descobertos: sugerir quem tem um livre
+      const quemTem = {}; for (const e of movE) if (e.jog) quemTem[e.k] = { quem: e.jog.nome, id: e.id, nome: e.def.nome, cd: e.def.cd };
+      for (const k in usosMov) { const q = k.split('|')[0]; if (elenco[q] && !quemTem[k]) { const id = usosMov[k][0].id, def = CD_POR_ID[id]; quemTem[k] = { quem: elenco[q].nome, id, nome: def.nome, cd: obsM[k] != null ? Math.min(def.cd, Math.floor(obsM[k])) : def.cd }; } }
+      const extrasM = [];
+      for (const ev of descobertos()) {
+        const novoT = ev.t - 3;
+        for (const k in quemTem) { const q = quemTem[k];
+          if (!livreM(k, q.cd, novoT, null) || extrasM.some(x => x.k === k && Math.abs(x.t - novoT) < q.cd)) continue;
+          if (add({ key: 'movadd|' + q.quem + '|' + q.id + '|' + novoT, para: 'RL', tipo: 'Movimento de raid', acao: { tipo: 'adicionar', texto: 'time:' + novoT + ';ph:1;tag:' + q.quem + ';spellid:' + q.id + ';' },
+            texto: ev.nome + ' aos ' + mmss(ev.t) + ' (' + ev.oque + ') não tem nenhum CD de movimento na note' + (ev.t >= p.alcance ? ' (trecho que a raid ainda não alcançou)' : '') + '. O ' + q.nome + ' de ' + q.quem + ' está livre nesse momento. Sugestão: adicionar aos ' + mmss(novoT) + '.' })) { extrasM.push({ k, t: novoT }); break; }
+        }
+      }
+      // cooldown e execucao
+      const vist = new Set();
+      for (const e of movE) for (const o of movE) { if (o === e || o.k !== e.k || o.t <= e.t || o.t - e.t >= e.def.cd) continue; const key = 'movcd|' + e.tag + '|' + e.id + '|' + e.t + '|' + o.t; if (vist.has(key)) continue; vist.add(key);
+        add({ key, para: e.jog ? e.jog.nome : e.tag, tipo: 'Cooldown', acao: null, texto: 'O ' + e.def.nome + ' aparece aos ' + mmss(e.t) + ' e de novo aos ' + mmss(o.t) + ', mas o cooldown ' + (obsM[e.k] != null ? 'que ele mostra nos logs' : 'padrão') + ' é de ' + mmss(e.def.cd) + '.' + (obsM[e.k] != null ? '' : ' Se tiver talento que reduz, pode recusar.') }); }
+      if (temDados) { const exec = {};
+        for (const e of movE) { if (!e.jog || e.t > p.alcance - 5) continue;
+          const ts = lutas.filter(l => dd[l.rel + ':' + l.id] && tWipe(l) >= e.t + 5 && l.jogadores.some(j => j.nome === e.jog.nome)); if (ts.length < 5) continue;
+          const us = usosMov[e.k] || [], k = ts.filter(l => us.some(u => u.l === l && Math.abs(u.t - e.t) <= 12)).length;
+          if (k / ts.length < 0.5) (exec[e.k] = exec[e.k] || { e, itens: [] }).itens.push(mmss(e.t) + ' (' + k + ' de ' + ts.length + ' tries)'); }
+        for (const k in exec) { const x = exec[k]; add({ key: 'movexec|' + k + '|' + x.itens.length, para: x.e.jog.nome, tipo: 'Execução', acao: null,
+          texto: 'O ' + x.e.def.nome + ' está na note, mas quase não sai perto dos momentos marcados: ' + x.itens.join(', ') + '. Se a note já estava em uso nessas noites, o lembrete não está sendo seguido (ou não está aparecendo para ele).' }); } }
+    }
     // 6) para o RL: call de defensivo e aviso de burst
     const textos = note.filter(e => e.texto && !e.id), maior = Math.max(...p.janelas.map(j => j.rel)), postos = textos.filter(e => /defens/i.test(e.texto)).map(e => e.t);
     for (const c of [...cob].sort((x, y) => y.j.rel - x.j.rel)) {
@@ -655,7 +702,7 @@
   }
 
   // ---------- modulo do Ula'tek (3492): ovos e coracao ----------
-  const VERSAO_BOSS = 1;
+  const VERSAO_BOSS = 2;
   const ULA = { casca: 1307612, respingo: 1307635, onda: 1292403 };
   const temModulo = enc => enc === 3492;
   // Baixa, para as lutas pedidas de um relatorio, os eventos de ovo e o dano por jogador ao longo da luta.
@@ -698,10 +745,14 @@
       out[f.id].carregaram = [...new Set(cascas.map(k => k.quem))];
     }
     // dano por jogador (so lutas que chegam no primeiro coracao)
+    // id do Venomous Heart neste relatorio, para medir so o dano causado nele
+    const md = await gql(`query($c:String!){reportData{report(code:$c){masterData{actors(type:"NPC"){id name}}}}}`, { c: rel.code });
+    const coracaoId = (md.reportData.report.masterData.actors.find(a => a.name === 'Venomous Heart') || {}).id || null;
     const amp = BOSS[3492][5].amp, longas = lutasApi.filter(f => (f.endTime - f.startTime) / 1000 >= amp[0].t + 10);
     for (let i = 0; i < longas.length; i += 8) {
       const lote = longas.slice(i, i + 8);
-      const q = lote.map(f => `g${f.id}: graph(fightIDs:[${f.id}],startTime:${f.startTime},endTime:${f.endTime},dataType:DamageDone)`).join('\n');
+      const q = lote.map(f => `g${f.id}: graph(fightIDs:[${f.id}],startTime:${f.startTime},endTime:${f.endTime},dataType:DamageDone)` +
+        (coracaoId ? `\nc${f.id}: graph(fightIDs:[${f.id}],startTime:${f.startTime},endTime:${f.endTime},dataType:DamageDone,targetID:${coracaoId})` : '')).join('\n');
       const d = await gql(`query($c:String!){reportData{report(code:$c){${q}}}}`, { c: rel.code });
       for (const f of lote) {
         const durS = Math.max(1, Math.round((f.endTime - f.startTime) / 1000)), dano = {};
@@ -710,7 +761,12 @@
           const v = reamostrar(s, f.startTime, durS);
           dano[s.name] = { total: v.reduce((a, b) => a + b, 0), jan: amp.map(a => { const x = Math.round(a.t), y = Math.min(durS, x + a.dur); return y - x >= 8 ? { seg: y - x, soma: v.slice(x, y).reduce((p, q) => p + q, 0) } : null; }) };
         }
-        out[f.id].dano = dano;
+        for (const s of ((((d.reportData.report['c' + f.id] || {}).data || {}).series) || [])) {
+          if (s.name === 'Total' || !dano[s.name]) continue;
+          const v = reamostrar(s, f.startTime, durS);
+          dano[s.name].cor = amp.map(a => { const x = Math.max(0, Math.round(a.t) - 5), y = Math.min(durS, Math.round(a.t) + a.dur + 10); return y > x ? v.slice(x, y).reduce((p, q) => p + q, 0) : 0; });
+        }
+        out[f.id].dano = dano; out[f.id].temCor = !!coracaoId;
       }
     }
     return out;
@@ -731,29 +787,34 @@
     return { analisadas: lutas.filter(l => dados[l.rel + ':' + l.id]).length, com, chamadas, enc, onda, tries,
       porJog: Object.values(porJog).filter(x => x.encostou + x.onda > 0).sort((a, b) => (b.encostou + b.onda) - (a.encostou + a.onda)) };
   }
-  // Burst no coracao: DPS de cada jogador na janela do Venomous Heart contra o proprio DPS medio na try.
+  // Burst no coracao: dano causado no Venomous Heart por jogador, em cada vez que ele fica exposto.
   function coracao(lutas, dados) {
     const amp = BOSS[3492][5].amp, g = {};
     for (const l of lutas) {
-      const b = dados[l.rel + ':' + l.id]; if (!b || !b.dano) continue;
+      const b = dados[l.rel + ':' + l.id]; if (!b || !b.dano || !b.temCor) continue;
       const fim = Math.max(1, Math.min(l.durS, tWipe(l)));
-      for (const j of l.jogadores) {
-        const d = b.dano[j.nome]; if (j.papel !== 'dps' || !d || d.total <= 0) continue;
-        const base = d.total / l.durS;
-        d.jan.forEach((w, i) => { if (!w || Math.round(amp[i].t) + 8 > fim) return; const x = g[j.nome] = g[j.nome] || { nome: j.nome, classe: j.classe, spec: j.spec, jan: amp.map(() => ({ dps: [], rel: [] })) }; x.jan[i].dps.push(w.soma / w.seg); x.jan[i].rel.push(w.soma / w.seg / base); });
-      }
+      amp.forEach((a, i) => {
+        if (Math.round(a.t) + 8 > fim) return;
+        const dps = l.jogadores.filter(j => j.papel === 'dps' && b.dano[j.nome] && b.dano[j.nome].cor);
+        const totalRaid = dps.reduce((s, j) => s + (b.dano[j.nome].cor[i] || 0), 0); if (totalRaid <= 0) return;
+        const completa = Math.round(a.t) + a.dur <= fim; // a try durou a janela inteira?
+        for (const j of dps) { const d = b.dano[j.nome], x = g[j.nome] = g[j.nome] || { nome: j.nome, classe: j.classe, spec: j.spec, jan: amp.map(() => ({ cor: [], parte: [], rel: [] })) };
+          const w = x.jan[i]; w.parte.push(d.cor[i] / totalRaid);
+          if (completa) { w.cor.push(d.cor[i]); if (d.total > 0) w.rel.push(d.cor[i] / a.dur / (d.total / l.durS)); } }
+      });
     }
-    const linhas = Object.values(g).map(x => ({ nome: x.nome, classe: x.classe, spec: x.spec, jan: x.jan.map(w => w.dps.length >= 2 ? { n: w.dps.length, dps: mediana(w.dps), rel: mediana(w.rel) } : null) })).filter(x => x.jan.some(Boolean));
+    const linhas = Object.values(g).map(x => ({ nome: x.nome, classe: x.classe, spec: x.spec, jan: x.jan.map(w => w.parte.length >= 2 ? { n: w.parte.length, cor: mediana(w.cor), parte: mediana(w.parte), rel: mediana(w.rel) } : null) })).filter(x => x.jan.some(Boolean));
     const nJan = amp.map((_, i) => linhas.filter(x => x.jan[i]).length);
-    for (let i = 0; i < amp.length; i++) { const rs = linhas.filter(x => x.jan[i]).map(x => x.jan[i].rel); const m = mediana(rs); for (const x of linhas) if (x.jan[i]) x.jan[i].raid = m; }
-    return { amp, linhas: linhas.sort((a, b) => ((a.jan[0] || {}).rel || 9) - ((b.jan[0] || {}).rel || 9)), nJan };
+    const i0 = nJan.findIndex(n => n > 0);
+    return { amp, linhas: linhas.sort((a, b) => ((b.jan[i0] || {}).parte || 0) - ((a.jan[i0] || {}).parte || 0)), nJan };
   }
 
   // ---------- dispels e portal (qualquer boss) ----------
-  const VERSAO_DISP = 1;
+  const VERSAO_DISP = 2;
   const DISPEL_EM_MASSA = new Set([115310, 388615]); // Revival, Restoral
   async function buscarDispels(gql, rel, lutasApi) {
-    const out = {}; for (const f of lutasApi) out[f.id] = { disp: [], aplic: [], portal: [], usos: [] };
+    const out = {}; for (const f of lutasApi) out[f.id] = { disp: [], aplic: [], portal: [], usos: [], mov: [] };
+    const movIds = CDS.filter(x => x.tipo === 'mov').map(x => x.id);
     const ini0 = Object.fromEntries(lutasApi.map(f => [f.id, f.startTime]));
     const nome = id => (rel.atores[id] || {}).nome || ('#' + id);
     const pag = async (tipo, fx) => { let evs = [], s = null;
@@ -763,10 +824,11 @@
     const ids = new Set(), comIds = new Set();
     for (const e of await pag('Dispels', "type='dispel'")) { const o = out[e.fight]; if (!o || e.isBuff || !e.extraAbilityGameID) continue; ids.add(e.extraAbilityGameID); comIds.add(e.abilityGameID);
       o.disp.push({ t: (e.timestamp - ini0[e.fight]) / 1000, quem: nome(e.sourceID), alvo: nome(e.targetID), hab: e.extraAbilityGameID, com: e.abilityGameID }); }
-    const fx = (ids.size ? `(ability.id in (${[...ids].join(',')}) and type in ('applydebuff','removedebuff')) or ` : '') + `(ability.id=113942 and type in ('applydebuff','applybuff')) or (ability.id=111771 and type='cast')`;
+    const fx = (ids.size ? `(ability.id in (${[...ids].join(',')}) and type in ('applydebuff','removedebuff')) or ` : '') + `(ability.id=113942 and type in ('applydebuff','applybuff')) or (ability.id in (111771,${movIds.join(',')}) and type='cast')`;
     const aberta = {};
     for (const e of await pag('All', fx)) { const o = out[e.fight]; if (!o) continue; const t = (e.timestamp - ini0[e.fight]) / 1000;
       if (e.abilityGameID === 111771) { o.portal.push(t); continue; }
+      if (movIds.includes(e.abilityGameID)) { o.mov.push({ t, quem: nome(e.sourceID), id: e.abilityGameID }); continue; }
       if (e.abilityGameID === 113942) { o.usos.push({ t, quem: nome(e.targetID) }); continue; }
       const k = e.fight + '|' + e.targetID + '|' + e.abilityGameID;
       if (e.type === 'applydebuff') aberta[k] = t;
