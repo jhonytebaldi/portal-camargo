@@ -45,3 +45,41 @@ function co_token_valido(string $tok): bool {
         return $hash !== '' && hash_equals($hash, hash('sha256', $tok));
     } catch (Throwable $e) { return false; }
 }
+
+/** Monta o HTML do painel. $modo: 'usuario' (logado) ou 'link' (link público só leitura). */
+function co_render(string $slug, array $row, string $modo, ?array $u = null, string $rotulo = '', string $expira = ''): void {
+    $tpl = __DIR__ . '/paginas/' . $slug . '.html';
+    if (!is_file($tpl)) { http_response_code(404); exit('Painel ainda não publicado.'); }
+    $dados = (string)($row['dados'] ?? '');
+    if ($dados === '') { http_response_code(404); exit('Os dados desta página ainda não foram carregados.'); }
+    $admin = $modo === 'usuario' && $u && is_admin($u);
+    $json = str_replace('</', '<\\/', $dados);
+    $cfg = '<script>window.CO_EDIT=' . ($admin ? 'true' : 'false')
+         . ';window.CO_API=' . ($admin ? json_encode('acao.php?p=' . $slug) : 'null')
+         . ';window.CO_CSRF=' . json_encode($modo === 'usuario' ? co_csrf() : '') . ';</script>';
+    $quando = '<span style="margin-left:auto">Dados de ' . h(!empty($row['atualizado_em']) ? date('d/m/Y H:i', strtotime($row['atualizado_em'])) : '—') . '</span>';
+    $estilo = 'background:#1d3270;color:#d3ddf7;font:13px Ubuntu,system-ui,sans-serif;padding:8px max(5vw,16px);display:flex;gap:16px;align-items:center;flex-wrap:wrap';
+    if ($modo === 'link') {
+        $barra = '<div style="' . $estilo . '"><b style="color:#fff">Imobiliária Camargo · visualização compartilhada</b>'
+               . ($rotulo !== '' ? '<span>' . h($rotulo) . '</span>' : '')
+               . $quando . '<span>Link válido até ' . h(date('d/m/Y H:i', strtotime($expira))) . '</span></div>';
+    } else {
+        $barra = '<div style="' . $estilo . '">'
+           . '<a href="/" style="color:#fff;text-decoration:none;font-weight:700">← Portal Camargo</a>'
+           . (count(co_paginas_visiveis($u)) > 1 ? '<a href="/construtor/" style="color:#d3ddf7">Outras construtoras</a>' : '')
+           . $quando
+           . '<button id="coPedir" type="button" style="font:600 13px Ubuntu,system-ui,sans-serif;min-height:34px;padding:0 14px;border:0;border-radius:8px;background:#f2b705;color:#121a3a;cursor:pointer"'
+           . (!empty($row['pedido_em']) ? ' disabled>Atualização solicitada às ' . h(date('H:i', strtotime($row['pedido_em']))) . ' · em até 1 hora' : '>Solicitar atualização') . '</button>'
+           . ($admin ? '<a href="/construtor/dados.php" style="color:#d3ddf7">Compartilhar link</a>' : '')
+           . '<span>' . h($u['nome']) . '</span><a href="/logout.php" style="color:#d3ddf7">Sair</a></div>'
+           . '<script>document.getElementById("coPedir").onclick=async function(){const b=this;b.disabled=true;b.textContent="Enviando…";try{const r=await fetch("pedir.php?p=' . h($slug) . '",{method:"POST",headers:{"X-CSRF":window.CO_CSRF}});const j=await r.json();if(!j.ok)throw new Error(j.msg);b.textContent="Atualização solicitada · os dados serão refeitos em até 1 hora"}catch(e){b.disabled=false;b.textContent="Tentar de novo";alert("Não foi possível solicitar: "+e.message)}};</script>';
+    }
+    $html = file_get_contents($tpl);
+    $html = str_replace('__DATA__', $json, $html);
+    $html = preg_replace('/<body>/', '<body>' . $barra, $html, 1);
+    $html = str_replace('</head>', '<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">' . $cfg . '</head>', $html);
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Robots-Tag: noindex, nofollow');
+    echo $html;
+}

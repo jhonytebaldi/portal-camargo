@@ -50,6 +50,23 @@ function co_migrar(PDO $pdo): array {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela co_config';
     }
+    $tem = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'co_links'")->fetchColumn();
+    if (!$tem) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS co_links (
+            id         INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            token_hash CHAR(64)     NOT NULL UNIQUE,
+            slug       VARCHAR(40)  NOT NULL,
+            rotulo     VARCHAR(120) NOT NULL DEFAULT '',
+            expira_em  DATETIME     NOT NULL,
+            criado_em  DATETIME     NOT NULL,
+            criado_por INT UNSIGNED NULL,
+            revogado   TINYINT(1)   NOT NULL DEFAULT 0,
+            acessos    INT UNSIGNED NOT NULL DEFAULT 0,
+            ultimo_acesso DATETIME  NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $feitos[] = 'tabela co_links';
+    }
     $st = $pdo->prepare("SELECT COUNT(*) FROM co_paginas WHERE slug='gbrac'"); $st->execute();
     if (!(int)$st->fetchColumn()) {
         $pdo->prepare("INSERT INTO co_paginas (slug,nome,descricao,ativo,ordem) VALUES ('gbrac','GBRAC','Monteluce Residence — fluxo de recebíveis',1,10)")->execute();
