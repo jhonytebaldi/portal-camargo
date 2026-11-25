@@ -8,7 +8,7 @@
 
    Etapa 1 = dados da venda (linhas 1–27 da capa):
      VALOR PARA CÁLCULO (= VGV) = contrato − bônus − documentação − descontos
-     COMISSÃO BASE CORRETORES    = valor de cálculo × % corretores (5%)
+     COMISSÃO BASE CORRETORES    = valor de cálculo × % corretores (5%)  — ou o valor fixo negociado (comissao_fixa)
      FUNDO DE MKT                = valor de cálculo × % fundo (0,5%)
      COMISSÃO TOTAL              = base + fundo
      DESCONTO NF                 = base × % NF (14%)
@@ -31,6 +31,7 @@ final class Venda
         'valor_contrato' => ['Valor do contrato', 'brl'], 'valor_bonus' => ['Bônus', 'brl'],
         'documentacao' => ['Documentação', 'brl'], 'descontos' => ['Descontos adicionais', 'brl'],
         'pct_corretores' => ['% comissão corretores', 'pct'], 'pct_fundo' => ['% fundo de MKT', 'pct'],
+        'comissao_fixa' => ['Comissão corretores em valor fixo', 'brl'], 'fundo_fixo' => ['Fundo de MKT em valor fixo', 'brl'],
         'pct_nf' => ['% desconto NF', 'pct'], 'pct_nf_bonus' => ['% NF do bônus', 'pct'],
         'brinde' => ['Desconto brinde', 'brl'], 'cesta' => ['Desconto cesta básica', 'brl'], 'obs' => ['Observação', 'txt'],
     ];
@@ -130,8 +131,10 @@ final class Venda
         $n = fn(string $k) => (float)($v[$k] ?? 0);
         $p = fn(string $k) => isset($v[$k]) && $v[$k] !== null && $v[$k] !== '' ? (float)$v[$k] : self::PADROES[$k];
         $valorCalc = $n('valor_contrato') - $n('valor_bonus') - $n('documentacao') - $n('descontos');
-        $base = $valorCalc * $p('pct_corretores');
-        $fundo = $valorCalc * $p('pct_fundo');
+        // comissão negociada em valor fixo (não em % do VGV): o valor digitado manda; o % fica só como referência
+        $fixo = fn(string $k) => isset($v[$k]) && $v[$k] !== '' ? (float)$v[$k] : null;
+        $base = $fixo('comissao_fixa') ?? $valorCalc * $p('pct_corretores');
+        $fundo = $fixo('fundo_fixo') ?? $valorCalc * $p('pct_fundo');
         $nf = $base * $p('pct_nf');
         $brinde = $p('brinde'); $cesta = $p('cesta');
         $bonus = $n('valor_bonus');
@@ -254,6 +257,17 @@ final class Venda
             if ($x === false) { $erros[] = self::CAMPOS_E1[$k][0] . ': percentual ilegível.'; $x = null; }
             $v[$k] = $x ?? self::PADROES[$k];
         }
+        // valor fixo no lugar do %: só vale quando a pessoa escolheu "R$ fixo"; o % passa a ser o equivalente (referência na planilha)
+        $vc = (float)($v['valor_contrato'] ?? 0) - (float)($v['valor_bonus'] ?? 0) - (float)($v['documentacao'] ?? 0) - (float)($v['descontos'] ?? 0);
+        foreach (['comissao_fixa' => ['modo_corretores', 'pct_corretores'], 'fundo_fixo' => ['modo_fundo', 'pct_fundo']] as $k => [$modo, $kp]) {
+            $v[$k] = null;
+            if (($in[$modo] ?? '') !== 'fixo') continue;
+            $x = self::dinheiro($in[$k] ?? null);
+            if ($x === false) { $erros[] = self::CAMPOS_E1[$k][0] . ': valor ilegível — digite só o valor em reais, ex.: 12.000,00.'; continue; }
+            if ($x === null) { $erros[] = self::CAMPOS_E1[$k][0] . ': você escolheu "R$ fixo" mas não informou o valor — preencha o valor ou volte para "% do VGV".'; continue; }
+            $v[$k] = $x;
+            $v[$kp] = $vc > 0 ? round($x / $vc, 5) : self::PADROES[$kp];
+        }
         $comp = [];
         foreach (array_values((array)($in['compradores'] ?? [])) as $i => $c) {
             $nome = self::texto($c['nome'] ?? '');
@@ -325,9 +339,20 @@ final class Venda
         if (!$v['valor_contrato'] || $v['valor_contrato'] <= 0) $e[] = 'Falta o valor do contrato.';
         foreach (['valor_bonus', 'documentacao', 'descontos'] as $k) if ($v[$k] !== null && $v[$k] < 0) $e[] = self::CAMPOS_E1[$k][0] . ' não pode ser negativo.';
         if ($v['valor_contrato'] && $c['valor_calculo'] <= 0) $e[] = 'Bônus + documentação + descontos passam do valor do contrato.';
-        if ($v['pct_corretores'] <= 0 || $v['pct_corretores'] > 0.10) $e[] = '% de comissão dos corretores fora do razoável (0 a 10%).';
+        $fixa = $v['comissao_fixa'] ?? null; $fundoFixo = $v['fundo_fixo'] ?? null;
+        $pctTxt = fn(float $x) => rtrim(rtrim(number_format($x * 100, 2, ',', ''), '0'), ',') . '%';
+        if ($fixa !== null) {
+            if ($fixa <= 0) $e[] = 'Comissão dos corretores em valor fixo precisa ser maior que zero — informe o valor negociado ou volte para "% do VGV".';
+            elseif ($c['valor_calculo'] > 0 && $fixa > $c['valor_calculo'] * 0.10) $e[] = 'Comissão fixa dos corretores (R$ ' . number_format($fixa, 2, ',', '.') . ') passa de 10% do VGV — confira se o valor foi digitado certo.';
+            elseif ($c['valor_calculo'] > 0) $a[] = 'Comissão dos corretores em valor fixo: R$ ' . number_format($fixa, 2, ',', '.') . ' (equivale a ' . $pctTxt($fixa / $c['valor_calculo']) . ' do VGV; o padrão é 5%).';
+        } elseif ($v['pct_corretores'] <= 0 || $v['pct_corretores'] > 0.10) $e[] = '% de comissão dos corretores fora do razoável (0 a 10%).';
+        if ($fundoFixo !== null) {
+            if ($fundoFixo < 0) $e[] = 'Fundo de MKT em valor fixo não pode ser negativo — use 0 se a venda não tem fundo.';
+            elseif ($c['valor_calculo'] > 0) $a[] = 'Fundo de MKT em valor fixo: R$ ' . number_format($fundoFixo, 2, ',', '.') . ' (equivale a ' . $pctTxt($fundoFixo / $c['valor_calculo']) . ' do VGV; o padrão é 0,5%).';
+        }
         if ($v['valor_contrato'] && $c['valor_calculo'] > 0 && $c['valor_final'] < 0) $e[] = 'Brinde + cesta + NF passam da comissão base.';
         foreach (['pct_corretores', 'pct_fundo', 'pct_nf', 'pct_nf_bonus', 'brinde', 'cesta'] as $k) {
+            if (($k === 'pct_corretores' && $fixa !== null) || ($k === 'pct_fundo' && $fundoFixo !== null)) continue;   // em valor fixo: o aviso acima já diz
             if (abs((float)$v[$k] - self::PADROES[$k]) > 1e-9) {
                 $pad = in_array($k, ['brinde', 'cesta'], true) ? 'R$ ' . number_format(self::PADROES[$k], 2, ',', '.') : rtrim(rtrim(number_format(self::PADROES[$k] * 100, 2, ',', ''), '0'), ',') . '%';
                 $a[] = self::CAMPOS_E1[$k][0] . ' diferente do padrão (' . $pad . ').';

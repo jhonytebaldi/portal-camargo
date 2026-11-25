@@ -75,11 +75,17 @@ final class CapaXlsx
         $cc = function (string $k) use (&$R): string { return 'C' . $R[$k]; };
         $put('vgv', 'VALOR PARA CALCULO DA COMISSÃO DA IMOB e VGV', ['f' => "{$b('contrato')}-{$b('bonus_in')}-{$b('doc')}-{$b('desc')}", 'v' => $calc['valor_calculo']], $brl + ['bold' => true]);
         $R['base'] = $r;
-        $put('base', 'COMISSÃO BASE CORRETORES', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['comissao_base']], $brl, (float)$venda['pct_corretores'], self::ENT + ['fmt' => 'pct']);
+        // comissão em valor fixo: o valor entra direto (digitado) e o % ao lado vira só o equivalente
+        $vgvN = (float)$calc['valor_calculo'];
+        $fixa = ($venda['comissao_fixa'] ?? null) !== null && $venda['comissao_fixa'] !== '';
+        $fundoFixo = ($venda['fundo_fixo'] ?? null) !== null && $venda['fundo_fixo'] !== '';
+        if ($fixa) $put('base', 'COMISSÃO BASE CORRETORES', (float)$calc['comissao_base'], self::ENT + $brl, ['f' => "B{$r}/{$b('vgv')}", 'v' => $vgvN > 0 ? $calc['comissao_base'] / $vgvN : 0.0], ['fmt' => 'pct']);
+        else $put('base', 'COMISSÃO BASE CORRETORES', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['comissao_base']], $brl, (float)$venda['pct_corretores'], self::ENT + ['fmt' => 'pct']);
         $R['fundo'] = $r;
-        $put('fundo', 'COMISSÃO IMOB FUNDO DE MKT', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['fundo']], $brl, (float)$venda['pct_fundo'], self::ENT + ['fmt' => 'pct']);
+        if ($fundoFixo) $put('fundo', 'COMISSÃO IMOB FUNDO DE MKT', (float)$calc['fundo'], self::ENT + $brl, ['f' => "B{$r}/{$b('vgv')}", 'v' => $vgvN > 0 ? $calc['fundo'] / $vgvN : 0.0], ['fmt' => 'pct']);
+        else $put('fundo', 'COMISSÃO IMOB FUNDO DE MKT', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['fundo']], $brl, (float)$venda['pct_fundo'], self::ENT + ['fmt' => 'pct']);
         $R['total'] = $r;
-        $put('total', 'COMISSÃO TOTAL', ['f' => "{$b('vgv')}*C{$r}", 'v' => $calc['comissao_total']], $brl + ['bold' => true], ['f' => "{$cc('fundo')}+{$cc('base')}", 'v' => (float)$venda['pct_fundo'] + (float)$venda['pct_corretores']], ['fmt' => 'pct']);
+        $put('total', 'COMISSÃO TOTAL', ['f' => "{$b('base')}+{$b('fundo')}", 'v' => $calc['comissao_total']], $brl + ['bold' => true], ['f' => "{$cc('fundo')}+{$cc('base')}", 'v' => $vgvN > 0 ? $calc['comissao_total'] / $vgvN : (float)$venda['pct_fundo'] + (float)$venda['pct_corretores']], ['fmt' => 'pct']);
         $R['nf'] = $r;
         $put('nf', 'DESCONTO NOTA FISCAL', ['f' => "C{$r}*{$b('base')}", 'v' => $calc['desconto_nf']], $brl, (float)$venda['pct_nf'], self::ENT + ['fmt' => 'pct']);
         $linhaTotalFinal = $r + 9;   // COMISSÃO + BÔNUS (linha calculada abaixo) — para os % de brinde/cesta
