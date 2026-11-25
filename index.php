@@ -23,7 +23,7 @@ if (is_admin($u) && is_file(__DIR__ . '/busca-bancos/schema.php')) {
     require_once __DIR__ . '/busca-bancos/schema.php';
     bb_instalar_se_preciso();
 }
-$tools = user_tools($u);
+$tools = array_values(array_filter(user_tools($u), static fn(array $t): bool => $t['slug'] !== 'raid-logs'));
 
 portal_header('Início', $u);
 ?>
@@ -44,4 +44,12 @@ portal_header('Início', $u);
   </div>
 <?php endif; ?>
 <?php
+// WCLogs: ferramenta pessoal, fora da grade. Link discreto só para quem pode abrir (raid-logs/_acesso.php).
+if (is_file(__DIR__ . '/raid-logs/_acesso.php')) {
+    require_once __DIR__ . '/raid-logs/_acesso.php';
+    if (rl_pode($u)) {
+        rl_esconder_botao();
+        echo '<p style="margin-top:32px;font-size:12px;text-align:right"><a href="/raid-logs/index.php" style="color:inherit;opacity:.55;text-decoration:none">WCLogs</a></p>';
+    }
+}
 portal_footer();

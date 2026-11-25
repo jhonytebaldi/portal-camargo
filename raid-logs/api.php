@@ -3,7 +3,7 @@
    Tudo exige login + ferramenta 'raid-logs'. */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
-$u = require_tool('raid-logs');
+$u = rl_guard();
 $a = $_GET['a'] ?? '';
 $metodo = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 

@@ -3,7 +3,7 @@
    O token fica só no servidor (chave '_token'); a API de cache nunca expõe
    chaves que começam com '_'. O client do WCL é público (PKCE, sem secret). */
 declare(strict_types=1);
-require_once dirname(__DIR__) . '/lib/auth.php';
+require_once __DIR__ . '/_acesso.php';
 
 const RL_WCL = 'https://www.warcraftlogs.com';
 const RL_CLIENT_ID = '01a20b96-fdb4-7372-9f3c-960b1975d757';

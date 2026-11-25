@@ -1,8 +1,8 @@
 <?php
 /* raid-logs/index.php — Análise de logs de raid (Warcraft Logs).
-   Página única; os dados vêm de api.php. Só para quem tem a ferramenta 'raid-logs'. */
-require_once dirname(__DIR__) . '/lib/auth.php';
-require_tool('raid-logs');
+   Página única; os dados vêm de api.php. Acesso: ver _acesso.php. */
+require_once __DIR__ . '/_acesso.php';
+rl_guard();
 header('Content-Type: text/html; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: no-referrer');
@@ -13,7 +13,7 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
 <meta charset="utf-8">
 <meta name="robots" content="noindex,nofollow">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Análise de Logs da Raid</title>
+<title>WCLogs</title>
 <style>
   :root { color-scheme: dark; --sup: #1a1a19; --sup2: #232322; --borda: #383835; --txt: #f0efec; --txt2: #c3c2b7; --mudo: #8f8e85;
           --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --critico: #e66767; }
@@ -74,7 +74,7 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
 </head>
 <body>
 <main>
-<div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px"><h1>Análise de Logs da Raid</h1><span class="sub"><a href="/" style="color:inherit">← Portal</a><span id="adminBar" hidden> · <a href="conectar.php?sair=1" style="color:inherit">Desconectar o Warcraft Logs</a></span></span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px"><h1>WCLogs</h1><span class="sub"><a href="/" style="color:inherit">← Portal</a><span id="adminBar" hidden> · <a href="conectar.php?sair=1" style="color:inherit">Desconectar o Warcraft Logs</a></span></span></div>
 <div id="login" hidden>
   <div id="loginAdmin" hidden><p class="erro">A ferramenta ainda não está conectada ao Warcraft Logs.</p><a class="btn" href="conectar.php">Conectar com Warcraft Logs</a><p class="sub">Você autoriza uma vez com a conta que enxerga os logs privados; quem tiver acesso à ferramenta passa a ver os mesmos relatórios por ela.</p></div>
   <div id="loginOutros" hidden><p class="erro">A ferramenta ainda não está conectada ao Warcraft Logs. Peça ao administrador para conectar.</p></div>

@@ -2,7 +2,7 @@
 /* raid-logs/callback.php — volta do Warcraft Logs: troca o código pelo token (PKCE). */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
-$u = require_tool('raid-logs');
+$u = rl_guard();
 if (!is_admin($u)) { http_response_code(403); exit('Só o administrador conecta o Warcraft Logs.'); }
 
 $p = $_SESSION['rl_pkce'] ?? null; unset($_SESSION['rl_pkce']);

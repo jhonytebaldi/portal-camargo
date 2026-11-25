@@ -3,7 +3,7 @@
    Só admin: o token autorizado aqui é o que todos os usuários da ferramenta usam. */
 declare(strict_types=1);
 require_once __DIR__ . '/_comum.php';
-$u = require_tool('raid-logs');
+$u = rl_guard();
 if (!is_admin($u)) { http_response_code(403); exit('Só o administrador conecta o Warcraft Logs.'); }
 
 if (isset($_GET['sair'])) { rl_del('_token'); header('Location: index.php'); exit; }
