@@ -10,6 +10,21 @@
    ===================================================================== */
 declare(strict_types=1);
 
+/** comissão negociada em valor fixo (no lugar do % do VGV): NULL = usa o percentual */
+function cv_migrar_valor_fixo(PDO $pdo): array
+{
+    $feitos = [];
+    $tabela = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cv_vendas'")->fetchColumn() > 0;
+    if (!$tabela) return $feitos;
+    foreach (['comissao_fixa' => 'pct_corretores', 'fundo_fixo' => 'pct_fundo'] as $col => $depois) {
+        $ja = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cv_vendas' AND COLUMN_NAME = " . $pdo->quote($col))->fetchColumn() > 0;
+        if ($ja) continue;
+        $pdo->exec("ALTER TABLE cv_vendas ADD COLUMN $col DECIMAL(14,2) NULL AFTER $depois");
+        $feitos[] = "coluna cv_vendas.$col (comissão em valor fixo)";
+    }
+    return $feitos;
+}
+
 function cv_migrar(PDO $pdo): array
 {
     $feitos = [];
@@ -107,6 +122,7 @@ function cv_migrar(PDO $pdo): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $feitos[] = 'tabela cv_construtoras (quem paga as parcelas)';
     }
+    foreach (cv_migrar_valor_fixo($pdo) as $f) $feitos[] = $f;
     // capas geradas pelo formulário antes da pergunta "quem pagou as parcelas": a resposta é a da etapa 3 (não vira pendência nem entra na lista das antigas)
     $temQP = (int)$pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cf_capas' AND COLUMN_NAME = 'quem_paga'")->fetchColumn() > 0;
     if ($temQP && $tem('cv_vendas')) {

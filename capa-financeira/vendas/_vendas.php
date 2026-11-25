@@ -21,8 +21,8 @@ function cv_carregar(int $id): ?array
     $st->execute([$id]);
     $v = $st->fetch();
     if (!$v) return null;
-    foreach (['valor_contrato', 'valor_bonus', 'documentacao', 'descontos', 'pct_corretores', 'pct_fundo', 'pct_nf', 'pct_nf_bonus', 'brinde', 'cesta'] as $k)
-        $v[$k] = $v[$k] === null ? null : (float)$v[$k];
+    foreach (['valor_contrato', 'valor_bonus', 'documentacao', 'descontos', 'pct_corretores', 'pct_fundo', 'pct_nf', 'pct_nf_bonus', 'brinde', 'cesta', 'comissao_fixa', 'fundo_fixo'] as $k)
+        $v[$k] = ($v[$k] ?? null) === null ? null : (float)$v[$k];
     $st = db()->prepare('SELECT * FROM cv_compradores WHERE venda_id = ? ORDER BY ordem, id');
     $st->execute([$id]);
     $v['e2'] = $v['e2_dados'] ? (json_decode((string)$v['e2_dados'], true) ?: null) : null;
@@ -194,6 +194,11 @@ function cv_gravar_e1(int $id, int $rev, array $v, array $comp, array $u): array
             cv_hist($id, 1, 'criar', null, null, null, $u);
         }
         $cols = array_keys(Venda::CAMPOS_E1);
+        if (!cv_tem_valor_fixo()) {
+            if (($v['comissao_fixa'] ?? null) !== null || ($v['fundo_fixo'] ?? null) !== null)
+                throw new RuntimeException('A comissão em valor fixo ainda não pode ser gravada: falta atualizar o banco de dados. Peça a um administrador para abrir /admin/migrar.php uma vez e depois grave de novo (nada foi perdido na tela).');
+            $cols = array_values(array_diff($cols, ['comissao_fixa', 'fundo_fixo']));
+        }
         $set = implode(', ', array_map(fn($c) => "$c = ?", $cols));
         $args = array_map(fn($c) => $v[$c] ?? null, $cols);
         $pdo->prepare("UPDATE cv_vendas SET $set, rev = rev + 1, atualizado_por = ?, atualizado_em = NOW() WHERE id = ?")->execute([...$args, (int)$u['id'], $id]);
@@ -219,6 +224,20 @@ function cv_gravar_e1(int $id, int $rev, array $v, array $comp, array $u): array
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
+}
+
+/** as colunas da comissão em valor fixo já existem em cv_vendas? Se não, tenta criá-las (o mesmo que admin/migrar.php faz). */
+function cv_tem_valor_fixo(): bool
+{
+    static $tem = null;
+    if ($tem !== null) return $tem;
+    $q = fn() => (int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cv_vendas' AND COLUMN_NAME IN ('comissao_fixa','fundo_fixo')")->fetchColumn() === 2;
+    try {
+        if ($q()) return $tem = true;
+        require_once __DIR__ . '/schema.php';
+        cv_migrar_valor_fixo(db());
+        return $tem = $q();
+    } catch (Throwable $e) { return $tem = false; }
 }
 
 /** rótulo e cor do status de uma etapa */

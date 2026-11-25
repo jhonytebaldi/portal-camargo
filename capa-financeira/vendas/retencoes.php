@@ -21,7 +21,7 @@ $st = db()->prepare($sql);
 $st->execute(array_merge([$de, $ate], $emp ? [$emp] : []));
 $linhas = []; $porObs = []; $porMes = []; $total = 0.0;
 foreach ($st->fetchAll() as $v) {
-    foreach (['valor_contrato', 'valor_bonus', 'documentacao', 'descontos', 'pct_corretores', 'pct_fundo', 'pct_nf', 'pct_nf_bonus', 'brinde', 'cesta'] as $k) $v[$k] = $v[$k] === null ? null : (float)$v[$k];
+    foreach (['valor_contrato', 'valor_bonus', 'documentacao', 'descontos', 'pct_corretores', 'pct_fundo', 'pct_nf', 'pct_nf_bonus', 'brinde', 'cesta', 'comissao_fixa', 'fundo_fixo'] as $k) $v[$k] = ($v[$k] ?? null) === null ? null : (float)$v[$k];
     $d = json_decode((string)$v['e2_dados'], true);
     if (!$d) continue;
     $calc = Distribuicao::calc($d, Venda::calc($v));

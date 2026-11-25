@@ -96,11 +96,21 @@ $e1ok = $v['e1_status'] !== 'rascunho';
       <label>Descontos adicionais<input class="cv-num" name="descontos" value="<?= $brl($v['descontos']) ?>" inputmode="decimal" placeholder="0,00"></label>
     </div>
     <p class="cf-dica">O bônus sai do valor do contrato e é distribuído na etapa 2.</p>
-    <details class="cv-par"<?= array_filter(array_keys(Venda::PADROES), fn($k) => abs((float)$v[$k] - Venda::PADROES[$k]) > 1e-9) ? ' open' : '' ?>>
-      <summary>Percentuais e descontos padrão (5% · 0,5% · NF 14% · brinde R$ 300 · cesta R$ 120)</summary>
+    <?php $fixaC = ($v['comissao_fixa'] ?? null) !== null; $fixoF = ($v['fundo_fixo'] ?? null) !== null;
+          $campoFixo = function (string $rot, string $modo, string $kp, string $kf, bool $fixo) use ($v, $pct, $brl) { ?>
+        <label><?= $rot ?>
+          <span style="display:flex;gap:6px">
+            <select name="<?= $modo ?>" data-fixo="<?= $kf ?>" data-pct="<?= $kp ?>" style="flex:0 0 auto;width:auto" title="% do VGV: a comissão é um percentual do valor de cálculo. R$ fixo: a comissão foi negociada em valor fechado.">
+              <option value="pct"<?= $fixo ? '' : ' selected' ?>>% do VGV</option><option value="fixo"<?= $fixo ? ' selected' : '' ?>>R$ fixo</option></select>
+            <input class="cv-num" name="<?= $kp ?>" value="<?= $pct($v[$kp]) ?>" inputmode="decimal" style="flex:1;min-width:0<?= $fixo ? ';display:none' : '' ?>">
+            <input class="cv-num" name="<?= $kf ?>" value="<?= $fixo ? $brl($v[$kf]) : '' ?>" inputmode="decimal" placeholder="valor em R$" style="flex:1;min-width:0<?= $fixo ? '' : ';display:none' ?>">
+          </span></label>
+    <?php }; ?>
+    <details class="cv-par"<?= $fixaC || $fixoF || array_filter(array_keys(Venda::PADROES), fn($k) => abs((float)$v[$k] - Venda::PADROES[$k]) > 1e-9) ? ' open' : '' ?>>
+      <summary>Percentuais e descontos padrão (5% · 0,5% · NF 14% · brinde R$ 300 · cesta R$ 120) — ou comissão em valor fixo</summary>
       <div class="cv-g cv-g3" style="margin-top:8px">
-        <label>% comissão corretores<input class="cv-num" name="pct_corretores" value="<?= $pct($v['pct_corretores']) ?>" inputmode="decimal"></label>
-        <label>% fundo de MKT (imob.)<input class="cv-num" name="pct_fundo" value="<?= $pct($v['pct_fundo']) ?>" inputmode="decimal"></label>
+        <?php $campoFixo('Comissão corretores', 'modo_corretores', 'pct_corretores', 'comissao_fixa', $fixaC); ?>
+        <?php $campoFixo('Fundo de MKT (imob.)', 'modo_fundo', 'pct_fundo', 'fundo_fixo', $fixoF); ?>
         <label>% desconto NF<input class="cv-num" name="pct_nf" value="<?= $pct($v['pct_nf']) ?>" inputmode="decimal"></label>
         <label>% NF do bônus<input class="cv-num" name="pct_nf_bonus" value="<?= $pct($v['pct_nf_bonus']) ?>" inputmode="decimal"></label>
         <label>Desconto brinde (R$)<input class="cv-num" name="brinde" value="<?= $brl($v['brinde']) ?>" inputmode="decimal"></label>
@@ -313,6 +323,12 @@ $e1ok = $v['e1_status'] !== 'rascunho';
   function mudou() { CV.sujo = true; clearTimeout(t); t = setTimeout(previa, 350); }
   form.addEventListener('input', mudou); form.addEventListener('change', mudou);
   form.querySelectorAll('.cv-num').forEach(i => i.addEventListener('blur', () => CV.numBlur(i, /^pct_/.test(i.name))));
+  // comissão / fundo: "% do VGV" ou "R$ fixo" — mostra só o campo do modo escolhido (o outro não é usado)
+  form.querySelectorAll('select[data-fixo]').forEach(sel => sel.addEventListener('change', () => {
+    const fx = form[sel.dataset.fixo], pc = form[sel.dataset.pct], fixo = sel.value === 'fixo';
+    fx.style.display = fixo ? '' : 'none'; pc.style.display = fixo ? 'none' : '';
+    if (fixo) fx.focus(); else { fx.value = ''; pc.focus(); }
+  }));
   ['construtora','endereco','unidade'].forEach(k => form[k].addEventListener('blur', () => form[k].value = form[k].value.toUpperCase().replace(/\s+/g, ' ').trim()));
   if (CV.somenteLeitura) form.querySelectorAll('input,select,textarea,button').forEach(x => x.disabled = true);
   previa();
