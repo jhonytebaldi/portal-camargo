@@ -123,4 +123,31 @@
   document.querySelectorAll('[data-copiar]').forEach(b => b.addEventListener('click', () => {
     navigator.clipboard.writeText(document.querySelector(b.dataset.copiar).textContent).then(() => { const t = b.textContent; b.textContent = 'Copiado'; setTimeout(() => b.textContent = t, 1800); });
   }));
+
+  // Cobertura: clicar num mês da grade abre o que dá para baixar daquela conta naquele mês
+  let pop = null;
+  const fechaPop = () => { if (pop) { pop.remove(); pop = null; } };
+  function abrirOfx(td) {
+    fechaPop();
+    pop = document.createElement('div'); pop.className = 'bb-ofx-pop'; pop.setAttribute('role', 'dialog'); pop.innerHTML = 'Carregando…';
+    (document.querySelector('.bb') || document.body).appendChild(pop);   // dentro de .bb para pegar o estilo dos botões
+    const r = td.getBoundingClientRect(); pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(window.scrollX + r.left - 180, window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8)) + 'px';
+    fetch('/busca-bancos/ofx-mes.php?conta=' + td.dataset.conta + '&mes=' + td.dataset.mes).then(x => x.json()).then(d => {
+      if (!pop) return;
+      if (d.erro) { pop.textContent = d.erro; return; }
+      const [ano, mm] = d.mes.split('-');
+      pop.innerHTML = '<button type="button" class="fecha" aria-label="Fechar">×</button><h3>' + esc(d.conta) + ' · ' + mm + '/' + ano + '</h3><small>' + d.n + ' lançamento(s) neste mês</small>' +
+        (d.faltas.length ? '<div class="falta">Sem extrato em: ' + esc(d.faltas.join(', ')) + '</div>' : '') +
+        (d.opcoes.length ? '<ul>' + d.opcoes.map(o => '<li><a class="bb-btn' + (o.melhor ? '' : ' sec') + '" href="' + esc(o.url) + '">⬇ ' + esc(o.rotulo) + '</a><small>' + esc(o.detalhe) + '</small></li>').join('') + '</ul>' : '<p>Nada para baixar neste mês.</p>');
+      pop.querySelector('.fecha').addEventListener('click', fechaPop);
+      const a = pop.querySelector('a'); if (a) a.focus();
+    }).catch(() => { if (pop) pop.textContent = 'Não foi possível carregar. Tente de novo.'; });
+  }
+  document.querySelectorAll('.bb-grade td.bb-ofx').forEach(td => {
+    td.addEventListener('click', e => { e.stopPropagation(); abrirOfx(td); });
+    td.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirOfx(td); } });
+  });
+  document.addEventListener('click', e => { if (pop && !pop.contains(e.target)) fechaPop(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') fechaPop(); });
 })();

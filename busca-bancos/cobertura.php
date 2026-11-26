@@ -19,13 +19,14 @@ if (!$contas) { echo '<div class="bb-vazio"><h2>Nenhum extrato importado ainda</
   <p style="float:right;margin:-34px 0 0;display:flex;gap:6px">
     <a class="bb-btn sec" href="/busca-bancos/exportar-ofx.php?so=originais" title="Só os arquivos .ofx enviados, sem nenhuma mudança, em pastas ANO / MÊS com o nome da empresa">⬇ Baixar originais (.zip)</a>
     <a class="bb-btn sec" href="/busca-bancos/exportar-ofx.php" title="Um .ofx por conta e por mês: o original quando houver; senão recortado do original ou recriado dos lançamentos importados">⬇ Baixar completo (.zip)</a></p>
-  <p>O número é a quantidade de lançamentos no mês. Passe o mouse num mês amarelo para ver os dias que faltam.</p>
+  <p>O número é a quantidade de lançamentos no mês. Passe o mouse num mês amarelo para ver os dias que faltam. <b>Clique num mês para baixar o .ofx</b> daquela conta (o original do banco quando houver); no nome da conta, baixa todos os meses dela; no nome do mês, todas as contas daquele mês.</p>
   <div style="overflow-x:auto"><table class="bb-grade">
-    <thead><tr><th class="c">Conta</th><?php foreach ($g['meses'] as $m): ?><th><?= $mesNome[substr($m, 5)] ?><br><?= substr($m, 2, 2) ?></th><?php endforeach; ?></tr></thead><tbody>
+    <thead><tr><th class="c">Conta <small style="font-weight:400">(clique para baixar o .zip da conta)</small></th><?php foreach ($g['meses'] as $m): ?><th><a class="bb-zip-mes" href="/busca-bancos/ofx-mes.php?zip=mes&amp;mes=<?= $m ?>" title="Baixar .zip de <?= $mesNome[substr($m, 5)] ?>/<?= substr($m, 0, 4) ?> com todas as contas"><?= $mesNome[substr($m, 5)] ?><br><?= substr($m, 2, 2) ?></a></th><?php endforeach; ?></tr></thead><tbody>
     <?php foreach ($contas as $cid => $c): ?>
-      <tr><th class="c"><?= bb_banco($c['banco']) ?> <?= h($c['apelido']) ?> <small style="font-weight:400;color:#5d6278">· <?= h(bb_empresa($c['empresa'])) ?></small></th>
+      <tr><th class="c"><a class="bb-zip-conta" href="/busca-bancos/ofx-mes.php?zip=conta&amp;conta=<?= (int)$cid ?>" title="Baixar .zip com todos os meses desta conta (pastas ANO / MÊS)"><?= bb_banco($c['banco']) ?> <?= h($c['apelido']) ?></a> <small style="font-weight:400;color:#5d6278">· <?= h(bb_empresa($c['empresa'])) ?></small></th>
       <?php foreach ($g['meses'] as $m): $x = $g['linhas'][$cid][$m]; ?>
-        <td class="<?= $x['st'] ?>" title="<?= h($mesNome[substr($m, 5)] . '/' . substr($m, 0, 4) . ': ' . $rot[$x['st']] . ($x['st'] === 'parcial' ? ' (' . $x['dias'] . ')' : '') . ' · ' . $x['n'] . ' lançamento(s)') ?>"><?= $x['st'] === 'fora' || $x['st'] === 'falta' ? '—' : $x['n'] ?><span class="sr" style="position:absolute;left:-9999px"> <?= $rot[$x['st']] ?></span></td>
+        <?php $baixavel = in_array($x['st'], ['cheio', 'parcial'], true) || $x['n'] > 0; ?>
+        <td class="<?= $x['st'] ?><?= $baixavel ? ' bb-ofx' : '' ?>"<?= $baixavel ? ' data-conta="' . (int)$cid . '" data-mes="' . $m . '" tabindex="0" role="button"' : '' ?> title="<?= h($mesNome[substr($m, 5)] . '/' . substr($m, 0, 4) . ': ' . $rot[$x['st']] . ($x['st'] === 'parcial' ? ' (' . $x['dias'] . ')' : '') . ' · ' . $x['n'] . ' lançamento(s)') ?>"><?= $x['st'] === 'fora' || $x['st'] === 'falta' ? '—' : $x['n'] ?><span class="sr" style="position:absolute;left:-9999px"> <?= $rot[$x['st']] ?></span></td>
       <?php endforeach; ?></tr>
     <?php endforeach; ?></tbody></table></div>
   <div class="bb-legenda"><span><i style="background:#bfe3cd"></i>mês completo</span><span><i style="background:#ffe08a"></i>faltam dias</span><span><i style="background:#f3b1a7"></i>mês faltando entre dois extratos</span><span><i style="background:#eff0f5"></i>sem extrato (antes do primeiro ou depois do último)</span></div>

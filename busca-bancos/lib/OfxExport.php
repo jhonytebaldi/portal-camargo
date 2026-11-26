@@ -104,6 +104,80 @@ final class BbOfxExport
         return $o . "</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n";
     }
 
+    /** nome do arquivo de uma conta: "VERTICAL - SICOOB 266692-8" */
+    public static function nomeConta(array $c): string
+    {
+        return self::seguro((self::EMP[$c['empresa']] ?? 'EMPRESA NAO INFORMADA') . ' - ' . strtoupper(self::seguro(BbOfx::BANCOS[$c['banco']] ?? 'Banco')) . ' ' . $c['conta']);
+    }
+
+    /**
+     * O que dá para baixar de uma conta num mês (YYYY-MM), a melhor opção primeiro:
+     *  original que cobre tudo o que temos do mês (o mais recente) → originais parciais → original de vários meses (inteiro ou só
+     *  as linhas do mês) → recriado pela ferramenta (sempre). Inclui os dias do mês sem extrato.
+     */
+    public static function opcoesMes(PDO $pdo, int $cid, string $mes): array
+    {
+        $contas = BbCobertura::contas($pdo); $c = $contas[$cid] ?? null;
+        if (!$c || !preg_match('/^\d{4}-\d{2}$/', $mes)) throw new RuntimeException('conta ou mês inválido');
+        $a = $mes . '-01'; $b = date('Y-m-t', strtotime($a)); $ontem = date('Y-m-d', strtotime('-1 day'));
+        $int = BbCobertura::intervalos($pdo)[$cid] ?? [];
+        $cob = []; foreach ($int as [$x, $y]) if ($y >= $a && $x <= $b) $cob[] = [max($x, $a), min($y, $b)];
+        $st = $pdo->prepare('SELECT COUNT(*) FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ?'); $st->execute([$cid, $a, $b]); $nMes = (int)$st->fetchColumn();
+        $faltas = $a <= $ontem ? BbCobertura::buracos($int, $a, min($b, $ontem)) : [];
+        $st = $pdo->prepare("SELECT a.id, a.nome, a.periodo_de, a.periodo_ate, COALESCE(a.periodo_declarado_ate, a.periodo_ate) decl, a.gerado_em, a.enviado_em, a.origem, b.conteudo
+            FROM bb_arquivo_bruto b JOIN bb_arquivos a ON a.id = b.arquivo_id WHERE a.conta_id = ? AND a.formato = 'ofx' AND a.periodo_de <= ? AND GREATEST(a.periodo_ate, COALESCE(a.periodo_declarado_ate, a.periodo_ate)) >= ? ORDER BY COALESCE(a.gerado_em, DATE(a.enviado_em)) DESC, a.id DESC");
+        $st->execute([$cid, $b, $a]);
+        $base = '/busca-bancos/ofx-mes.php?conta=' . $cid . '&mes=' . $mes;
+        $completos = []; $parciais = []; $varios = [];
+        foreach ($st as $o) {
+            $raw = (string)gzdecode((string)$o['conteudo']); $n = 0;
+            try { foreach (BbOfx::ler($raw) as $e) if (preg_replace('/\s+/', '', $e['conta']) === preg_replace('/\s+/', '', $c['conta'])) $n = count(array_filter(array_column($e['lanc'], 'data'), fn($d) => $d >= $a && $d <= $b)); } catch (Throwable $e) {}
+            $real = $o['periodo_ate'] < $o['periodo_de'] ? 'nada fechado' : BbTexto::dataBr(max($o['periodo_de'], $a)) . ' a ' . BbTexto::dataBr(min($o['periodo_ate'], $b));
+            $quando = $o['gerado_em'] ? 'gerado em ' . BbTexto::dataBr($o['gerado_em']) : 'enviado em ' . date('d/m/Y', strtotime($o['enviado_em']));
+            $info = ['arquivo' => (int)$o['id'], 'nome' => $o['nome'], 'n' => $n, 'quando' => $quando];
+            $soEste = $o['periodo_de'] >= $a && $o['decl'] <= $b;
+            $cobreTudo = $o['periodo_ate'] >= $o['periodo_de'] && $o['periodo_de'] <= ($cob ? $cob[0][0] : $a) && (!$cob || $o['periodo_ate'] >= end($cob)[1]) && $n >= $nMes;
+            if (!$soEste) { $varios[] = $info + ['cobre' => $cobreTudo, 'periodo' => BbTexto::dataBr($o['periodo_de']) . ' a ' . BbTexto::dataBr($o['decl'])]; continue; }
+            if ($cobreTudo) $completos[] = $info + ['periodo' => $real];
+            else $parciais[] = $info + ['periodo' => $real];
+        }
+        $ops = [];
+        foreach ($completos as $i => $o) $ops[] = ['tipo' => 'original', 'rotulo' => 'Original do banco — mês completo' . ($i ? ' (outra versão)' : ''), 'detalhe' => $o['periodo'] . ' · ' . $o['n'] . ' lançamento(s) · ' . $o['quando'] . ' · ' . $o['nome'], 'url' => '/busca-bancos/exportar-ofx.php?original=' . $o['arquivo']];
+        foreach ($varios as $o) if ($o['cobre']) $ops[] = ['tipo' => 'recorte', 'rotulo' => 'Original do banco, só as linhas deste mês', 'detalhe' => 'tirado de um arquivo de ' . $o['periodo'] . ' · ' . $o['n'] . ' lançamento(s) neste mês · ' . $o['nome'], 'url' => $base . '&tipo=recorte&arquivo=' . $o['arquivo']];
+        foreach ($parciais as $o) $ops[] = ['tipo' => 'parcial', 'rotulo' => 'Original do banco — só parte do mês', 'detalhe' => $o['periodo'] . ' · ' . $o['n'] . ' lançamento(s) · ' . $o['quando'] . ' · ' . $o['nome'], 'url' => '/busca-bancos/exportar-ofx.php?original=' . $o['arquivo']];
+        foreach ($varios as $o) {
+            if (!$o['cobre']) $ops[] = ['tipo' => 'recorte', 'rotulo' => 'Original do banco, só as linhas deste mês (parte do mês)', 'detalhe' => 'tirado de um arquivo de ' . $o['periodo'] . ' · ' . $o['n'] . ' lançamento(s) neste mês · ' . $o['nome'], 'url' => $base . '&tipo=recorte&arquivo=' . $o['arquivo']];
+            $ops[] = ['tipo' => 'varios', 'rotulo' => 'Original do banco inteiro (vários meses)', 'detalhe' => $o['periodo'] . ' · ' . $o['nome'], 'url' => '/busca-bancos/exportar-ofx.php?original=' . $o['arquivo']];
+        }
+        if ($nMes || $cob) $ops[] = ['tipo' => 'recriado', 'rotulo' => 'Recriado pela ferramenta', 'detalhe' => 'tudo o que foi importado deste mês (OFX, PDF da Caixa, Omie Cash), sem repetidos · ' . $nMes . ' lançamento(s)', 'url' => $base . '&tipo=recriado'];
+        foreach ($ops as $i => &$op) $op['melhor'] = $i === 0; unset($op);
+        return ['conta' => $c['apelido'], 'banco' => $c['banco'], 'mes' => $mes, 'n' => $nMes, 'faltas' => array_map(fn($f) => BbTexto::dataBr($f[0]) . ($f[1] !== $f[0] ? ' a ' . BbTexto::dataBr($f[1]) : ''), $faltas), 'opcoes' => $ops];
+    }
+
+    /** OFX de uma conta num mês: recriado ($arquivo = null) ou recorte de um original guardado. ['nome', 'conteudo'] */
+    public static function arquivoMes(PDO $pdo, int $cid, string $mes, ?int $arquivo = null): array
+    {
+        $c = BbCobertura::contas($pdo)[$cid] ?? null;
+        if (!$c || !preg_match('/^\d{4}-\d{2}$/', $mes)) throw new RuntimeException('conta ou mês inválido');
+        $a = $mes . '-01'; $b = date('Y-m-t', strtotime($a)); $nome = self::nomeConta($c) . ' - ' . $mes;
+        if ($arquivo) {
+            $st = $pdo->prepare('SELECT b.conteudo FROM bb_arquivo_bruto b JOIN bb_arquivos a ON a.id = b.arquivo_id WHERE a.id = ? AND a.conta_id = ?'); $st->execute([$arquivo, $cid]);
+            $raw = $st->fetchColumn(); if ($raw === false) throw new RuntimeException('arquivo original não encontrado');
+            $r = self::recorte((string)gzdecode((string)$raw), $c['conta'], $a, $b); if ($r === null) throw new RuntimeException('não achei esta conta dentro do arquivo');
+            return ['nome' => $nome . ' (original recortado).ofx', 'conteudo' => $r];
+        }
+        $int = BbCobertura::intervalos($pdo)[$cid] ?? [];
+        $cob = []; foreach ($int as [$x, $y]) if ($y >= $a && $x <= $b) $cob[] = [max($x, $a), min($y, $b)];
+        $st = $pdo->prepare('SELECT id, data, valor, tipo_ofx, fitid, checknum, refnum, memo, nome, contraparte FROM bb_lanc WHERE conta_id = ? AND data BETWEEN ? AND ? ORDER BY data, id');
+        $st->execute([$cid, $a, $b]); $lanc = $st->fetchAll();
+        $de = $cob ? $cob[0][0] : ($lanc ? $lanc[0]['data'] : $a); $ate = $cob ? end($cob)[1] : ($lanc ? end($lanc)['data'] : $b);
+        if ($lanc) { $de = min($de, $lanc[0]['data']); $ate = max($ate, end($lanc)['data']); }
+        $refs = []; $q = $pdo->prepare('SELECT saldo_final, COALESCE(saldo_data, periodo_ate) d FROM bb_arquivos WHERE conta_id = ? AND saldo_final IS NOT NULL'); $q->execute([$cid]);
+        foreach ($q as $r) $refs[] = ['saldo' => (float)$r['saldo_final'], 'data' => $r['d']];
+        $saldo = $refs ? self::saldoEm($pdo, $cid, $ate, $int, $refs) : null;
+        return ['nome' => $nome . ' (recriado).ofx', 'conteudo' => self::ofx($c, $de, $ate, $lanc, $saldo, $ate)];
+    }
+
     /**
      * Só os arquivos ORIGINAIS guardados, sem nenhuma mudança: ANO/MM - MÊS/EMPRESA - BANCO CONTA.ofx pelo período que o
      * próprio arquivo declara. Arquivo que cobre mais de um mês vai para ANO/VARIOS MESES com o período no nome.
@@ -147,7 +221,7 @@ final class BbOfxExport
      * Monta o .zip em $destino. Estrutura: EXTRATOS OFX/ANO/MM - MÊS/EMPRESA - BANCO CONTA.ofx (+ LEIA-ME.txt).
      * Só entram meses com extrato importado (coberto) ou com lançamento. Devolve ['arquivos' => n, 'lanc' => n].
      */
-    public static function zip(PDO $pdo, string $destino, ?array $soEmpresas = null): array
+    public static function zip(PDO $pdo, string $destino, ?array $soEmpresas = null, ?int $soConta = null, ?string $soMes = null): array
     {
         $z = new ZipArchive();
         if ($z->open($destino, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('não foi possível criar o .zip');
@@ -165,6 +239,7 @@ final class BbOfxExport
         $nArq = 0; $nLanc = 0; $leia = []; $fontes = []; $ontem = date('Y-m-d', strtotime('-1 day'));
         foreach ($contas as $cid => $c) {
             if ($soEmpresas && !in_array($c['empresa'], $soEmpresas, true)) continue;
+            if ($soConta && $cid !== $soConta) continue;
             $int = $ints[$cid] ?? [];
             $mm = $pdo->prepare('SELECT MIN(data), MAX(data) FROM bb_lanc WHERE conta_id = ?'); $mm->execute([$cid]); [$lMin, $lMax] = $mm->fetch(PDO::FETCH_NUM);
             $ini = min(array_filter([$int ? $int[0][0] : null, $lMin])); $fim = max(array_filter([$int ? end($int)[1] : null, $lMax]));
@@ -172,6 +247,7 @@ final class BbOfxExport
             $emp = self::EMP[$c['empresa']] ?? 'EMPRESA NAO INFORMADA';
             $nomeArq = self::seguro($emp . ' - ' . strtoupper(self::seguro(BbOfx::BANCOS[$c['banco']] ?? 'Banco')) . ' ' . $c['conta']) . '.ofx';
             for ($m = substr($ini, 0, 7); $m <= substr($fim, 0, 7); $m = date('Y-m', strtotime($m . '-01 +1 month'))) {
+                if ($soMes && $m !== $soMes) continue;
                 $a = $m . '-01'; $b = date('Y-m-t', strtotime($a));
                 $st->execute([$cid, $a, $b]); $lanc = $st->fetchAll();
                 // parte do mês coberta por extrato (o arquivo diz de quando a quando vai)

@@ -159,3 +159,9 @@ p .bb-confpill{cursor:default;padding:1px 8px;font-size:11.5px}
 .bb-conf-busca{display:block}.bb-conf-busca-linha{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}.bb-conf-busca-linha .bb-campo{flex:1;min-width:260px}
 .bb-omie-info{color:#5d6278;font-size:12px}
 .bb-bol{border:1px solid #e3e5ee;border-radius:8px;padding:10px 12px;margin:10px 0}.bb-bol-cab{margin-bottom:6px}.bb-bol ul{list-style:none;margin:0;padding:0}.bb-bol li{margin:5px 0}.bb-bol form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bb-grade td.bb-ofx{cursor:pointer}.bb-grade td.bb-ofx:hover,.bb-grade td.bb-ofx:focus{outline:2px solid #303682;outline-offset:-2px}
+.bb-grade th a{color:inherit;text-decoration:none}.bb-grade th a:hover{text-decoration:underline}
+.bb-ofx-pop{position:absolute;z-index:50;background:#fff;border:1px solid #d6d9e6;border-radius:10px;box-shadow:0 8px 28px rgba(20,25,60,.18);padding:12px 14px;width:min(440px,92vw);font-size:13.5px}
+.bb-ofx-pop h3{margin:0 0 4px;font-size:15px}.bb-ofx-pop .fecha{position:absolute;top:6px;right:8px;border:0;background:none;font-size:18px;cursor:pointer;color:#5d6278}
+.bb-ofx-pop ul{list-style:none;margin:8px 0 0;padding:0}.bb-ofx-pop li{margin:6px 0}.bb-ofx-pop a.bb-btn{display:inline-block;margin-bottom:2px}.bb-ofx-pop small{display:block;color:#5d6278}
+.bb-ofx-pop .falta{background:#fff6df;border-radius:6px;padding:5px 8px;margin-top:6px}
