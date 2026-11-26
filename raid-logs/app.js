@@ -113,15 +113,34 @@
       montarBosses();
       $('filtros').hidden = false;
       status(avisoCota ? MSG_COTA.replace('Tente de novo', 'Clique em Atualizar')
-        : est.lutas.length + ' tries carregadas' + (aoVivo ? ' (ao vivo, atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ')' : '') + '.' + (cota ? ' Cota da API nesta hora: ' + Math.round(cota.pointsSpentThisHour) + ' de ' + cota.limitPerHour + '.' : ''), avisoCota);
+        : semRepetidas().lutas.length + ' tries carregadas' + (aoVivo ? ' (ao vivo, atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ')' : '') + '.' + (cota ? ' Cota da API nesta hora: ' + Math.round(cota.pointsSpentThisHour) + ' de ' + cota.limitPerHour + '.' : ''), avisoCota);
       if (est.enc && est.nota === undefined) await carregarNota();
       if (!aoVivo || est.lutas.length !== antes) desenhar();
     } catch (e) { status(e.message === 'COTA' ? MSG_COTA : 'Erro: ' + e.message, true); }
     $('carregar').disabled = false; est.carregando = false;
   }
   // Opcoes de boss a partir das noites marcadas; mantem o boss atual se ele ainda existir.
+  // Tries das noites marcadas, sem repeticao: o mesmo pull enviado em dois relatorios (reenvio, ou log de outra pessoa) conta uma vez.
+  // E o mesmo pull quando boss e dificuldade batem e (a) comecou no mesmo instante e durou o mesmo, ou
+  // (b) os relogios dos dois PCs divergem, mas a duracao e a vida final do boss sao identicas.
+  function semRepetidas() {
+    const chave = [...est.noites].sort().join(',') + '|' + est.lutas.length;
+    if (est._sel && est._sel.chave === chave) return est._sel;
+    const abs = l => { const pr = est.porRel[l.rel], f = pr && pr.rel.lutas.find(x => x.id === l.id); return pr && f ? pr.rel.inicio + f.startTime : l.data; };
+    const peso = {}; for (const c in est.porRel) peso[c] = est.porRel[c].lutas.length; // em caso de repeticao, fica a do relatorio mais completo
+    const cand = est.lutas.filter(l => est.noites.has(l.rel)).map(l => ({ l, t: abs(l) })).sort((a, b) => (peso[b.l.rel] || 0) - (peso[a.l.rel] || 0) || a.l.rel.localeCompare(b.l.rel) || a.l.id - b.l.id);
+    const ficam = [], rep = {};
+    for (const c of cand) {
+      const igual = ficam.find(o => o.l.rel !== c.l.rel && o.l.enc === c.l.enc && o.l.dif === c.l.dif && (
+        (Math.abs(o.t - c.t) <= 30000 && Math.abs(o.l.durS - c.l.durS) <= 10) ||
+        (Math.abs(o.t - c.t) <= 2 * 3600e3 && Math.abs(o.l.durS - c.l.durS) <= 3 && o.l.kill === c.l.kill && Math.abs((o.l.pct || 0) - (c.l.pct || 0)) < 0.011)));
+      if (igual) rep[c.l.rel] = (rep[c.l.rel] || 0) + 1; else ficam.push(c);
+    }
+    const lutas = ficam.sort((a, b) => a.t - b.t).map(c => c.l);
+    return est._sel = { chave, lutas, rep, total: Object.values(rep).reduce((a, b) => a + b, 0) };
+  }
   function montarBosses() {
-    const encs = {}; for (const l of est.lutas) { if (!est.noites.has(l.rel)) continue; const k = l.enc + ':' + l.dif; (encs[k] = encs[k] || { k, boss: l.boss, dif: l.dif, n: 0 }).n++; }
+    const encs = {}; for (const l of semRepetidas().lutas) { const k = l.enc + ':' + l.dif; (encs[k] = encs[k] || { k, boss: l.boss, dif: l.dif, n: 0 }).n++; }
     const lista = Object.values(encs).sort((a, b) => b.n - a.n);
     $('boss').innerHTML = lista.map(e => '<option value="' + e.k + '">' + esc(e.boss) + ' ' + (DIF[e.dif] || '') + ' (' + e.n + ' tries)</option>').join('');
     if (!lista.some(e => e.k === est.enc)) { est.enc = lista.length ? lista[0].k : null; est.refs = undefined; est.nota = undefined; }
@@ -133,14 +152,15 @@
     if (falta.length) await carregar({ codes: falta }); else { montarBosses(); if (est.enc && est.nota === undefined) await carregarNota(); desenhar(); }
   }
 
-  const lutasAtuais = () => est.lutas.filter(l => (l.enc + ':' + l.dif) === est.enc && est.noites.has(l.rel));
+  const lutasAtuais = () => semRepetidas().lutas.filter(l => (l.enc + ':' + l.dif) === est.enc);
 
   function desenhar() {
-    const ls = lutasAtuais();
+    const ls = lutasAtuais(), sel = semRepetidas();
     const sems = {}; for (const r of est.catalogo) (sems[C.semanaDe(r.inicio)] = sems[C.semanaDe(r.inicio)] || []).push(r);
     $('noites').innerHTML = Object.keys(sems).map(Number).sort((a, b) => b - a).map(sm => { const rs = sems[sm], todas = rs.every(r => est.noites.has(r.code));
       return '<div class="linha semana"><label class="chip forte"><input type="checkbox" data-sem="' + sm + '"' + (todas ? ' checked' : '') + '> Semana ' + sm + '</label>' +
-        rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + '</label>').join('') + '</div>'; }).join('');
+        rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + (sel.rep[r.code] ? ' <span class="en">(' + sel.rep[r.code] + ' repetidas)</span>' : '') + '</label>').join('') + '</div>'; }).join('') +
+      (sel.total ? '<div class="sub">' + sel.total + ' tries apareciam em mais de um relatório e foram contadas uma vez só (fica a do relatório mais completo).</div>' : '');
     document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === est.aba));
     montarIds(ls);
     const ab = $('abaBoss'); ab.hidden = !temBoss(); if (temBoss() && ls.length) ab.textContent = ls[0].boss; else if (est.aba === 'boss') est.aba = 'geral';
