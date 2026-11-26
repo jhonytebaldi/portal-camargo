@@ -48,6 +48,7 @@ try {
         $nome = trim((string)preg_replace('/\s+/', ' ', (string)($in['nome'] ?? ''))); $dig = preg_replace('/\D+/', '', (string)($in['doc'] ?? '')); $email = trim((string)($in['email'] ?? ''));
         if ($fake) {
             if ($nome === '' || !in_array(strlen($dig), [11, 14], true) || !cf_doc_valido($dig)) $falha('nome e CPF/CNPJ válido são obrigatórios');
+            try { cf_endereco_omie($in['endereco'] ?? null); } catch (Throwable $e) { $falha($e->getMessage()); }
             $l = json_decode((string)@file_get_contents($fakeArq), true) ?: [];
             foreach ($l as $c) if ($c['doc'] === $dig) $falha('já existe cadastro no Omie com esse documento: ' . $c['nome'] . ' — use "usar este"');
             $cod = 9100000 + count($l); $l[] = ['codigo' => $cod, 'nome' => mb_strtoupper($nome), 'doc' => $dig, 'email' => $email];
@@ -55,7 +56,7 @@ try {
             exit(json_encode(['ok' => true, 'cadastro' => ['codigo' => $cod, 'nome' => mb_strtoupper($nome), 'doc' => cf_fmt_doc($dig)], 'msg' => 'cadastrado no Omie (simulação local): ' . mb_strtoupper($nome)], JSON_UNESCAPED_UNICODE));
         }
         if (($resta = OmieApi::bloqueadoPor($empresa)) > 0) $falha('API do Omie bloqueada temporariamente (anti-abuso). Aguarde ' . ceil($resta / 60) . ' min.');
-        try { $r = OmieEnvio::incluirCadastro($empresa, $nome, $dig, $email); }
+        try { $r = OmieEnvio::incluirCadastro($empresa, $nome, $dig, $email, $in['endereco'] ?? null); }
         catch (Throwable $e) { $falha('não cadastrei no Omie: ' . $e->getMessage() . (OmieEnvio::erroTemporario($e->getMessage()) ? ' — aguarde alguns minutos e tente de novo' : '')); }
         $c = $r['cadastro'];
         exit(json_encode(['ok' => true, 'cadastro' => ['codigo' => (int)$c['codigo_cliente_omie'], 'nome' => (string)$c['razao_social'], 'doc' => (string)($c['cnpj_cpf'] ?? cf_fmt_doc($dig))], 'msg' => $r['msg']], JSON_UNESCAPED_UNICODE));

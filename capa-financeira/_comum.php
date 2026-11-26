@@ -367,6 +367,37 @@ HTML;
 }
 
 /** CPF (11) ou CNPJ (14) com dígitos verificadores válidos. */
+/**
+ * Endereço de um cadastro novo no Omie (obrigatório: sem endereço o Omie não emite boleto).
+ * Recebe {cep, logradouro, numero, complemento, bairro, cidade, uf, ibge} e devolve os campos do Omie.
+ * Lança RuntimeException dizendo o que falta e como resolver.
+ */
+function cf_endereco_omie(mixed $e, string $quem = ''): array
+{
+    $de = $quem !== '' ? ' de ' . $quem : '';
+    if (!is_array($e)) throw new RuntimeException('falta o endereço' . $de . ' — o Omie precisa dele para emitir boleto; preencha CEP, rua, número, bairro, cidade e UF');
+    $t = fn(string $k, int $max) => mb_substr(trim((string)preg_replace('/\s+/u', ' ', (string)($e[$k] ?? ''))), 0, $max);
+    $cep = preg_replace('/\D+/', '', (string)($e['cep'] ?? '')) ?? '';
+    $uf = strtoupper($t('uf', 2));
+    $falta = [];
+    if (strlen($cep) !== 8) $falta[] = 'CEP com 8 dígitos';
+    if ($t('logradouro', 60) === '') $falta[] = 'rua/avenida';
+    if ($t('numero', 10) === '') $falta[] = 'número (use S/N se não tiver)';
+    if ($t('bairro', 60) === '') $falta[] = 'bairro';
+    if ($t('cidade', 34) === '') $falta[] = 'cidade';
+    if (!in_array($uf, ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'], true)) $falta[] = 'UF (sigla do estado, ex.: SC)';
+    if ($falta) throw new RuntimeException('endereço' . $de . ' incompleto — falta: ' . implode(', ', $falta) . '. O Omie precisa do endereço completo para emitir boleto.');
+    // cidade no padrão do Omie: "JOINVILLE (SC)" — maiúsculas, sem acento
+    $cid = strtoupper((string)(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $t('cidade', 34)) ?: $t('cidade', 34)));
+    $cid = trim((string)preg_replace('/[^A-Z0-9 \'-]/', '', $cid));
+    $o = ['cep' => $cep, 'endereco' => mb_strtoupper($t('logradouro', 60)), 'endereco_numero' => mb_strtoupper($t('numero', 10)), 'bairro' => mb_strtoupper($t('bairro', 60)),
+          'cidade' => $cid . ' (' . $uf . ')', 'estado' => $uf];
+    if ($t('complemento', 60) !== '') $o['complemento'] = mb_strtoupper($t('complemento', 60));
+    $ibge = preg_replace('/\D+/', '', (string)($e['ibge'] ?? '')) ?? '';
+    if (strlen($ibge) === 7) $o['cidade_ibge'] = $ibge;
+    return $o;
+}
+
 function cf_doc_valido(string $doc): bool
 {
     $d = preg_replace('/\D+/', '', $doc);
