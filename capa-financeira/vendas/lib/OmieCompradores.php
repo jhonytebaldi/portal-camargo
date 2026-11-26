@@ -72,7 +72,9 @@ final class OmieCompradores
     /** @return array{ok: bool, codigo: ?int, msg: string} */
     public static function cadastrar(array $c, string $empresa = self::EMPRESA): array
     {
-        $p = self::pedido($c);
+        // endereço é obrigatório no cadastro novo: sem ele o Omie não emite boleto
+        try { $p = self::pedido($c) + cf_endereco_omie($c['endereco'] ?? null, (string)$c['nome']); }
+        catch (RuntimeException $e) { return ['ok' => false, 'codigo' => null, 'msg' => 'não cadastrei no Omie: ' . $e->getMessage() . ' Conclua de novo e preencha o endereço na janela de cadastro.']; }
         if (self::fake()) {
             $l = self::fakeLer(); $cod = 9000000 + count($l) + 1;
             $l[] = ['codigo' => $cod, 'nome' => $p['razao_social'], 'doc' => $c['documento'], 'email' => $c['email']];
