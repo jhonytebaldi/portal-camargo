@@ -182,6 +182,8 @@ final class Recibo
     /** histórico no formato da capa, com o RECIBO preenchido */
     public static function descricao(array $l, array $pessoa): string
     {
+        // texto escolhido por quem gerou (observação na íntegra ou editada): vai como está, depois do nº do recibo
+        if (trim((string)($l['texto_livre'] ?? '')) !== '') return 'RECIBO ' . $l['codigo_integracao'] . ' - ' . trim((string)$l['texto_livre']);
         $partes = ['RECIBO ' . $l['codigo_integracao'], mb_strtoupper((string)($pessoa['nome'] ?? $l['cf_raw']), 'UTF-8')];
         if (!empty($l['funcao'])) $partes[] = $l['funcao'];
         $partes[] = ($l['natureza'] ?? 'COMISSAO') === 'BONUS' ? 'BONUS' : 'COMISSAO';
