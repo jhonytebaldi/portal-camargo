@@ -143,7 +143,10 @@ function ro_linha(PDO $pdo, array $pessoas, array $t): array
             'funcao' => (string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria'])), 'bonus' => ($o['natureza'] ?? '') === 'BONUS', 'repasse' => $repasse, 'sem_obs' => ($o['padrao'] ?? '') === 'vazio',
             'cliente' => (string)($o['cliente'] ?? ''), 'imovel' => (string)($o['imovel'] ?? ''), 'cod' => (string)($o['cod'] ?? ''), 'venda' => (string)($o['venda'] ?? ''),
             'final' => round((float)$t['valor'] - (float)($t['desconto'] ?? 0) - (float)($t['impostos'] ?? 0) + (float)($t['juros'] ?? 0), 2), 'grupo' => $t['conta'] . '|' . $t['doc_digitos'] . '|' . ($t['previsao'] ?: $t['vencimento']),
-            'numero_obs' => (string)($o['recibo'] ?? ''), 'validado' => (string)($t['validado'] ?? '')];
+            'numero_obs' => (string)($o['recibo'] ?? ''), 'validado' => (string)($t['validado'] ?? ''),
+            // observação fora do padrão: a janela pergunta qual texto usar (o que a ferramenta entendeu, a observação na íntegra ou editada)
+            'fora_padrao' => Titulo::foraDoPadrao($o), 'observacao' => (string)($t['observacao'] ?? ''),
+            'desc_previa' => Recibo::descricao(['texto_livre' => ''] + Titulo::linhaRecibo($t, '(nº)', $p ?: Titulo::pessoaDoFornecedor($t)), $p ?: Titulo::pessoaDoFornecedor($t))];
 }
 /** confere um título do .xlsx no Omie (CNPJ/CPF + vencimento + valor): preenche omie_id, cod_int, validado, obs_baixa */
 function ro_validar(string $conta, array &$t, array &$cache): void
@@ -376,15 +379,14 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
       <div class="cf-pend ok" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
         <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-agrupar"> agrupar num só recibo os títulos do mesmo fornecedor e mesma <b>previsão de pagamento</b></label>
         <label>Data do recibo <input type="date" id="ro-data" class="cf-in" title="vazio = previsão de pagamento de cada título (se não houver previsão, o vencimento)"></label>
-        <label class="cf-mini" style="margin:0" title="um título que já está num recibo atual: o recibo antigo é regerado por inteiro"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo</label>
-        <label class="cf-mini" style="margin:0"><input type="checkbox" id="ro-forcar"> incluir títulos não encontrados no Omie</label>
+        <label class="cf-mini" style="margin:0" title="um título que já está num recibo atual: o recibo antigo é regerado por inteiro"><input type="checkbox" id="ro-subst"> gerar de novo os que já têm recibo <span id="ro-subst-dica" style="display:none;color:#b4512f;font-weight:600"></span></label>
       </div>
       <div class="cf-acoes"><div style="text-align:right"><button class="btn" id="btn-gerar">Gerar <span id="ro-rot">recibos</span> (<span id="ro-n">0</span> · <span id="ro-total">R$ 0,00</span>)</button><div class="cf-raw" id="ro-resumo" style="margin-top:4px"></div></div></div>
     </div>
     <div class="cf-tbl-wrap" style="max-height:58vh;overflow:auto"><table class="grid cf-tbl" id="tbl-ro">
     <thead><tr><th><input type="checkbox" id="ro-todos"></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
     <tbody></tbody></table></div>
-    <p class="cf-dica" style="margin:8px 0 0">Vêm marcados os títulos <b>novos</b> e os <b>pagos</b> (sem recibo, encontrados no Omie — pago gera recibo mesmo com o "valor a pagar" zerado). "Já com recibo": marcar + "gerar de novo" regera o recibo antigo por inteiro. Cancelados, repasses e não encontrados ficam desmarcados. O que não for gerado permanece aqui até você encerrar.</p>
+    <p class="cf-dica" style="margin:8px 0 0">Vêm marcados todos os títulos, menos <b>cancelados</b> e <b>repasses</b> (pago gera recibo mesmo com o "valor a pagar" zerado). "Já com recibo" só é gerado com "gerar de novo" ligado — o recibo antigo é regerado por inteiro. "Não encontrados no Omie" pedem confirmação ao gerar. Observação fora do padrão: clique na etiqueta ⚠ para escolher o texto do recibo (ou a janela pergunta ao gerar). O que não for gerado permanece aqui até você encerrar.</p>
   </div>
 </div>
 <?php endif; ?>
@@ -443,7 +445,47 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   /* ===== modal dos títulos lidos ===== */
   const M = {el: document.getElementById('ro-modal'), linhas: [], conta: '', origem: '', aba: 'todos', gerados: 0};
   const ROT = {novo: 'Novos', pago: 'Pagos', ja: 'Já com recibo', cancelado: 'Cancelados', repasse: 'Repasses', nao: 'Não encontrados no Omie', gerado: 'Gerados agora'};
-  const MARCA = c => c === 'novo' || c === 'pago';   // o que vem marcado por padrão
+  const MARCA = c => !['repasse', 'cancelado', 'gerado'].includes(c);   // vem tudo marcado, menos repasses e cancelados
+  const SEM_RECIBO = c => c === 'novo' || c === 'pago' || c === 'nao';
+  const MODO_TXT = {auto: 'o que a ferramenta entendeu', integra: 'observação na íntegra', editado: 'texto editado'};
+  function tagTexto(l){
+    if (!l.fora_padrao) return '';
+    return '<br><button type="button" class="cf-tag' + (l.texto_modo ? '' : ' cf-grave') + ' ro-txt" style="cursor:pointer;border:0" title="' + esc('observação fora do padrão (' + l.fora_padrao + ') — clique para escolher o texto do recibo') + '">'
+      + (l.texto_modo ? '✎ texto: ' + MODO_TXT[l.texto_modo] : '⚠ observação fora do padrão — escolher texto') + '</button>';
+  }
+  // janela para escolher o texto do recibo de um título com observação fora do padrão.
+  // Resolve 'ok' | 'auto_todos' (usar o que a ferramenta entendeu neste e nos próximos) | 'cancelar'
+  function editarTexto(l, lote){
+    return new Promise(res => {
+      const integra = String(l.observacao || '').replace(/\r/g, '').split(/\s*\n\s*/).filter(Boolean).join(' - ');
+      const modo = l.texto_modo || 'auto', edit = l.texto_modo === 'editado' ? l.t.texto_recibo : String(l.observacao || '').replace(/\r/g, '');
+      const f = document.createElement('div'); f.className = 'cfm-fundo on'; f.style.cssText = 'display:flex;z-index:1100;opacity:1';
+      f.innerHTML = '<div class="cfm-caixa" style="width:min(760px,95vw);text-align:left;padding:18px 20px">'
+        + '<h2 class="cfm-tit" style="text-align:left;margin:0 0 4px">Texto do recibo</h2>'
+        + '<p class="cf-dica" style="margin:0 0 10px"><b>' + esc(l.t.razao) + '</b> · ' + brl(+l.t.valor) + ' · venc. ' + dBr(l.t.vencimento) + '<br>A observação deste título foge do padrão que a ferramenta lê (' + esc(l.fora_padrao) + '). Qual texto vai no recibo, depois de "' + (l.bonus ? 'Bônus' : 'Comissão') + ': RECIBO nº -"?</p>'
+        + '<label style="display:block;margin:8px 0;font-size:13.5px"><input type="radio" name="rot" value="auto"' + (modo === 'auto' ? ' checked' : '') + '> <b>O que a ferramenta entendeu</b><br><small class="cf-raw" style="margin-left:22px;display:block">' + esc(String(l.desc_previa || '').replace(/^RECIBO \(nº\) - /, '')) + '</small></label>'
+        + '<label style="display:block;margin:8px 0;font-size:13.5px"><input type="radio" name="rot" value="integra"' + (modo === 'integra' ? ' checked' : '') + (integra ? '' : ' disabled') + '> <b>A observação na íntegra</b><br><small class="cf-raw" style="margin-left:22px;display:block">' + (integra ? esc(integra) : '(observação vazia)') + '</small></label>'
+        + '<label style="display:block;margin:8px 0 4px;font-size:13.5px"><input type="radio" name="rot" value="editado"' + (modo === 'editado' ? ' checked' : '') + '> <b>Editar o texto</b> <small class="cf-raw">(parte da observação original; cada linha vira " - ")</small></label>'
+        + '<textarea data-txt rows="5" maxlength="600" style="width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;padding:8px;border:2px solid #d9d6cc;border-radius:6px">' + esc(edit) + '</textarea>'
+        + '<div data-msg class="cf-dica" style="color:#b4512f;min-height:16px"></div>'
+        + '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px">'
+        + (lote ? '<button type="button" class="btn cf-btn-sec" data-x>Cancelar a geração</button><button type="button" class="btn cf-btn-sec" data-todos>Usar o que a ferramenta entendeu neste e nos próximos</button>' : '<button type="button" class="btn cf-btn-sec" data-x>Fechar sem mudar</button>')
+        + '<button type="button" class="btn" data-ok>Usar este texto</button></div></div>';
+      document.body.appendChild(f);
+      const $ = q => f.querySelector(q), ta = $('[data-txt]');
+      ta.addEventListener('input', () => { $('input[value=editado]').checked = true; });
+      const fim = v => { f.remove(); res(v); };
+      $('[data-x]').onclick = () => fim('cancelar');
+      if (lote) $('[data-todos]').onclick = () => { l.texto_modo = 'auto'; l.t.texto_recibo = ''; fim('auto_todos'); };
+      $('[data-ok]').onclick = () => {
+        const m = f.querySelector('input[name=rot]:checked').value;
+        if (m === 'editado' && !ta.value.trim()) { $('[data-msg]').textContent = 'O texto editado está vazio — escreva o texto ou escolha outra opção.'; return; }
+        l.texto_modo = m; l.t.texto_recibo = m === 'auto' ? '' : (m === 'integra' ? String(l.observacao || '') : ta.value);
+        fim('ok');
+      };
+      setTimeout(() => (modo === 'editado' ? ta : $('[data-ok]')).focus(), 50);
+    });
+  }
   function abrirModal(){ M.el.style.display = 'flex'; requestAnimationFrame(() => M.el.classList.add('on')); }
   function fecharModal(){ M.el.classList.remove('on'); setTimeout(() => { M.el.style.display = 'none'; }, 180); }
   function linhaHtml(l){
@@ -459,7 +501,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
       + '<td>' + esc(t.razao) + '<br><small class="cf-raw">' + esc(t.doc) + '</small></td>'
       + '<td>' + (l.pessoa ? esc(l.pessoa) : '<span class="cf-tag" title="não está em Pessoas: o recibo sai com a razão social do Omie">não cadastrada</span>') + '</td>'
       + '<td>' + esc(l.funcao) + (l.bonus ? ' <span class="cf-tag">BONUS</span>' : '') + (l.repasse ? ' <span class="cf-tag cf-grave" title="repasse a construtora/terceiro: normalmente não tem recibo de comissão">REPASSE</span>' : '') + '</td>'
-      + '<td><small>' + esc(l.cliente.slice(0, 45)) + '<br><span class="cf-raw">' + esc(l.imovel.slice(0, 45)) + '</span>' + (l.sem_obs ? '<br><span class="cf-tag cf-grave">sem observação</span>' : '') + '</small></td>'
+      + '<td><small>' + esc(l.cliente.slice(0, 45)) + '<br><span class="cf-raw">' + esc(l.imovel.slice(0, 45)) + '</span>' + tagTexto(l) + '</small></td>'
       + '<td>' + esc(l.cod || '—') + (l.venda ? '<br><small class="cf-raw">' + esc(l.venda) + '</small>' : '') + '</td>'
       + '<td class="cf-num">' + brl(+t.valor) + '</td><td>' + num + '</td>'
       + '<td class="' + valCls + '"><small>' + esc(val) + '</small></td></tr>';
@@ -473,6 +515,13 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     ['novo', 'pago', 'ja', 'cancelado', 'repasse', 'nao', 'gerado'].forEach(k => { if (cont[k]) h += '<button type="button" class="' + (M.aba === k ? 'on' : '') + '" data-aba="' + k + '">' + ROT[k] + ' (' + cont[k] + ')</button>'; });
     ab.innerHTML = h; ab.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { M.aba = b.dataset.aba; render(); }));
     tb.querySelectorAll('.ro-sel').forEach(c => c.addEventListener('change', soma)); soma();
+    ligarTxt();
+  }
+  function ligarTxt(){
+    document.querySelectorAll('#tbl-ro .ro-txt:not([data-lig])').forEach(b => { b.dataset.lig = '1'; b.addEventListener('click', async () => {
+      const l = M.linhas.find(x => x._i === +b.closest('tr').dataset.i); if (!l) return;
+      if (await editarTexto(l, false) === 'ok') { b.outerHTML = tagTexto(l).replace(/^<br>/, ''); ligarTxt(); }
+    }); });
   }
   function selecionadas(){ return [...document.querySelectorAll('#tbl-ro .ro-sel:checked')].map(c => M.linhas.find(l => l._i === +c.closest('tr').dataset.i)); }
   // contador do botão: nº de recibos que vão sair de fato (agrupado = um por fornecedor+previsão) e o valor final (já com descontos/impostos/juros)
@@ -486,8 +535,10 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     document.getElementById('ro-total').textContent = brl(fin);
     document.getElementById('ro-resumo').textContent = sel.length ? sel.length + ' título(s)' + (Math.abs(bruto - fin) > 0.005 ? ' · bruto ' + brl(bruto) + ' · descontos ' + brl(bruto - fin) : '') : '';
     document.getElementById('btn-gerar').disabled = !sel.length;
+    const nJa = sel.filter(l => l.classe === 'ja').length, d = document.getElementById('ro-subst-dica'), sub = document.getElementById('ro-subst').checked;
+    d.style.display = nJa && !sub ? '' : 'none'; d.textContent = '← ' + nJa + ' marcado(s) já têm recibo: ative para regerá-los';
   }
-  ['ro-agrupar', 'ro-data'].forEach(id => document.getElementById(id).addEventListener('change', soma));
+  ['ro-agrupar', 'ro-data', 'ro-subst'].forEach(id => document.getElementById(id).addEventListener('change', soma));
   document.getElementById('ro-todos').addEventListener('change', e => { document.querySelectorAll('#tbl-ro .ro-sel').forEach(c => c.checked = e.target.checked); soma(); });
   try { document.getElementById('ro-agrupar').checked = localStorage.getItem('ro-agrupar') === '1'; } catch(e) {}
   document.getElementById('ro-agrupar').addEventListener('change', e => { try { localStorage.setItem('ro-agrupar', e.target.checked ? '1' : '0'); } catch(err) {} });
@@ -500,10 +551,10 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     while (fila.length) {
       const lote = fila.slice(0, BL); txt.textContent = 'Conferindo no Omie (CNPJ + vencimento + valor)… ' + feitos + '/' + total; bar.style.width = (feitos / total * 100) + '%';
       const j = await post({csrf, acao:'validar', conta: M.conta, itens: lote.map(i => ({...M.linhas.find(l => l._i === i).t, _i: i}))});
-      if (!j) { txt.textContent = 'Conferência interrompida — os títulos sem conferência ficam marcados como "conferindo…"; dá para gerar mesmo assim marcando "incluir títulos não encontrados".'; bar.style.width = '0'; M.validando = false; return; }
-      j.linhas.forEach(nl => { const k = M.linhas.findIndex(l => l._i === nl._i); const sel = document.querySelector('#tbl-ro tr[data-i="' + nl._i + '"] .ro-sel'); const marcado = sel ? sel.checked : null; M.linhas[k] = nl; M.linhas[k]._marc = marcado; });
+      if (!j) { txt.textContent = 'Conferência interrompida — os títulos sem conferência ficam marcados como "conferindo…"; dá para gerar mesmo assim (a janela pede confirmação).'; bar.style.width = '0'; M.validando = false; return; }
+      j.linhas.forEach(nl => { const k = M.linhas.findIndex(l => l._i === nl._i); const sel = document.querySelector('#tbl-ro tr[data-i="' + nl._i + '"] .ro-sel'); const marcado = sel ? sel.checked : null; const velho = M.linhas[k]; if (velho.texto_modo) { nl.texto_modo = velho.texto_modo; nl.t.texto_recibo = velho.t.texto_recibo; } M.linhas[k] = nl; M.linhas[k]._marc = marcado; });
       const rest = j.restantes || []; feitos += lote.length - rest.length; fila = rest.concat(fila.slice(BL));
-      render(); M.linhas.forEach(l => { if (l._marc !== undefined && l._marc !== null) { const c = document.querySelector('#tbl-ro tr[data-i="' + l._i + '"] .ro-sel'); if (c && l.classe !== 'nao' && l.classe !== 'cancelado') c.checked = l._marc; } }); soma();
+      render(); M.linhas.forEach(l => { if (l._marc !== undefined && l._marc !== null) { const c = document.querySelector('#tbl-ro tr[data-i="' + l._i + '"] .ro-sel'); if (c && MARCA(l.classe)) c.checked = l._marc; } }); soma();
     }
     M.validando = false; txt.textContent = 'Conferência no Omie concluída: ' + total + ' título(s).'; bar.style.width = '100%'; setTimeout(() => box.style.display = 'none', 2500);
   }
@@ -527,8 +578,8 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     if (j.validar) validar();
   }));
   document.getElementById('rom-fechar').addEventListener('click', async () => {
-    const sobra = M.linhas.filter(l => MARCA(l.classe)).length;
-    if (sobra && !await CFModal.pergunta({tipo:'parcial', titulo:'Encerrar sem gerar?', texto: sobra + ' título(s) novo(s)/pago(s) ainda sem recibo vão ser descartados desta leitura (nada é gravado; é só enviar o relatório de novo para vê-los outra vez).', ok:'Sim, encerrar'})) return;
+    const sobra = M.linhas.filter(l => SEM_RECIBO(l.classe)).length;
+    if (sobra && !await CFModal.pergunta({tipo:'parcial', titulo:'Encerrar sem gerar?', texto: sobra + ' título(s) ainda sem recibo vão ser descartados desta leitura (nada é gravado; é só enviar o relatório de novo para vê-los outra vez).', ok:'Sim, encerrar'})) return;
     fecharModal(); if (M.gerados) location.reload();
   });
   M.el.addEventListener('click', e => { if (e.target === M.el) document.getElementById('rom-fechar').click(); });
@@ -536,12 +587,27 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
   const bg = document.getElementById('btn-gerar');
   bg.addEventListener('click', async () => {
     if (M.validando && !await CFModal.pergunta({titulo:'Conferência em andamento', texto:'A conferência no Omie ainda não terminou. Gerar assim mesmo? (os títulos ainda não conferidos entram sem a conferência)', ok:'Sim, gerar'})) return;
-    const forcar = document.getElementById('ro-forcar').checked;
     const sel = selecionadas();
-    const bloq = sel.filter(l => l.classe === 'nao' && !forcar);
-    if (bloq.length) { await CFModal.aviso({tipo:'parcial', titulo:'Títulos não encontrados no Omie', texto: bloq.length + ' título(s) selecionado(s) não foram encontrados no Omie. Cadastre lá primeiro ou marque "incluir títulos não encontrados".'}); return; }
-    const jaSel = sel.filter(l => l.classe === 'ja');
-    if (jaSel.length && !document.getElementById('ro-subst').checked) { await CFModal.aviso({tipo:'parcial', titulo:'Títulos que já têm recibo', texto: jaSel.length + ' título(s) marcado(s) já estão em recibos. Desmarque-os, ou marque "gerar de novo os que já têm recibo" para regerar esses recibos por inteiro.'}); return; }
+    // já com recibo: sugere ligar "gerar de novo" (regera o recibo antigo por inteiro)
+    const jaSel = sel.filter(l => l.classe === 'ja'), cbSubst = document.getElementById('ro-subst');
+    if (jaSel.length && !cbSubst.checked) {
+      if (!await CFModal.pergunta({tipo:'parcial', titulo:'Títulos que já têm recibo', html:'<p style="margin:0">' + jaSel.length + ' título(s) marcado(s) já estão em recibos (' + esc(jaSel.slice(0, 4).map(l => curto(l.ja.numero)).join(', ')) + (jaSel.length > 4 ? ', …' : '') + ').</p><p style="margin:8px 0 0">Ativar <b>"gerar de novo os que já têm recibo"</b>? Os recibos antigos são regerados por inteiro (a próxima tela mostra quais). Para não regerar, volte e desmarque esses títulos.</p>', ok:'Ativar e continuar', cancelar:'Voltar'})) return;
+      cbSubst.checked = true; soma();
+    }
+    // não encontrados no Omie: só um alerta — gera se a pessoa confirmar
+    const nao = sel.filter(l => l.classe === 'nao' || /conferindo/.test(l.validado || ''));
+    if (nao.length && !await CFModal.pergunta({tipo:'parcial', titulo:'Títulos não conferidos no Omie', html:'<p style="margin:0">' + nao.length + ' título(s) marcado(s) não foram encontrados (ou ainda não conferidos) no Omie:</p><ul style="margin:6px 0 0 18px;font-size:13px">'
+        + nao.slice(0, 6).map(l => '<li><b>' + esc(l.t.razao) + '</b> ' + brl(+l.t.valor) + ' venc. ' + dBr(l.t.vencimento) + '<br><small class="cf-raw">' + esc(String(l.validado || '').replace(/^NÃO ENCONTRADO no Omie:?\s*/, '') || 'sem conferência') + '</small></li>').join('') + (nao.length > 6 ? '<li>… e mais ' + (nao.length - 6) + '</li>' : '') + '</ul>'
+        + '<p style="margin:8px 0 0">Gerar o recibo desses títulos mesmo assim?</p>', ok:'Sim, gerar mesmo assim', cancelar:'Voltar'})) return;
+    // observação fora do padrão sem texto escolhido: pergunta um a um qual texto usar
+    let autoResto = false;
+    for (const l of sel.filter(l => l.fora_padrao && !l.texto_modo)) {
+      if (autoResto) { l.texto_modo = 'auto'; continue; }
+      const r = await editarTexto(l, true);
+      if (r === 'cancelar') { render(); return; }
+      if (r === 'auto_todos') autoResto = true;
+    }
+    if (sel.some(l => l.fora_padrao)) { document.querySelectorAll('#tbl-ro .ro-txt').forEach(b => { const l = M.linhas.find(x => x._i === +b.closest('tr').dataset.i); if (l) { b.outerHTML = tagTexto(l).replace(/^<br>/, ''); } }); ligarTxt(); }
     const itens = sel.map(l => l.t); if (!itens.length) return;
     const corpo = {csrf, itens, agrupar: document.getElementById('ro-agrupar').checked ? 1 : 0, data: document.getElementById('ro-data').value, substituir: document.getElementById('ro-subst').checked ? 1 : 0};
     bg.disabled = true;
@@ -564,8 +630,8 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     M.gerados += j.n; render();
     const subst = pv.substituir.length ? '<p style="margin:6px 0 0">' + pv.substituir.length + ' recibo(s) antigo(s) substituído(s) — continuam no histórico com a situação "substituído".</p>' : '';
     const links = (j.recibos || []).map(r => '<a href="?baixar=' + r.id + '&ver=1" target="_blank">📄 ' + esc(curto(r.numero)) + '</a> — ' + esc(r.recebedor) + ' — ' + brl(+r.valor)).join('<br>');
-    const sobra = M.linhas.filter(l => MARCA(l.classe)).length;
-    await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + links + '</p>' + subst + (j.ids.length > 1 ? '<p style="margin:6px 0 0"><a href="?zip=' + j.ids.join(',') + '">⬇ baixar todos (ZIP)</a></p>' : '') + '<p class="cf-dica" style="margin:8px 0 0">' + (sobra ? sobra + ' título(s) novo(s) continuam na janela — gere-os também ou encerre para ignorá-los.' : 'Não sobrou título novo. Ao encerrar a janela, a lista de recibos é atualizada.') + '</p>'});
+    const sobra = M.linhas.filter(l => SEM_RECIBO(l.classe)).length;
+    await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + links + '</p>' + subst + (j.ids.length > 1 ? '<p style="margin:6px 0 0"><a href="?zip=' + j.ids.join(',') + '">⬇ baixar todos (ZIP)</a></p>' : '') + '<p class="cf-dica" style="margin:8px 0 0">' + (sobra ? sobra + ' título(s) sem recibo continuam na janela — gere-os também ou encerre para ignorá-los.' : 'Não sobrou título novo. Ao encerrar a janela, a lista de recibos é atualizada.') + '</p>'});
     cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
   });
   // histórico: ordenar pelas colunas (clique no cabeçalho) e filtrar direto na coluna (estilo planilha)
