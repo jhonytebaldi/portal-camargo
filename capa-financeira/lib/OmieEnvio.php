@@ -262,7 +262,7 @@ final class OmieEnvio
      * Cadastra cliente/fornecedor no Omie (IncluirCliente) e já o coloca na lista em cache. Recusa documento inválido ou já cadastrado.
      * @return array{cadastro: array, msg: string}
      */
-    public static function incluirCadastro(string $empresa, string $nome, string $doc, string $email): array
+    public static function incluirCadastro(string $empresa, string $nome, string $doc, string $email, mixed $endereco = null): array
     {
         $nome = trim((string)preg_replace('/\s+/', ' ', $nome)); $dig = preg_replace('/\D+/', '', $doc); $email = trim($email);
         if ($nome === '') throw new RuntimeException('informe o nome do cliente');
@@ -270,10 +270,12 @@ final class OmieEnvio
         if (!in_array(strlen($dig), [11, 14], true)) throw new RuntimeException('CPF/CNPJ deve ter 11 ou 14 dígitos (veio com ' . strlen($dig) . ')');
         if (!cf_doc_valido($dig)) throw new RuntimeException('CPF/CNPJ inválido (dígito verificador não confere): ' . cf_fmt_doc($dig));
         if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('e-mail inválido: ' . $email);
+        $end = cf_endereco_omie($endereco);   // obrigatório: sem endereço o Omie não emite boleto
         $cad = self::cadastros($empresa);
         if (!empty($cad['por_doc'][$dig])) { $j = $cad['por_doc'][$dig][0]; throw new RuntimeException('já existe cadastro no Omie com esse documento: ' . $j['razao_social'] . ' (cód. ' . $j['codigo_cliente_omie'] . ') — use "escolher existente"'); }
         $ped = ['codigo_cliente_integracao' => 'CV' . $dig, 'razao_social' => $nome, 'nome_fantasia' => $nome, 'cnpj_cpf' => cf_fmt_doc($dig), 'pessoa_fisica' => strlen($dig) === 11 ? 'S' : 'N'];
         if ($email !== '') $ped['email'] = $email;
+        $ped += $end;
         $r = OmieApi::call($empresa, 'geral/clientes/', 'IncluirCliente', $ped);
         $id = (int)($r['codigo_cliente_omie'] ?? 0);
         if (!$id) throw new RuntimeException('o Omie não devolveu o código do cadastro: ' . json_encode($r, JSON_UNESCAPED_UNICODE));
