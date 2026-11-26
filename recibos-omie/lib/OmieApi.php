@@ -131,10 +131,23 @@ final class OmieApi
     {
         // sem filtro por CPF: a pesquisa por dia de vencimento (sempre com resultado quando há títulos) é filtrada aqui — evita a resposta
         // "não existem registros", que o Omie conta como erro (10 seguidos = bloqueio de 30 min)
-        try { $r = self::call($conta, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => 1, 'nRegPorPagina' => 500, 'cNatureza' => 'P', 'dDtVencDe' => self::br($vencIso), 'dDtVencAte' => self::br($vencIso)]); }
-        catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113|Client-1013/iu', $e->getMessage())) return []; throw $e; }
+        // o Omie devolve no máximo 100 títulos por página (mesmo pedindo 500): em dia de muitos pagamentos (ex.: 114 no dia 05/11/2026)
+        // ler só a 1ª página fazia os títulos das páginas seguintes aparecerem como "não encontrados no Omie" — lê todas as páginas
+        static $porDia = [];   // todos os títulos do dia, lidos uma vez por requisição (vários fornecedores vencem no mesmo dia)
+        $kd = $conta . '|' . $vencIso;
+        $todos = $porDia[$kd] ?? null;
+        if ($todos === null) { $todos = []; $pag = 1; $tot = 1;
+        do {
+            try { $r = self::call($conta, 'financas/pesquisartitulos/', 'PesquisarLancamentos', ['nPagina' => $pag, 'nRegPorPagina' => 100, 'cNatureza' => 'P', 'dDtVencDe' => self::br($vencIso), 'dDtVencAte' => self::br($vencIso)]); }
+            catch (RuntimeException $e) { if (preg_match('/n[ãa]o existem registros|Client-5113|Client-1013/iu', $e->getMessage())) break; throw $e; }
+            $lista = $r['titulosEncontrados'] ?? [];
+            array_push($todos, ...$lista);
+            $tot = max(1, (int)($r['nTotPaginas'] ?? 1));
+            $pag++;
+        } while ($lista && $pag <= $tot && $pag <= 30);
+        $porDia[$kd] = $todos; }
         $dig = preg_replace('/\D+/', '', $doc);
-        return array_values(array_filter($r['titulosEncontrados'] ?? [], fn($t) => preg_replace('/\D+/', '', (string)(($t['cabecTitulo'] ?? $t)['cCPFCNPJCliente'] ?? '')) === $dig));
+        return array_values(array_filter($todos, fn($t) => preg_replace('/\D+/', '', (string)(($t['cabecTitulo'] ?? $t)['cCPFCNPJCliente'] ?? '')) === $dig));
     }
 
     /** fornecedor por código Omie, com cache em ro_fornecedores */
