@@ -119,7 +119,7 @@ final class Titulo
     /** @return array{recibo:?string, favorecido:?string, funcao:?string, natureza:string, cliente:?string, construtora:?string, imovel:?string, status:?string, venda:?string, cod:?string, cond:?string, parcela:?string, padrao:string} */
     public static function interpretarObs(string $obs): array
     {
-        $o = ['recibo' => null, 'favorecido' => null, 'funcao' => null, 'natureza' => 'COMISSAO', 'cliente' => null, 'construtora' => null, 'imovel' => null, 'status' => null, 'venda' => null, 'cod' => null, 'cond' => null, 'parcela' => null, 'padrao' => 'vazio'];
+        $o = ['recibo' => null, 'favorecido' => null, 'funcao' => null, 'natureza' => 'COMISSAO', 'cliente' => null, 'construtora' => null, 'imovel' => null, 'status' => null, 'venda' => null, 'cod' => null, 'cond' => null, 'parcela' => null, 'padrao' => 'vazio', 'nao_lidas' => []];
         $obs = trim($obs);
         if ($obs === '') return $o;
         $novo = str_contains($obs, ' | ') && preg_match('/\b(RECIBO|FAVORECIDO|CLIENTE):/u', $obs);
@@ -173,8 +173,21 @@ final class Titulo
             } elseif (preg_match('/^(COMISSAO|BONUS)$/u', $u)) { if ($u === 'BONUS') $o['natureza'] = 'BONUS'; }
             elseif (preg_match('/^(ENTREGA|RESERVA|AGUARD|SE ENTREGAR|APROVA)/u', $u)) $o['cond'] = $o['cond'] ?? $s;
             elseif (preg_match('/\d/', $s) || preg_match('/(APARTAMENTO|GEMINADO|CASA|SOBRADO|TERRENO|LOTE|SALA|UNIDADE|RUA|AV\.|AVENIDA)/u', $u)) $o['imovel'] = $o['imovel'] ?? $s;
+            else $o['nao_lidas'][] = $s;   // texto que a ferramenta não soube encaixar em nenhum campo do recibo
         }
         return $o;
+    }
+
+    /**
+     * A observação foge do padrão que a ferramenta entende? Devolve o motivo (texto curto) ou '' se está no padrão.
+     * Fora do padrão: vazia, com trecho que não virou nenhum campo do recibo, ou sem cliente/imóvel/COD.
+     */
+    public static function foraDoPadrao(array $o): string
+    {
+        if (($o['padrao'] ?? '') === 'vazio') return 'observação vazia';
+        if (!empty($o['nao_lidas'])) return 'trecho não reconhecido: "' . mb_substr(implode(' | ', $o['nao_lidas']), 0, 120) . '"';
+        if (empty($o['cliente']) && empty($o['imovel']) && empty($o['cod'])) return 'sem cliente, imóvel nem COD';
+        return '';
     }
 
     public static function semAcento(string $s): string
@@ -205,7 +218,16 @@ final class Titulo
         return ['id' => $t['fingerprint'], 'codigo_integracao' => $numero, 'valor' => $t['valor'], 'natureza' => $o['natureza'], 'funcao' => $o['funcao'] ?: self::funcaoDaCategoria((string)$t['categoria']),
             'desconto' => (float)($t['desconto'] ?? 0), 'impostos' => (float)($t['impostos'] ?? 0), 'juros' => (float)($t['juros'] ?? 0), 'obs_baixa' => (string)($t['obs_baixa'] ?? ''),
             'cf_raw' => $pessoa['nome'], 'capa_cliente' => $o['cliente'] ?? '', 'capa_construtora' => $o['construtora'] ?? '', 'unidade' => $o['imovel'] ?? '', 'capa_unidade' => '',
-            'status_imovel' => $o['status'] ?? '', 'capa_data_venda' => $o['venda'] ? OmieApi::iso($o['venda']) : null, 'capa_cod' => $o['cod'] ?? '', 'data_prevista' => $t['previsao'] ?: $t['vencimento']];
+            'status_imovel' => $o['status'] ?? '', 'capa_data_venda' => $o['venda'] ? OmieApi::iso($o['venda']) : null, 'capa_cod' => $o['cod'] ?? '', 'data_prevista' => $t['previsao'] ?: $t['vencimento'],
+            // texto escolhido na janela (observação na íntegra ou editada): substitui a descrição montada a partir da observação
+            'texto_livre' => self::textoLivre($t)];
+    }
+
+    /** texto do recibo escolhido na janela (uma linha, até 600 caracteres); '' = usar a descrição montada pela ferramenta */
+    public static function textoLivre(array $t): string
+    {
+        $s = trim((string)preg_replace('/\s*\n\s*/u', ' - ', str_replace("\r", '', (string)($t['texto_recibo'] ?? ''))));
+        return mb_substr(trim((string)preg_replace('/\s+/u', ' ', $s)), 0, 600);
     }
 
     public static function funcaoDaCategoria(string $cat): string
