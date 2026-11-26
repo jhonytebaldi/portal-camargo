@@ -131,11 +131,13 @@ function ro_linha(PDO $pdo, array $pessoas, array $t): array
 {
     $p = Titulo::pessoaPorDoc($pessoas, $t['doc']); $o = $t['obs']; $ja = ro_recibo_do_titulo($pdo, $t);
     $naoAchou = $t['origem'] === 'xlsx' && str_starts_with((string)($t['validado'] ?? ''), 'NÃO');
-    $pago = in_array($t['situacao'], ['Pago', 'Cancelado'], true);   // "Pago parcialmente" ainda tem saldo: continua selecionável
+    // pago (mesmo com "valor a pagar" zerado) gera recibo normalmente; cancelado não tem recibo
+    $cancelado = $t['situacao'] === 'Cancelado';
+    $pago = $t['situacao'] === 'Pago';
     // repasse a construtora/terceiro não tem recibo — mas "Repasse de bonificação" é o bônus pago ao corretor (natureza BONUS) e tem recibo normal
     $repasse = (stripos((string)$t['categoria'], 'repasse') !== false && stripos((string)$t['categoria'], 'bonific') === false) || stripos((string)$t['nota_fiscal'], 'REPASSE') !== false || ($o['natureza'] ?? '') === 'REPASSE';
     // ordem de prioridade: "já com recibo" vence "pago" (um título pago normalmente já tem recibo — é isso que interessa ver)
-    $classe = $naoAchou ? 'nao' : ($ja ? 'ja' : ($repasse ? 'repasse' : ($pago ? 'pago' : 'novo')));
+    $classe = $naoAchou ? 'nao' : ($ja ? 'ja' : ($cancelado ? 'cancelado' : ($repasse ? 'repasse' : ($pago ? 'pago' : 'novo'))));
     $jc = $ja ? array_values(array_filter(array_map('trim', explode(' / ', (string)$ja['numero'])))) : [];
     return ['t' => $t, 'classe' => $classe, 'pessoa' => $p ? (string)$p['nome'] : '', 'ja' => $ja ? ['id' => (int)$ja['id'], 'numero' => (string)$ja['numero'], 'curto' => implode(' / ', array_slice($jc, 0, 2)) . (count($jc) > 2 ? ' +' . (count($jc) - 2) : ''), 'data' => (string)$ja['data_recibo']] : null,
             'funcao' => (string)($o['funcao'] ?: Titulo::funcaoDaCategoria((string)$t['categoria'])), 'bonus' => ($o['natureza'] ?? '') === 'BONUS', 'repasse' => $repasse, 'sem_obs' => ($o['padrao'] ?? '') === 'vazio',
@@ -153,7 +155,9 @@ function ro_validar(string $conta, array &$t, array &$cache): void
     $ach = null;
     foreach ($cache[$k] as $c) if (abs((float)($c['cabecTitulo']['nValorTitulo'] ?? 0) - (float)$t['valor']) < 0.005) { $ach = $c; break; }
     if ($ach) { $t['omie_id'] = (int)$ach['cabecTitulo']['nCodTitulo']; $t['cod_int'] = (string)($ach['cabecTitulo']['cCodIntTitulo'] ?? ''); $t['validado'] = 'no Omie: ' . Titulo::situacaoCompleta($ach); $t['obs_baixa'] = Titulo::obsBaixa($ach); }
-    else $t['validado'] = 'NÃO ENCONTRADO no Omie';
+    // diz o que não bateu, para dar para corrigir: nada do CPF/CNPJ nesse vencimento, ou título dele nesse dia com outro valor
+    elseif ($cache[$k]) $t['validado'] = 'NÃO ENCONTRADO no Omie: há título(s) deste CPF/CNPJ com vencimento ' . cf_data_br((string)$t['vencimento']) . ', mas com outro valor (' . implode(', ', array_map(fn($c) => cf_brl((float)($c['cabecTitulo']['nValorTitulo'] ?? 0)), array_slice($cache[$k], 0, 4))) . ') — confira o valor no relatório';
+    else $t['validado'] = 'NÃO ENCONTRADO no Omie: nenhum título deste CPF/CNPJ (' . (string)$t['doc'] . ') vence em ' . cf_data_br((string)$t['vencimento']) . ' — confira se a empresa do relatório é a escolhida e se o título não foi alterado/excluído depois da exportação';
 }
 
 /* ---------- gerar (JSON) ---------- */
@@ -380,7 +384,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     <div class="cf-tbl-wrap" style="max-height:58vh;overflow:auto"><table class="grid cf-tbl" id="tbl-ro">
     <thead><tr><th><input type="checkbox" id="ro-todos"></th><th>Situação</th><th>Previsão pgto<br><small class="cf-raw">(venc. original)</small></th><th>Fornecedor (Omie)</th><th>Pessoa (dicionário)</th><th>Função</th><th>Cliente / imóvel</th><th>COD</th><th>Valor</th><th>Nº recibo</th><th>Conferência no Omie</th></tr></thead>
     <tbody></tbody></table></div>
-    <p class="cf-dica" style="margin:8px 0 0">Vêm marcados os títulos <b>novos</b> (sem recibo, não pagos, encontrados no Omie). "Já com recibo": marcar + "gerar de novo" regera o recibo antigo por inteiro. Pagos/cancelados, repasses e não encontrados ficam desmarcados. O que não for gerado permanece aqui até você encerrar.</p>
+    <p class="cf-dica" style="margin:8px 0 0">Vêm marcados os títulos <b>novos</b> e os <b>pagos</b> (sem recibo, encontrados no Omie — pago gera recibo mesmo com o "valor a pagar" zerado). "Já com recibo": marcar + "gerar de novo" regera o recibo antigo por inteiro. Cancelados, repasses e não encontrados ficam desmarcados. O que não for gerado permanece aqui até você encerrar.</p>
   </div>
 </div>
 <?php endif; ?>
@@ -438,12 +442,13 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
 
   /* ===== modal dos títulos lidos ===== */
   const M = {el: document.getElementById('ro-modal'), linhas: [], conta: '', origem: '', aba: 'todos', gerados: 0};
-  const ROT = {novo: 'Novos', ja: 'Já com recibo', pago: 'Pagos / cancelados', repasse: 'Repasses', nao: 'Não encontrados no Omie', gerado: 'Gerados agora'};
+  const ROT = {novo: 'Novos', pago: 'Pagos', ja: 'Já com recibo', cancelado: 'Cancelados', repasse: 'Repasses', nao: 'Não encontrados no Omie', gerado: 'Gerados agora'};
+  const MARCA = c => c === 'novo' || c === 'pago';   // o que vem marcado por padrão
   function abrirModal(){ M.el.style.display = 'flex'; requestAnimationFrame(() => M.el.classList.add('on')); }
   function fecharModal(){ M.el.classList.remove('on'); setTimeout(() => { M.el.style.display = 'none'; }, 180); }
   function linhaHtml(l){
     const t = l.t; const sit = l.classe;
-    const marc = sit === 'novo';
+    const marc = MARCA(sit);
     const num = l.classe === 'gerado' ? '<a href="?baixar=' + l.gerado.id + '&ver=1" target="_blank">📄 ' + esc(curto(l.gerado.numero)) + '</a><br><small class="cf-raw">gerado agora</small>'
       : (l.ja ? '<a href="?baixar=' + l.ja.id + '&ver=1" target="_blank" title="' + esc(l.ja.numero) + '">📄 ' + esc(l.ja.curto) + '</a><br><small class="cf-raw">já tem recibo (' + dBr(l.ja.data) + ')</small>' : (l.numero_obs ? esc(l.numero_obs) : '<span class="cf-raw">novo</span>'));
     const val = l.validado || ''; const valCls = /^NÃO/.test(val) ? 'ro-val-nao' : (/conferindo/.test(val) ? 'cf-raw' : 'ro-val-ok');
@@ -465,7 +470,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     const vis = M.linhas.filter(l => M.aba === 'todos' || l.classe === M.aba);
     tb.innerHTML = vis.map(linhaHtml).join('');
     const ab = document.getElementById('rom-abas'); let h = '<button type="button" class="' + (M.aba === 'todos' ? 'on' : '') + '" data-aba="todos">Todos (' + M.linhas.length + ')</button>';
-    ['novo', 'ja', 'pago', 'repasse', 'nao', 'gerado'].forEach(k => { if (cont[k]) h += '<button type="button" class="' + (M.aba === k ? 'on' : '') + '" data-aba="' + k + '">' + ROT[k] + ' (' + cont[k] + ')</button>'; });
+    ['novo', 'pago', 'ja', 'cancelado', 'repasse', 'nao', 'gerado'].forEach(k => { if (cont[k]) h += '<button type="button" class="' + (M.aba === k ? 'on' : '') + '" data-aba="' + k + '">' + ROT[k] + ' (' + cont[k] + ')</button>'; });
     ab.innerHTML = h; ab.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { M.aba = b.dataset.aba; render(); }));
     tb.querySelectorAll('.ro-sel').forEach(c => c.addEventListener('change', soma)); soma();
   }
@@ -498,7 +503,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
       if (!j) { txt.textContent = 'Conferência interrompida — os títulos sem conferência ficam marcados como "conferindo…"; dá para gerar mesmo assim marcando "incluir títulos não encontrados".'; bar.style.width = '0'; M.validando = false; return; }
       j.linhas.forEach(nl => { const k = M.linhas.findIndex(l => l._i === nl._i); const sel = document.querySelector('#tbl-ro tr[data-i="' + nl._i + '"] .ro-sel'); const marcado = sel ? sel.checked : null; M.linhas[k] = nl; M.linhas[k]._marc = marcado; });
       const rest = j.restantes || []; feitos += lote.length - rest.length; fila = rest.concat(fila.slice(BL));
-      render(); M.linhas.forEach(l => { if (l._marc !== undefined && l._marc !== null) { const c = document.querySelector('#tbl-ro tr[data-i="' + l._i + '"] .ro-sel'); if (c && l.classe !== 'nao' && l.classe !== 'pago') c.checked = l._marc; } }); soma();
+      render(); M.linhas.forEach(l => { if (l._marc !== undefined && l._marc !== null) { const c = document.querySelector('#tbl-ro tr[data-i="' + l._i + '"] .ro-sel'); if (c && l.classe !== 'nao' && l.classe !== 'cancelado') c.checked = l._marc; } }); soma();
     }
     M.validando = false; txt.textContent = 'Conferência no Omie concluída: ' + total + ' título(s).'; bar.style.width = '100%'; setTimeout(() => box.style.display = 'none', 2500);
   }
@@ -517,13 +522,13 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     M.linhas = j.linhas; M.conta = j.conta; M.origem = j.origem; M.aba = 'todos'; M.gerados = 0;
     document.getElementById('rom-sub').textContent = (xlsx ? 'relatório' : 'API') + ' · ' + j.empresa + (j.periodo ? ' · vencimento ' + j.periodo : '') + ' · ' + j.linhas.length + ' título(s)';
     const cont = {}; j.linhas.forEach(l => cont[l.classe] = (cont[l.classe] || 0) + 1);
-    await pg.resultado({tipo: j.linhas.length ? 'ok' : 'info', titulo: xlsx ? 'Relatório lido' : 'Busca concluída', html: '<p style="margin:0">' + j.linhas.length + ' título(s)' + (j.linhas.length ? ': <b>' + (cont.novo || 0) + ' novo(s)</b>, ' + (cont.ja || 0) + ' já com recibo, ' + ((cont.pago || 0) + (cont.repasse || 0)) + ' pago(s)/repasse(s)' : '') + '.</p>' + (j.validar ? '<p class="cf-dica" style="margin:6px 0 0">A conferência no Omie começa agora, em segundo plano, dentro da janela.</p>' : '')});
+    await pg.resultado({tipo: j.linhas.length ? 'ok' : 'info', titulo: xlsx ? 'Relatório lido' : 'Busca concluída', html: '<p style="margin:0">' + j.linhas.length + ' título(s)' + (j.linhas.length ? ': <b>' + (cont.novo || 0) + ' novo(s)</b>, <b>' + (cont.pago || 0) + ' pago(s)</b>, ' + (cont.ja || 0) + ' já com recibo, ' + ((cont.cancelado || 0) + (cont.repasse || 0)) + ' cancelado(s)/repasse(s)' : '') + '.</p>' + (j.validar ? '<p class="cf-dica" style="margin:6px 0 0">A conferência no Omie começa agora, em segundo plano, dentro da janela.</p>' : '')});
     render(); abrirModal(); f.reset();
     if (j.validar) validar();
   }));
   document.getElementById('rom-fechar').addEventListener('click', async () => {
-    const sobra = M.linhas.filter(l => l.classe === 'novo').length;
-    if (sobra && !await CFModal.pergunta({tipo:'parcial', titulo:'Encerrar sem gerar?', texto: sobra + ' título(s) novo(s) ainda sem recibo vão ser descartados desta leitura (nada é gravado; é só enviar o relatório de novo para vê-los outra vez).', ok:'Sim, encerrar'})) return;
+    const sobra = M.linhas.filter(l => MARCA(l.classe)).length;
+    if (sobra && !await CFModal.pergunta({tipo:'parcial', titulo:'Encerrar sem gerar?', texto: sobra + ' título(s) novo(s)/pago(s) ainda sem recibo vão ser descartados desta leitura (nada é gravado; é só enviar o relatório de novo para vê-los outra vez).', ok:'Sim, encerrar'})) return;
     fecharModal(); if (M.gerados) location.reload();
   });
   M.el.addEventListener('click', e => { if (e.target === M.el) document.getElementById('rom-fechar').click(); });
@@ -559,7 +564,7 @@ details.ro-api{margin:0}details.ro-api summary{cursor:pointer;font-weight:700;fo
     M.gerados += j.n; render();
     const subst = pv.substituir.length ? '<p style="margin:6px 0 0">' + pv.substituir.length + ' recibo(s) antigo(s) substituído(s) — continuam no histórico com a situação "substituído".</p>' : '';
     const links = (j.recibos || []).map(r => '<a href="?baixar=' + r.id + '&ver=1" target="_blank">📄 ' + esc(curto(r.numero)) + '</a> — ' + esc(r.recebedor) + ' — ' + brl(+r.valor)).join('<br>');
-    const sobra = M.linhas.filter(l => l.classe === 'novo').length;
+    const sobra = M.linhas.filter(l => MARCA(l.classe)).length;
     await pg.resultado({tipo: 'ok', titulo: j.n + ' recibo(s) gerado(s)', html: '<p style="margin:0">' + links + '</p>' + subst + (j.ids.length > 1 ? '<p style="margin:6px 0 0"><a href="?zip=' + j.ids.join(',') + '">⬇ baixar todos (ZIP)</a></p>' : '') + '<p class="cf-dica" style="margin:8px 0 0">' + (sobra ? sobra + ' título(s) novo(s) continuam na janela — gere-os também ou encerre para ignorá-los.' : 'Não sobrou título novo. Ao encerrar a janela, a lista de recibos é atualizada.') + '</p>'});
     cfNf.painel(j.recibos || [], j.n + ' recibo(s) gerado(s)'); bg.disabled = false;
   });
