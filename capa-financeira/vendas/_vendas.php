@@ -346,7 +346,7 @@ function cv_gravar_e3(int $id, int $rev, array $d, array $u): array
  * Pagadores do fluxo no Omie da EMPRESA DA VENDA (é lá que ficam as contas a receber).
  * @return array{ok: array, pendentes: array, falhas: string[]} por documento
  */
-function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u): array
+function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u, array $enderecos = []): array
 {
     $emp = (string)$venda['empresa'];
     $vistos = []; $pend = []; $falhas = []; $ok = [];
@@ -367,7 +367,7 @@ function cv_pagadores_omie(array $venda, array $d, array $confirmados, array $u)
                                                          : 'Não encontrado no Omie da ' . strtoupper($emp) . ' — será cadastrado (é lá que ficam as contas a receber).'];
             continue;
         }
-        $r = OmieCompradores::cadastrar(['nome' => $pg['nome'], 'documento' => $doc, 'email' => $pg['email']], $emp);
+        $r = OmieCompradores::cadastrar(['nome' => $pg['nome'], 'documento' => $doc, 'email' => $pg['email'], 'endereco' => $enderecos[$doc] ?? null], $emp);
         if (!$r['ok']) { $falhas[] = $pg['nome'] . ': ' . $r['msg']; continue; }
         $ok[$doc] = $r['codigo'];
         cv_hist((int)$venda['id'], 3, 'omie_cadastro', $pg['nome'], null, 'Cadastrado no Omie ' . strtoupper($emp) . ' — cód. ' . $r['codigo'], $u);

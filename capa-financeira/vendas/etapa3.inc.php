@@ -375,7 +375,7 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
 
   async function salvar(acao, confirmar) {
     document.querySelectorAll('.cv-botoes .btn').forEach(b => b.disabled = true);
-    const j = await CV.api({acao, e3: coleta(), confirmar_omie: confirmar || []});
+    const j = await CV.api({acao, e3: coleta(), confirmar_omie: confirmar || [], enderecos: CV.enderecos || {}});
     document.querySelectorAll('.cv-botoes .btn').forEach(b => b.disabled = false);
     if (j.rev) CV.rev = j.rev;
     if (j.ok) return CV.vai(j.msg + (j.avisos && j.avisos.length ? ' Atenção: ' + j.avisos.join(' · ') : ''));
@@ -385,14 +385,31 @@ $qpJs = ['quem_paga' => $e3['quem_paga'] ?? null, 'construtora_cad' => $e3['cons
   function modalOmie(pend, emp) {
     const m = document.createElement('div'); m.className = 'cv-modal';
     m.innerHTML = '<div><h2 style="margin-top:0">Cadastrar no Omie da ' + esc(emp) + '?</h2><p class="cf-dica">O fluxo já foi salvo. As contas a receber ficam no Omie da ' + esc(emp) + ', e estes pagadores ainda não estão cadastrados lá:</p>'
-      + pend.map(p => '<div class="cv-pend-omie"><b>' + esc(p.nome) + '</b> · ' + esc(p.doc_fmt) + '<br><span class="' + (p.status === 'so_nome' ? 'cv-chip mal' : 'cv-chip novo') + '">' + esc(p.msg) + '</span>'
-          + '<label style="display:flex;gap:6px;margin-top:6px;font-size:13px"><input type="checkbox" data-doc="' + esc(p.documento) + '"' + (p.status === 'so_nome' ? '' : ' checked') + '> ' + (p.status === 'so_nome' ? 'É outra pessoa — cadastrar mesmo assim' : 'Cadastrar no Omie da ' + esc(emp)) + '</label></div>').join('')
+      + pend.map((p, i) => '<div class="cv-pend-omie"><b>' + esc(p.nome) + '</b> · ' + esc(p.doc_fmt) + '<br><span class="' + (p.status === 'so_nome' ? 'cv-chip mal' : 'cv-chip novo') + '">' + esc(p.msg) + '</span>'
+          + '<label style="display:flex;gap:6px;margin-top:6px;font-size:13px"><input type="checkbox" data-doc="' + esc(p.documento) + '"' + (p.status === 'so_nome' ? '' : ' checked') + '> ' + (p.status === 'so_nome' ? 'É outra pessoa — cadastrar mesmo assim' : 'Cadastrar no Omie da ' + esc(emp)) + '</label>'
+          + '<div style="margin-top:8px;font-size:12.5px"><b>Endereço</b> <span class="cf-dica" style="display:inline">— obrigatório: o Omie precisa dele para emitir boleto</span>'
+          + (i ? ' <button type="button" class="btn cf-btn-sec" data-mesmo="' + i + '" style="padding:2px 8px;font-size:12px">usar o mesmo do anterior</button>' : '') + '</div>'
+          + '<div data-end-de="' + esc(p.documento) + '">' + CFEndereco.html() + '</div></div>').join('')
       + '<div class="cv-botoes"><button type="button" class="btn" data-ok>Cadastrar e gerar as contas</button><button type="button" class="btn cf-btn-sec" data-x>Voltar</button></div></div>';
     document.body.appendChild(m);
+    // endereço de cada cadastro novo (CEP preenche rua, bairro, cidade e UF); fica guardado na tela se a janela reabrir
+    CV.enderecos = CV.enderecos || {};
+    const caixas = [...m.querySelectorAll('[data-end-de]')];
+    caixas.forEach(b => CFEndereco.ligar(b, CV.enderecos[b.dataset.endDe] || null));
+    m.querySelectorAll('[data-mesmo]').forEach(b => b.onclick = () => { const i = +b.dataset.mesmo, e = CFEndereco.ler(caixas[i - 1]); Object.keys(e).forEach(k => { caixas[i].querySelector('[data-e="' + k + '"]').value = e[k]; }); });
+    const enderecosOk = () => {
+      for (const b of caixas) {
+        const e = CFEndereco.ler(b), falta = CFEndereco.faltas(e, b), p = pend.find(x => x.documento === b.dataset.endDe);
+        CV.enderecos[b.dataset.endDe] = e;
+        if (falta.length) { CV.alerta('Falta no endereço de ' + (p ? p.nome : 'um dos cadastros') + ': ' + falta.join(', ') + '. O Omie precisa do endereço completo para emitir boleto — digite o CEP para preencher a maior parte sozinho.'); return false; }
+      }
+      return true;
+    };
     m.querySelector('[data-x]').onclick = () => { m.remove(); CV.sujo = false; location.href = '/capa-financeira/vendas/editar.php?id=' + CV.id + '&etapa=3'; };
     m.querySelector('[data-ok]').onclick = () => {
       const docs = [...m.querySelectorAll('input[data-doc]:checked')].map(x => x.dataset.doc);
       if (docs.length < pend.length) { CV.alerta('Marque todos para cadastrar — ou volte e corrija os dados.'); return; }
+      if (!enderecosOk()) return;
       m.remove(); salvar('concluir3', docs);
     };
   }

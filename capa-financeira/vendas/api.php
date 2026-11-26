@@ -233,7 +233,7 @@ try {
         if ($acao === 'salvar3' && !$concluida) $resp(['ok' => true, 'id' => $id, 'rev' => $rev, 'msg' => 'Rascunho do fluxo salvo.']);
         // quem paga precisa existir no Omie da empresa da venda (é lá que as contas a receber são lançadas)
         $venda = cv_carregar($id);
-        $om = cv_pagadores_omie($venda, $venda['e3'], array_map(fn($x) => Venda::docLimpo($x), (array)($in['confirmar_omie'] ?? [])), $u);
+        $om = cv_pagadores_omie($venda, $venda['e3'], array_map(fn($x) => Venda::docLimpo($x), (array)($in['confirmar_omie'] ?? [])), $u, (array)($in['enderecos'] ?? []));
         if ($om['falhas']) $resp(['ok' => false, 'id' => $id, 'rev' => $rev, 'erros' => $om['falhas'], 'msg' => 'Fluxo salvo, mas as contas a receber NÃO foram geradas — problema no Omie:']);
         if ($om['pendentes']) $resp(['ok' => false, 'id' => $id, 'rev' => $rev, 'confirmar' => $om['pendentes'], 'empresa' => strtoupper((string)$venda['empresa'])]);
         if (!$concluida) {
@@ -314,6 +314,7 @@ try {
         // ---- Omie: cada comprador precisa estar ligado a um cadastro da Vertical ----
         $venda = cv_carregar($id);
         $confirmados = array_map(fn($d) => Venda::docLimpo($d), (array)($in['confirmar_omie'] ?? []));
+        $enderecos = (array)($in['enderecos'] ?? []);   // por documento: endereço digitado na janela de cadastro no Omie
         $pendentes = []; $avisos = []; $falhas = [];
         $upd = db()->prepare('UPDATE cv_compradores SET omie_codigo = ?, omie_nome = ?, omie_status = ?, omie_em = NOW() WHERE id = ?');
         foreach ($venda['compradores'] as $c) {
@@ -333,7 +334,7 @@ try {
                                     : 'Não encontrado no Omie da Vertical — será cadastrado.'];
                 continue;
             }
-            $r = OmieCompradores::cadastrar($c);
+            $r = OmieCompradores::cadastrar(['endereco' => $enderecos[$c['documento']] ?? null] + $c);
             if (!$r['ok']) { $falhas[] = $c['nome'] . ': ' . $r['msg']; continue; }
             $upd->execute([$r['codigo'], mb_substr($c['nome'], 0, 60), 'cadastrado', $c['id']]);
             cv_hist($id, 1, 'omie_cadastro', $c['nome'], null, 'Cadastrado no Omie Vertical — cód. ' . $r['codigo'], $u);
