@@ -177,6 +177,7 @@
     const el = $('conteudo');
     if (!ls.length) { el.innerHTML = '<p class="sub">Nenhuma try para os filtros escolhidos.</p>'; return; }
     el.innerHTML = ({ geral: abaGeral, mortes: abaMortes, dano: abaDano, healers: abaHealers, plano: abaPlano, ultima: abaUltima, boss: abaBoss })[est.aba](ls);
+    reaplicarOrdens();
     try { if (window.$WowheadPower) window.$WowheadPower.refreshLinks(); } catch (e) { }
     buscarPt();
   }
@@ -575,6 +576,37 @@
       co.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td>' + cols.map(i => { const w = x.jan[i]; return w ? '<td class="n">' + w.n + '</td><td class="n">' + (w.cor == null ? '—' : num(w.cor)) + '</td><td class="n">' + (w.parte * 100).toFixed(1).replace('.', ',') + '%</td><td class="n">' + (w.rel == null ? '—' : (w.rel < 1 ? '<span class="alerta">' : '<span>') + w.rel.toFixed(1).replace('.', ',') + '×</span>') + '</td>' : '<td class="n">—</td><td></td><td></td><td></td>'; }).join('') + '</tr>').join('') + '</table>';
     return h;
   }
+
+  // ---------- ordenar tabelas pelo cabecalho ----------
+  const ordens = {}; // 'aba|indice da tabela' -> { col, dir }
+  function valorCelula(td) {
+    const txt = (td ? td.textContent : '').trim(); let m;
+    if (!txt || txt === '—') return null;
+    if ((m = /^(\d{1,2})\/(\d{1,2})$/.exec(txt))) return +m[2] * 100 + +m[1];
+    if ((m = /^(-?)(\d+):(\d\d)/.exec(txt))) return (m[1] ? -1 : 1) * (+m[2] * 60 + +m[3]);
+    if ((m = /^([+−-]?)\s*(\d+(?:[.,]\d+)?)\s*(M|k)?(?![a-zà-ú])/i.exec(txt))) { let v = parseFloat(m[2].replace(',', '.')); if (m[3] === 'M') v *= 1e6; else if (m[3] === 'k') v *= 1e3; return m[1] === '−' || m[1] === '-' ? -v : v; }
+    return txt.toLowerCase();
+  }
+  function ordenarTabela(tb, col, dir) {
+    const linhas = [...tb.rows].slice(1), vals = new Map(linhas.map(r => [r, valorCelula(r.cells[col])]));
+    const numerica = linhas.filter(r => vals.get(r) != null).every(r => typeof vals.get(r) === 'number');
+    linhas.sort((a, b) => { const x = vals.get(a), y = vals.get(b);
+      if (x == null || y == null) return (x == null) - (y == null); // vazios sempre no fim
+      return dir * (numerica ? x - y : String(x).localeCompare(String(y), 'pt')); });
+    const corpo = linhas[0] && linhas[0].parentNode; for (const r of linhas) corpo.appendChild(r);
+    [...tb.rows[0].cells].forEach((th, i) => { th.dataset.ord = i === col ? (dir > 0 ? 'c' : 'd') : ''; });
+  }
+  function reaplicarOrdens() {
+    [...document.querySelectorAll('#conteudo table')].forEach((tb, i) => { const o = ordens[est.aba + '|' + i]; if (o && tb.rows.length > 2 && tb.rows[0].cells[o.col]) ordenarTabela(tb, o.col, o.dir); });
+  }
+  document.addEventListener('click', e => {
+    const th = e.target.closest && e.target.closest('#conteudo th'); if (!th) return;
+    const tb = th.closest('table'), col = th.cellIndex, k = est.aba + '|' + [...document.querySelectorAll('#conteudo table')].indexOf(tb);
+    const atual = ordens[k], linhas = [...tb.rows].slice(1);
+    const numerica = linhas.map(r => valorCelula(r.cells[col])).filter(v => v != null).every(v => typeof v === 'number');
+    const dir = atual && atual.col === col ? -atual.dir : (numerica ? -1 : 1); // 1o clique: numeros do maior para o menor, texto de A a Z
+    ordens[k] = { col, dir }; ordenarTabela(tb, col, dir);
+  });
 
   // ---------- eventos ----------
   document.addEventListener('click', e => {

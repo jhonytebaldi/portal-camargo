@@ -38,6 +38,8 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   table { border-collapse: collapse; width: 100%; margin: 8px 0 8px; font-size: 14px; }
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--borda); vertical-align: top; }
   th { color: var(--txt2); font-weight: 600; font-size: 13px; }
+  #conteudo th { cursor: pointer; user-select: none; } #conteudo th:hover { color: var(--txt); }
+  th[data-ord="c"]::after { content: ' ▲'; color: var(--s1); } th[data-ord="d"]::after { content: ' ▼'; color: var(--s1); }
   .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
   .card { background: var(--sup2); border: 1px solid var(--borda); border-radius: 8px; padding: 12px 14px; }
