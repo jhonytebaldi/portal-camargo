@@ -21,15 +21,20 @@
     const pt = PT[id]; if (pt === undefined) pendPt.add(id);
     return '<a class="wh" href="https://www.wowhead.com/pt/spell=' + id + '" target="_blank" rel="noopener">' + esc(pt || nome) + '</a>' + (pt && pt !== nome ? ' <span class="en">(' + esc(nome) + ')</span>' : '');
   };
+  // Igual ao hab(), com o icone da habilidade na frente (o nome do icone vem junto na consulta ao Wowhead).
+  let ICO = {};
+  const habIc = (nome, id) => { id = id || IDS[nome]; if (id && ICO[id] === undefined) pendPt.add(id);
+    return (id && ICO[id] ? '<img class="ico" src="https://wow.zamimg.com/images/wow/icons/small/' + esc(ICO[id]) + '.jpg" alt="" loading="lazy">' : '<span class="ico vazio"></span>') + hab(nome, id); };
   async function buscarPt() {
     if (buscandoPt || !pendPt.size) return; buscandoPt = true;
     const ids = [...pendPt]; pendPt.clear(); let novos = 0;
     for (let i = 0; i < ids.length; i += 8) await Promise.all(ids.slice(i, i + 8).map(async id => {
-      try { const r = await fetch('https://nether.wowhead.com/tooltip/spell/' + id + '?dataEnv=1&locale=8'); PT[id] = r.ok ? ((await r.json()).name || '') : ''; } catch (e) { PT[id] = ''; }
-      if (PT[id]) novos++;
+      try { const r = await fetch('https://nether.wowhead.com/tooltip/spell/' + id + '?dataEnv=1&locale=8'); const j = r.ok ? await r.json() : {}; PT[id] = j.name || ''; ICO[id] = j.icon || ''; } catch (e) { PT[id] = PT[id] || ''; ICO[id] = ICO[id] || ''; }
+      if (PT[id] || ICO[id]) novos++;
     }));
     buscandoPt = false;
     await gravarArq('nomes_pt', PT);
+    await gravarArq('icones', ICO);
     const foco = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     if (novos && !foco) desenhar();
   }
@@ -303,7 +308,7 @@
       hs.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td><td class="n">' + x.tries + '</td><td class="n">' + num(x.hps) + '</td><td class="n">' + num(x.hpsMed) + '</td><td class="n">' + Math.round(x.over * 100) + '%</td></tr>').join('') + '</table>';
     h += '<h2>Defensivos pessoais e consumíveis</h2><div class="sub">Média por try de pelo menos 2 minutos (' + p.tries + ' tries). "Mortes iniciais" são as vezes em que o jogador esteve entre as 3 primeiras mortes.</div>' +
       '<table><tr><th>Jogador</th><th>Função</th><th class="n">Tries</th><th class="n">Mortes iniciais por try</th><th class="n">Defensivos por try</th><th class="n">Healthstone por try</th><th class="n">Poção de vida por try</th></tr>' +
-      p.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + ({ healer: 'Healer', tank: 'Tank', dps: 'DPS' }[x.papel] || '') + '</td><td class="n">' + x.tries + '</td><td class="n">' + x.mortesM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pessM.toFixed(1).replace('.', ',') + '</td><td class="n">' + x.pedraM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pocaoM.toFixed(2).replace('.', ',') + '</td></tr>').join('') + '</table>';
+      p.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + ({ healer: 'Healer', tank: 'Tank', dps: 'DPS' }[x.papel] || '') + '</td><td class="n">' + x.tries + '</td><td class="n">' + x.mortesM.toFixed(2).replace('.', ',') + '</td><td class="n tem-pop">' + x.pessM.toFixed(1).replace('.', ',') + ' ' + (x.habs.length ? '<div class="pop"><div class="sub">' + x.pess + ' usos em ' + x.tries + ' tries</div>' + x.habs.map(hb => '<div class="pl">' + habIc(hb.nome, hb.id) + '<span class="q">' + hb.n + '× <span class="en">(' + (hb.n / x.tries).toFixed(1).replace('.', ',') + ' por try)</span></span></div>').join('') + '</div>' : '<div class="pop"><div class="sub">Nenhum defensivo registrado.</div></div>') + '</td><td class="n">' + x.pedraM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pocaoM.toFixed(2).replace('.', ',') + '</td></tr>').join('') + '</table>';
     h += secaoDispels(ls);
     return h;
   }
@@ -656,6 +661,7 @@
       else status('Cole o link de um relatório do Warcraft Logs.', true);
     };
     PT = (await lerArq('nomes_pt')) || {};
+    ICO = (await lerArq('icones')) || {};
     const cat = await lerArq('relatorios'); est.catalogo = (cat && cat.lista) || [];
     if (est.catalogo.length) {
       const ult = Math.max(...est.catalogo.map(r => C.semanaDe(r.inicio)));

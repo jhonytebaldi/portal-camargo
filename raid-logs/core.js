@@ -273,14 +273,14 @@
     const p = {}; let n = 0;
     for (const l of lutas) {
       if (l.durS < (minDur || 120)) continue; n++;
-      for (const j of l.jogadores) { const x = p[j.nome] = p[j.nome] || { nome: j.nome, classe: j.classe, papel: j.papel, tries: 0, pess: 0, pedra: 0, pocao: 0, mortesCedo: 0 }; x.tries++; }
+      for (const j of l.jogadores) { const x = p[j.nome] = p[j.nome] || { nome: j.nome, classe: j.classe, papel: j.papel, tries: 0, pess: 0, pedra: 0, pocao: 0, mortesCedo: 0, porHab: {} }; x.tries++; }
       for (const c of l.cds) {
         const def = CD_POR_ID[c.id], x = p[c.quem]; if (!def || !x) continue;
-        if (def.tipo === 'pess') x.pess++; else if (c.id === 6262) x.pedra++; else if (def.tipo === 'cons') x.pocao++;
+        if (def.tipo === 'pess') { x.pess++; x.porHab[def.nome] = x.porHab[def.nome] || { id: c.id, nome: def.nome, n: 0 }; x.porHab[def.nome].n++; } else if (c.id === 6262) x.pedra++; else if (def.tipo === 'cons') x.pocao++;
       }
       for (const m of l.mortes.slice(0, N_MORTES_WIPE - 1)) if (p[m.nome]) p[m.nome].mortesCedo++;
     }
-    return { tries: n, linhas: Object.values(p).filter(x => x.tries >= 3).map(x => ({ ...x, pessM: x.pess / x.tries, pedraM: x.pedra / x.tries, pocaoM: x.pocao / x.tries, mortesM: x.mortesCedo / x.tries }))
+    return { tries: n, linhas: Object.values(p).filter(x => x.tries >= 3).map(x => ({ ...x, habs: Object.values(x.porHab).sort((a, b) => b.n - a.n), pessM: x.pess / x.tries, pedraM: x.pedra / x.tries, pocaoM: x.pocao / x.tries, mortesM: x.mortesCedo / x.tries }))
       .sort((a, b) => b.mortesM - a.mortesM) };
   }
 

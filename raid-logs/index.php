@@ -69,6 +69,11 @@ $v = max((int)@filemtime(__DIR__ . '/app.js'), (int)@filemtime(__DIR__ . '/core.
   .motivo { background: var(--sup2); color: inherit; border: 1px solid var(--borda); border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 13.5px; width: 260px; }
   .semana { margin: 6px 0; } .chip.forte { border-color: var(--mudo); font-weight: 600; }
   .en { color: var(--mudo); font-size: 12.5px; }
+  .tem-pop { position: relative; cursor: help; text-decoration: underline dotted var(--mudo); text-underline-offset: 3px; }
+  .pop { display: none; position: absolute; right: 0; top: 100%; z-index: 20; min-width: 300px; background: var(--sup2); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; text-align: left; white-space: nowrap; cursor: default; box-shadow: 0 6px 20px rgba(0,0,0,.45); text-decoration: none; }
+  .tem-pop:hover .pop, .tem-pop:focus-within .pop { display: block; }
+  .pl { display: flex; align-items: center; gap: 8px; padding: 3px 0; } .pl .q { margin-left: auto; padding-left: 18px; font-variant-numeric: tabular-nums; }
+  .ico { width: 18px; height: 18px; border-radius: 3px; flex: none; } .ico.vazio { display: inline-block; background: var(--borda); }
   a.wh { color: inherit; text-decoration: underline dotted var(--mudo); text-underline-offset: 3px; } a.wh:hover { color: var(--s1); }
   .note { height: 300px; } .note.curta { height: 110px; }
   @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } .duas { grid-template-columns: 1fr; } }
