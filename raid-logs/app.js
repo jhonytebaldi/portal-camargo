@@ -25,6 +25,9 @@
   let ICO = {};
   const habIc = (nome, id) => { id = id || IDS[nome]; if (id && ICO[id] === undefined) pendPt.add(id);
     return (id && ICO[id] ? '<img class="ico" src="https://wow.zamimg.com/images/wow/icons/small/' + esc(ICO[id]) + '.jpg" alt="" loading="lazy">' : '<span class="ico vazio"></span>') + hab(nome, id); };
+  // Caixinha que abre ao passar o mouse: valor visivel + titulo + linhas [esquerda, direita].
+  const pop = (valor, titulo, linhas) => valor + ' <div class="pop">' + (titulo ? '<div class="sub">' + titulo + '</div>' : '') + linhas.map(l => '<div class="pl">' + l[0] + '<span class="q">' + l[1] + '</span></div>').join('') + '</div>';
+  const vezes = n => n + '×';
   async function buscarPt() {
     if (buscandoPt || !pendPt.size) return; buscandoPt = true;
     const ids = [...pendPt]; pendPt.clear(); let novos = 0;
@@ -46,6 +49,7 @@
     NOMES_RE = nomes.length ? new RegExp('(?<![\\w>])(' + nomes.join('|') + ')(?![\\w<])', 'g') : null;
   }
 
+  const clsDe = (ls, n) => (ls.map(l => l.jogadores.find(x => x.nome === n)).find(Boolean) || {}).classe;
   const est = { rels: [], lutas: [], porRel: {}, enc: null, catalogo: [], noites: new Set(), golpe: '', boss: { dados: {}, lidos: new Set() }, disp: { dados: {}, nomes: {}, lidos: new Set() }, semChamado: true, aba: 'geral', fase: null, comDps: false, refs: undefined, nota: undefined, recusas: {}, cura: {}, aoVivo: null };
 
   async function gql(query, variables) {
@@ -228,9 +232,9 @@
       (est.golpe ? '<span class="sub">' + m.porTry.length + ' de ' + m.wipes + ' wipes tiveram morte inicial por ' + esc(est.golpe) + '.</span>' : '') + '</div>';
     h += '<div class="sub">Só contam as 3 primeiras mortes de cada wipe: são elas que derrubam a try. O que vem depois é consequência.</div>';
     h += '<div class="duas"><div><h2>O que mata primeiro</h2><table><tr><th>Habilidade</th><th class="n">Mortes</th><th class="n">Tries afetadas</th><th class="n">Foi a 1ª morte</th></tr>' +
-      m.causas.slice(0, 14).map(c => '<tr><td>' + hab(c.nome) + '</td><td class="n">' + c.mortes + '</td><td class="n">' + c.tries + ' (' + Math.round(100 * c.tries / m.wipes) + '%)</td><td class="n">' + c.primeira + '</td></tr>').join('') + '</table></div>';
+      m.causas.slice(0, 14).map(c => '<tr><td>' + hab(c.nome) + '</td><td class="n tem-pop">' + pop(c.mortes, 'Quem morreu para isso', Object.entries(c.quem || {}).sort((a, b) => b[1] - a[1]).map(([n, k]) => [selo(n, clsDe(ls, n)), vezes(k)])) + '</td><td class="n">' + c.tries + ' (' + Math.round(100 * c.tries / m.wipes) + '%)</td><td class="n">' + c.primeira + '</td></tr>').join('') + '</table></div>';
     h += '<div><h2>Quem morre primeiro</h2><table><tr><th>Jogador</th><th class="n">Mortes iniciais</th><th class="n">Foi a 1ª morte</th><th class="n">Tries presentes</th><th class="n">Mortes por try</th></tr>' +
-      m.quem.slice(0, 14).map(q => { const j = ls.map(l => l.jogadores.find(x => x.nome === q.nome)).find(Boolean) || {}; return '<tr><td>' + selo(q.nome, j.classe) + '</td><td class="n">' + q.mortes + '</td><td class="n">' + q.primeira + '</td><td class="n">' + q.presente + '</td><td class="n">' + (q.mortes / q.presente).toFixed(2).replace('.', ',') + '</td></tr>'; }).join('') + '</table></div></div>';
+      m.quem.slice(0, 14).map(q => { const j = ls.map(l => l.jogadores.find(x => x.nome === q.nome)).find(Boolean) || {}; return '<tr><td>' + selo(q.nome, j.classe) + '</td><td class="n tem-pop">' + pop(q.mortes, 'Do que morreu', Object.values(q.causas).sort((a, b) => b.n - a.n).map(x => [habIc(x.nome, x.id), vezes(x.n)])) + '</td><td class="n">' + q.primeira + '</td><td class="n">' + q.presente + '</td><td class="n">' + (q.mortes / q.presente).toFixed(2).replace('.', ',') + '</td></tr>'; }).join('') + '</table></div></div>';
     h += '<h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Boss</th><th>Fase</th><th>Primeiras mortes</th></tr>' +
       m.porTry.map(({ l, prim }) => '<tr><td>' + diaDe(l.data) + '</td><td class="n">' + l.id + '</td><td class="n">' + mmss(l.durS) + '</td><td class="n">' + pct(l.pct) + '</td><td>' + l.ultFase + '</td><td>' +
         prim.map(d => (est.golpe && d.golpe === est.golpe ? '<b>' + esc(d.nome) + '</b>' : esc(d.nome)) + ' <span class="sub">(' + hab(d.golpe, d.golpeId) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
@@ -304,11 +308,12 @@
   // ---------- Healers e pessoais ----------
   function abaHealers(ls) {
     const hs = C.healers(ls, 120), p = C.pessoais(ls, 120);
+    const mq = {}; for (const q of C.mortes(ls.filter(l => l.durS >= 120), '', temBoss() && est.semChamado ? cortesOvo(ls) : null).quem) mq[q.nome] = q;
     let h = '<h2>Healers</h2><div class="sub">Média das tries com pelo menos 2 minutos.</div><table><tr><th>Healer</th><th>Spec</th><th class="n">Tries</th><th class="n">HPS médio</th><th class="n">HPS mediano</th><th class="n">Overheal</th></tr>' +
       hs.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + esc(x.spec) + '</td><td class="n">' + x.tries + '</td><td class="n">' + num(x.hps) + '</td><td class="n">' + num(x.hpsMed) + '</td><td class="n">' + Math.round(x.over * 100) + '%</td></tr>').join('') + '</table>';
     h += '<h2>Defensivos pessoais e consumíveis</h2><div class="sub">Média por try de pelo menos 2 minutos (' + p.tries + ' tries). "Mortes iniciais" são as vezes em que o jogador esteve entre as 3 primeiras mortes.</div>' +
       '<table><tr><th>Jogador</th><th>Função</th><th class="n">Tries</th><th class="n">Mortes iniciais por try</th><th class="n">Defensivos por try</th><th class="n">Healthstone por try</th><th class="n">Poção de vida por try</th></tr>' +
-      p.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + ({ healer: 'Healer', tank: 'Tank', dps: 'DPS' }[x.papel] || '') + '</td><td class="n">' + x.tries + '</td><td class="n">' + x.mortesM.toFixed(2).replace('.', ',') + '</td><td class="n tem-pop">' + x.pessM.toFixed(1).replace('.', ',') + ' ' + (x.habs.length ? '<div class="pop"><div class="sub">' + x.pess + ' usos em ' + x.tries + ' tries</div>' + x.habs.map(hb => '<div class="pl">' + habIc(hb.nome, hb.id) + '<span class="q">' + hb.n + '× <span class="en">(' + (hb.n / x.tries).toFixed(1).replace('.', ',') + ' por try)</span></span></div>').join('') + '</div>' : '<div class="pop"><div class="sub">Nenhum defensivo registrado.</div></div>') + '</td><td class="n">' + x.pedraM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pocaoM.toFixed(2).replace('.', ',') + '</td></tr>').join('') + '</table>';
+      p.linhas.map(x => '<tr><td>' + selo(x.nome, x.classe) + '</td><td>' + ({ healer: 'Healer', tank: 'Tank', dps: 'DPS' }[x.papel] || '') + '</td><td class="n">' + x.tries + '</td><td class="n' + (mq[x.nome] ? ' tem-pop">' + pop(x.mortesM.toFixed(2).replace('.', ','), mq[x.nome].mortes + ' mortes iniciais' + (temBoss() && est.semChamado ? ' (sem contar wipe chamado)' : ''), Object.values(mq[x.nome].causas).sort((a, b) => b.n - a.n).map(y => [habIc(y.nome, y.id), vezes(y.n)])) : '">' + x.mortesM.toFixed(2).replace('.', ',')) + '</td><td class="n tem-pop">' + x.pessM.toFixed(1).replace('.', ',') + ' ' + (x.habs.length ? '<div class="pop"><div class="sub">' + x.pess + ' usos em ' + x.tries + ' tries</div>' + x.habs.map(hb => '<div class="pl">' + habIc(hb.nome, hb.id) + '<span class="q">' + hb.n + '× <span class="en">(' + (hb.n / x.tries).toFixed(1).replace('.', ',') + ' por try)</span></span></div>').join('') + '</div>' : '<div class="pop"><div class="sub">Nenhum defensivo registrado.</div></div>') + '</td><td class="n">' + x.pedraM.toFixed(2).replace('.', ',') + '</td><td class="n">' + x.pocaoM.toFixed(2).replace('.', ',') + '</td></tr>').join('') + '</table>';
     h += secaoDispels(ls);
     return h;
   }
@@ -568,7 +573,7 @@
       '<div class="card"><div class="k">Por encostar / por onda</div><div class="v">' + r.enc + ' / ' + r.onda + '</div></div></div>' +
       '<div class="sub" style="margin-top:8px">Como é detectado: "encostou" é quando o carregador perde o ovo no mesmo instante em que toma ' + hab('Noxious Splash') + ' (os dois que aparecem juntos são o par que se encostou). "Onda" é quando ele perde o ovo ao ser atingido por ' + hab('Caustic Waves') + ', antes do fim normal daquela leva. O número de adds é estimado: um por carregador que perdeu o ovo. Tries com 2 ou mais contam como provável wipe chamado.</div>';
     h += '<div class="duas"><div><h2>Quem eclodiu ovo</h2><table><tr><th>Jogador</th><th class="n">Tries carregando</th><th class="n">Encostou</th><th class="n">Tomou onda</th><th class="n">Eclodiu em</th></tr>' +
-      r.porJog.map(x => '<tr><td>' + selo(x.nome, cls(x.nome)) + '</td><td class="n">' + x.carregou + '</td><td class="n">' + x.encostou + '</td><td class="n">' + x.onda + '</td><td class="n">' + (x.carregou ? Math.round(100 * (x.encostou + x.onda) / x.carregou) + '% das tries' : '') + '</td></tr>').join('') + '</table>' +
+      r.porJog.map(x => '<tr><td>' + selo(x.nome, cls(x.nome)) + '</td><td class="n">' + x.carregou + '</td><td class="n' + (x.encostou ? ' tem-pop">' + pop(x.encostou, 'Com quem encostou', Object.entries(x.pares || {}).sort((a, b) => b[1] - a[1]).map(([n, k]) => [selo(n, cls(n)), vezes(k)])) : '">0') + '</td><td class="n' + (x.onda ? ' tem-pop">' + pop(x.onda, 'Quando tomou onda carregando', (x.ocorr || []).filter(o => o.tipo === 'onda').map(o => [diaDe(o.data) + ' · try ' + o.id, mmss(o.t)])) : '">0') + '</td><td class="n">' + (x.carregou ? Math.round(100 * (x.encostou + x.onda) / x.carregou) + '% das tries' : '') + '</td></tr>').join('') + '</table>' +
       '<div class="sub">Encostar envolve sempre duas pessoas; o log não diz qual das duas andou na direção da outra.</div></div>';
     h += '<div><h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Adds</th><th>O que aconteceu</th></tr>' +
       r.tries.map(t => '<tr><td>' + diaDe(t.l.data) + '</td><td class="n">' + t.l.id + '</td><td class="n">' + mmss(t.l.durS) + '</td><td class="n">' + t.adds + '</td><td>' +

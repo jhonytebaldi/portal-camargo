@@ -175,8 +175,10 @@
         if (filtro && m.golpe !== filtro) return;
         const c = causas[m.golpe] = causas[m.golpe] || { nome: m.golpe, mortes: 0, tries: 0, primeira: 0 };
         c.mortes++; if (!vistos.has(m.golpe)) { c.tries++; vistos.add(m.golpe); } if (i === 0) c.primeira++;
-        const q = quem[m.nome] = quem[m.nome] || { nome: m.nome, mortes: 0, primeira: 0, presente: 0 };
+        c.quem = c.quem || {}; c.quem[m.nome] = (c.quem[m.nome] || 0) + 1;
+        const q = quem[m.nome] = quem[m.nome] || { nome: m.nome, mortes: 0, primeira: 0, presente: 0, causas: {} };
         q.mortes++; if (i === 0) q.primeira++;
+        (q.causas[m.golpe] = q.causas[m.golpe] || { nome: m.golpe, id: m.golpeId || null, n: 0 }).n++;
       });
     }
     for (const q of Object.values(quem)) q.presente = wipes.filter(l => l.jogadores.some(j => j.nome === q.nome)).length;
@@ -782,7 +784,9 @@
       for (const q of b.carregaram || []) (porJog[q] = porJog[q] || { nome: q, carregou: 0, encostou: 0, onda: 0 }).carregou++;
       if (!b.ovos.length) continue; com++;
       if (corteOvo(b) != null) chamadas++;
-      for (const o of b.ovos) { if (o.tipo === 'encostou') enc++; else onda++; for (const q of o.culpados) { const x = porJog[q] = porJog[q] || { nome: q, carregou: 0, encostou: 0, onda: 0 }; x[o.tipo]++; } }
+      for (const o of b.ovos) { if (o.tipo === 'encostou') enc++; else onda++; for (const q of o.culpados) { const x = porJog[q] = porJog[q] || { nome: q, carregou: 0, encostou: 0, onda: 0 }; x[o.tipo]++;
+        x.pares = x.pares || {}; x.ocorr = x.ocorr || []; x.ocorr.push({ data: l.data, id: l.id, t: o.t, tipo: o.tipo, com: o.culpados.filter(y => y !== q) });
+        if (o.tipo === 'encostou') for (const y of o.culpados) if (y !== q) x.pares[y] = (x.pares[y] || 0) + 1; } }
       tries.push({ l, b, adds: addsDeOvo(b), corte: corteOvo(b) });
     }
     return { analisadas: lutas.filter(l => dados[l.rel + ':' + l.id]).length, com, chamadas, enc, onda, tries,
