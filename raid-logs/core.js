@@ -148,11 +148,12 @@
 
   function resumo(lutas) {
     const porNoite = {};
-    for (const l of lutas) (porNoite[l.rel] = porNoite[l.rel] || []).push(l);
+    const dia = ms => new Date(ms - 6 * 3600e3).toDateString(); // noite de raid: madrugada conta para a noite anterior
+    for (const l of lutas) (porNoite[dia(l.data)] = porNoite[dia(l.data)] || []).push(l);
     const noites = Object.values(porNoite).map(ls => {
       const w = ls.filter(l => !l.kill);
       const fases = {}; for (const l of ls) fases[l.ultFase] = (fases[l.ultFase] || 0) + 1;
-      return { rel: ls[0].rel, data: ls[0].data, tries: ls.length, kills: ls.length - w.length,
+      return { rel: ls[0].rel, data: Math.min(...ls.map(l => l.data)), tries: ls.length, kills: ls.length - w.length,
         melhor: ls.some(l => l.kill) ? 0 : Math.min(...w.map(l => l.pct)), mediana: mediana(w.map(l => l.pct)),
         durMed: mediana(ls.map(l => l.durS)), fases };
     }).sort((a, b) => a.data - b.data);

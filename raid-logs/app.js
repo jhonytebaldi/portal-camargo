@@ -123,22 +123,27 @@
   // Tries das noites marcadas, sem repeticao: o mesmo pull enviado em dois relatorios (reenvio, ou log de outra pessoa) conta uma vez.
   // E o mesmo pull quando boss e dificuldade batem e (a) comecou no mesmo instante e durou o mesmo, ou
   // (b) os relogios dos dois PCs divergem, mas a duracao e a vida final do boss sao identicas.
-  function semRepetidas() {
-    const chave = [...est.noites].sort().join(',') + '|' + est.lutas.length;
-    if (est._sel && est._sel.chave === chave) return est._sel;
+  function semRepetidasDe(codes) {
+    const tem = new Set(codes);
     const abs = l => { const pr = est.porRel[l.rel], f = pr && pr.rel.lutas.find(x => x.id === l.id); return pr && f ? pr.rel.inicio + f.startTime : l.data; };
     const peso = {}; for (const c in est.porRel) peso[c] = est.porRel[c].lutas.length; // em caso de repeticao, fica a do relatorio mais completo
-    const cand = est.lutas.filter(l => est.noites.has(l.rel)).map(l => ({ l, t: abs(l) })).sort((a, b) => (peso[b.l.rel] || 0) - (peso[a.l.rel] || 0) || a.l.rel.localeCompare(b.l.rel) || a.l.id - b.l.id);
-    const ficam = [], rep = {};
+    const cand = est.lutas.filter(l => tem.has(l.rel)).map(l => ({ l, t: abs(l) })).sort((a, b) => (peso[b.l.rel] || 0) - (peso[a.l.rel] || 0) || a.l.rel.localeCompare(b.l.rel) || a.l.id - b.l.id);
+    const ficam = []; let total = 0;
     for (const c of cand) {
       const igual = ficam.find(o => o.l.rel !== c.l.rel && o.l.enc === c.l.enc && o.l.dif === c.l.dif && (
         (Math.abs(o.t - c.t) <= 30000 && Math.abs(o.l.durS - c.l.durS) <= 10) ||
         (Math.abs(o.t - c.t) <= 2 * 3600e3 && Math.abs(o.l.durS - c.l.durS) <= 3 && o.l.kill === c.l.kill && Math.abs((o.l.pct || 0) - (c.l.pct || 0)) < 0.011)));
-      if (igual) rep[c.l.rel] = (rep[c.l.rel] || 0) + 1; else ficam.push(c);
+      if (igual) total++; else ficam.push(c);
     }
-    const lutas = ficam.sort((a, b) => a.t - b.t).map(c => c.l);
-    return est._sel = { chave, lutas, rep, total: Object.values(rep).reduce((a, b) => a + b, 0) };
+    return { lutas: ficam.sort((a, b) => a.t - b.t).map(c => c.l), total };
   }
+  function semRepetidas() {
+    const chave = [...est.noites].sort().join(',') + '|' + est.lutas.length;
+    if (est._sel && est._sel.chave === chave) return est._sel;
+    return est._sel = { chave, ...semRepetidasDe([...est.noites]) };
+  }
+  // Noite de raid de um relatorio: log que comeca de madrugada pertence a noite anterior.
+  const diaDe = ms => dataBR(ms - 6 * 3600e3);
   function montarBosses() {
     const encs = {}; for (const l of semRepetidas().lutas) { const k = l.enc + ':' + l.dif; (encs[k] = encs[k] || { k, boss: l.boss, dif: l.dif, n: 0 }).n++; }
     const lista = Object.values(encs).sort((a, b) => b.n - a.n);
@@ -155,12 +160,17 @@
   const lutasAtuais = () => semRepetidas().lutas.filter(l => (l.enc + ':' + l.dif) === est.enc);
 
   function desenhar() {
-    const ls = lutasAtuais(), sel = semRepetidas();
+    const ls = lutasAtuais();
     const sems = {}; for (const r of est.catalogo) (sems[C.semanaDe(r.inicio)] = sems[C.semanaDe(r.inicio)] || []).push(r);
+    let mudouCat = false;
     $('noites').innerHTML = Object.keys(sems).map(Number).sort((a, b) => b - a).map(sm => { const rs = sems[sm], todas = rs.every(r => est.noites.has(r.code));
+      const dias = {}; for (const r of rs) (dias[diaDe(r.inicio)] = dias[diaDe(r.inicio)] || []).push(r);
       return '<div class="linha semana"><label class="chip forte"><input type="checkbox" data-sem="' + sm + '"' + (todas ? ' checked' : '') + '> Semana ' + sm + '</label>' +
-        rs.map(r => '<label class="chip" title="' + esc(r.titulo) + ' · ' + r.tries + ' lutas"><input type="checkbox" data-n="' + r.code + '"' + (est.noites.has(r.code) ? ' checked' : '') + '> ' + dataBR(r.inicio) + (sel.rep[r.code] ? ' <span class="en">(' + sel.rep[r.code] + ' repetidas)</span>' : '') + '</label>').join('') + '</div>'; }).join('') +
-      (sel.total ? '<div class="sub">' + sel.total + ' tries apareciam em mais de um relatório e foram contadas uma vez só (fica a do relatório mais completo).</div>' : '');
+        Object.keys(dias).map(dia => { const ds = dias[dia], codes = ds.map(r => r.code);
+          let n = null;
+          if (codes.every(c => est.porRel[c])) { n = semRepetidasDe(codes).lutas.length; for (const r of ds) if (r.triesDia !== n) { r.triesDia = n; mudouCat = true; } } else if (ds[0].triesDia != null) n = ds[0].triesDia;
+          return '<label class="chip" title="' + ds.length + ' relatório' + (ds.length > 1 ? 's' : '') + ': ' + esc(ds.map(r => r.titulo).join(', ')) + '"><input type="checkbox" data-dia="' + codes.join(',') + '"' + (codes.every(c => est.noites.has(c)) ? ' checked' : '') + '> ' + dia + (n != null ? ' <span class="en">(' + n + ' tries)</span>' : '') + '</label>'; }).join('') + '</div>'; }).join('');
+    if (mudouCat) salvarCatalogo();
     document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === est.aba));
     montarIds(ls);
     const ab = $('abaBoss'); ab.hidden = !temBoss(); if (temBoss() && ls.length) ab.textContent = ls[0].boss; else if (est.aba === 'boss') est.aba = 'geral';
@@ -189,14 +199,14 @@
     let g = '';
     for (let v = ymin; v <= ymax; v += 10) g += '<line class="grade" x1="' + ml + '" x2="' + (W - mr) + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text class="eixo" x="' + (ml - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + v + '%</text>';
     let ant = null;
-    ls.forEach((l, i) => { if (l.rel !== ant) { g += '<line class="sep" x1="' + (x(i) - 4) + '" x2="' + (x(i) - 4) + '" y1="' + mt + '" y2="' + (H - mb) + '"/><text class="eixo" x="' + x(i) + '" y="' + (H - 8) + '">' + dataBR(l.data) + '</text>'; ant = l.rel; } });
+    ls.forEach((l, i) => { if (diaDe(l.data) !== ant) { g += '<line class="sep" x1="' + (x(i) - 4) + '" x2="' + (x(i) - 4) + '" y1="' + mt + '" y2="' + (H - mb) + '"/><text class="eixo" x="' + x(i) + '" y="' + (H - 8) + '">' + diaDe(l.data) + '</text>'; ant = diaDe(l.data); } });
     const fasesVistas = [...new Set(ls.map(l => l.ultFase))].sort();
-    ls.forEach((l, i) => { g += '<circle cx="' + x(i) + '" cy="' + y(l.pct) + '" r="4" fill="' + COR_FASE[(l.ultFase - 1) % 4] + '" stroke="var(--sup)" stroke-width="1"><title>Try ' + l.id + ' de ' + dataBR(l.data) + ' — ' + pct(l.pct) + ', ' + mmss(l.durS) + ', ' + nomeFase(l, l.ultFase) + '</title></circle>'; });
+    ls.forEach((l, i) => { g += '<circle cx="' + x(i) + '" cy="' + y(l.pct) + '" r="4" fill="' + COR_FASE[(l.ultFase - 1) % 4] + '" stroke="var(--sup)" stroke-width="1"><title>Try ' + l.id + ' de ' + diaDe(l.data) + ' — ' + pct(l.pct) + ', ' + mmss(l.durS) + ', ' + nomeFase(l, l.ultFase) + '</title></circle>'; });
     h += '<h2>Vida do boss ao fim de cada try</h2><div class="sub">Quanto mais baixo, mais longe a try chegou. Passe o mouse num ponto para ver os detalhes.</div>' +
       '<div class="legenda">' + fasesVistas.map(f => '<span><i style="background:' + COR_FASE[(f - 1) % 4] + '"></i>Terminou na ' + esc(nomeFase(ls.find(l => l.ultFase === f), f)) + '</span>').join('') + '</div>' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" class="graf">' + g + '</svg>';
     h += '<h2>Por noite</h2><table><tr><th>Noite</th><th class="n">Tries</th><th class="n">Melhor</th><th class="n">Mediana</th><th class="n">Duração mediana</th><th class="n">Terminaram na fase 1</th><th class="n">Fase 2 ou além</th></tr>' +
-      r.noites.map(n => '<tr><td>' + dataBR(n.data) + '</td><td class="n">' + n.tries + '</td><td class="n">' + pct(n.melhor) + '</td><td class="n">' + pct(n.mediana) + '</td><td class="n">' + mmss(n.durMed) + '</td><td class="n">' + (n.fases[1] || 0) + '</td><td class="n">' + (n.tries - (n.fases[1] || 0)) + '</td></tr>').join('') + '</table>';
+      r.noites.map(n => '<tr><td>' + diaDe(n.data) + '</td><td class="n">' + n.tries + '</td><td class="n">' + pct(n.melhor) + '</td><td class="n">' + pct(n.mediana) + '</td><td class="n">' + mmss(n.durMed) + '</td><td class="n">' + (n.fases[1] || 0) + '</td><td class="n">' + (n.tries - (n.fases[1] || 0)) + '</td></tr>').join('') + '</table>';
     return h;
   }
 
@@ -216,7 +226,7 @@
     h += '<div><h2>Quem morre primeiro</h2><table><tr><th>Jogador</th><th class="n">Mortes iniciais</th><th class="n">Foi a 1ª morte</th><th class="n">Tries presentes</th><th class="n">Mortes por try</th></tr>' +
       m.quem.slice(0, 14).map(q => { const j = ls.map(l => l.jogadores.find(x => x.nome === q.nome)).find(Boolean) || {}; return '<tr><td>' + selo(q.nome, j.classe) + '</td><td class="n">' + q.mortes + '</td><td class="n">' + q.primeira + '</td><td class="n">' + q.presente + '</td><td class="n">' + (q.mortes / q.presente).toFixed(2).replace('.', ',') + '</td></tr>'; }).join('') + '</table></div></div>';
     h += '<h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Boss</th><th>Fase</th><th>Primeiras mortes</th></tr>' +
-      m.porTry.map(({ l, prim }) => '<tr><td>' + dataBR(l.data) + '</td><td class="n">' + l.id + '</td><td class="n">' + mmss(l.durS) + '</td><td class="n">' + pct(l.pct) + '</td><td>' + l.ultFase + '</td><td>' +
+      m.porTry.map(({ l, prim }) => '<tr><td>' + diaDe(l.data) + '</td><td class="n">' + l.id + '</td><td class="n">' + mmss(l.durS) + '</td><td class="n">' + pct(l.pct) + '</td><td>' + l.ultFase + '</td><td>' +
         prim.map(d => (est.golpe && d.golpe === est.golpe ? '<b>' + esc(d.nome) + '</b>' : esc(d.nome)) + ' <span class="sub">(' + hab(d.golpe, d.golpeId) + ', ' + mmss(d.t) + ')</span>').join(' · ') + '</td></tr>').join('') + '</table>';
     return h;
   }
@@ -459,7 +469,7 @@
     if (est.refs === undefined && !est.refsCarregando) carregarRefs(ls);
     const melhor = Math.min(...ls.map(x => x.pct));
     let h = '<div class="linha" style="margin-top:14px"><label class="chip"><input type="checkbox" id="aoVivo"' + (est.aoVivo ? ' checked' : '') + '> Acompanhar ao vivo (confere tries novas a cada minuto)</label><span class="sub">Use com o log ao vivo ligado no uploader do Warcraft Logs.</span></div>';
-    h += '<div class="cards"><div class="card"><div class="k">Try ' + l.id + ' · ' + dataBR(l.data) + '</div><div class="v">' + (l.kill ? 'Kill' : pct(l.pct)) + '</div></div>' +
+    h += '<div class="cards"><div class="card"><div class="k">Try ' + l.id + ' · ' + diaDe(l.data) + '</div><div class="v">' + (l.kill ? 'Kill' : pct(l.pct)) + '</div></div>' +
       '<div class="card"><div class="k">Duração</div><div class="v">' + mmss(l.durS) + '</div></div>' +
       '<div class="card"><div class="k">Terminou na</div><div class="v" style="font-size:16px;line-height:36px">' + esc(nomeFase(l, l.ultFase).split(':')[0]) + '</div></div>' +
       '<div class="card"><div class="k">Melhor try até agora</div><div class="v">' + pct(melhor) + '</div></div></div>';
@@ -555,7 +565,7 @@
       r.porJog.map(x => '<tr><td>' + selo(x.nome, cls(x.nome)) + '</td><td class="n">' + x.carregou + '</td><td class="n">' + x.encostou + '</td><td class="n">' + x.onda + '</td><td class="n">' + (x.carregou ? Math.round(100 * (x.encostou + x.onda) / x.carregou) + '% das tries' : '') + '</td></tr>').join('') + '</table>' +
       '<div class="sub">Encostar envolve sempre duas pessoas; o log não diz qual das duas andou na direção da outra.</div></div>';
     h += '<div><h2>Try a try</h2><table><tr><th>Noite</th><th class="n">Try</th><th class="n">Duração</th><th class="n">Adds</th><th>O que aconteceu</th></tr>' +
-      r.tries.map(t => '<tr><td>' + dataBR(t.l.data) + '</td><td class="n">' + t.l.id + '</td><td class="n">' + mmss(t.l.durS) + '</td><td class="n">' + t.adds + '</td><td>' +
+      r.tries.map(t => '<tr><td>' + diaDe(t.l.data) + '</td><td class="n">' + t.l.id + '</td><td class="n">' + mmss(t.l.durS) + '</td><td class="n">' + t.adds + '</td><td>' +
         t.b.ovos.map(o => '<div>' + mmss(o.t) + ' · ' + (o.tipo === 'encostou' ? 'encostaram: ' : 'onda: ') + o.culpados.map(esc).join(' + ') + '</div>').join('') + '</td></tr>').join('') + '</table></div></div>';
     const co = C.coracao(ls, est.boss.dados), cols = co.amp.map((a, i) => i).filter(i => co.nJan[i] > 0);
     h += '<h2>Burst no coração (' + hab('Venomous Heart', 1299526) + ')</h2>';
@@ -590,7 +600,7 @@
   });
   document.addEventListener('change', e => {
     const t = e.target;
-    if (t.dataset.n) marcarNoites([t.dataset.n], t.checked);
+    if (t.dataset.dia) marcarNoites(t.dataset.dia.split(','), t.checked);
     else if (t.dataset.sem) marcarNoites(est.catalogo.filter(r => C.semanaDe(r.inicio) === +t.dataset.sem).map(r => r.code), t.checked);
     else if (t.id === 'golpe') { est.golpe = t.value; desenhar(); }
     else if (t.id === 'semChamado') { est.semChamado = t.checked; desenhar(); }
